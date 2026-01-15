@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LogIn, Lock, Mail } from 'lucide-react';
+import { LogIn, Lock, Mail, X } from 'lucide-react';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -111,24 +111,35 @@ export default function Login() {
               </div>
             )}
 
-            {/* Botão Submit */}
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full bg-gradient-to-r from-brand-brown to-brand-olive text-white py-3 rounded-lg font-semibold hover:from-brand-brown/90 hover:to-brand-olive/90 transition-all duration-300 shadow-soft-lg hover:shadow-soft-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transform hover:scale-[1.02] active:scale-[0.98]"
-            >
-              {isLoading ? (
-                <>
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  <span className="animate-pulse">Entrando...</span>
-                </>
-              ) : (
-                <>
-                  <LogIn className="w-5 h-5 transition-transform group-hover:translate-x-1" />
-                  Entrar
-                </>
-              )}
-            </button>
+            {/* Botões */}
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                type="button"
+                onClick={() => navigate('/')}
+                disabled={isLoading}
+                className="w-full sm:w-auto px-6 py-3 border-2 border-brand-olive/40 text-brand-brown rounded-lg font-semibold hover:bg-brand-olive/10 hover:border-brand-olive transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transform hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <X className="w-5 h-5" />
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full sm:flex-1 bg-gradient-to-r from-brand-brown to-brand-olive text-white py-3 rounded-lg font-semibold hover:from-brand-brown/90 hover:to-brand-olive transition-all duration-300 shadow-soft-lg hover:shadow-soft-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transform hover:scale-[1.02] active:scale-[0.98]"
+              >
+                {isLoading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span className="animate-pulse">Entrando...</span>
+                  </>
+                ) : (
+                  <>
+                    <LogIn className="w-5 h-5 transition-transform group-hover:translate-x-1" />
+                    Entrar
+                  </>
+                )}
+              </button>
+            </div>
           </form>
 
           {/* Rodapé */}

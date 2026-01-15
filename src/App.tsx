@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import SystemWrapper from './components/SystemWrapper';
+import LandingPage from './pages/LandingPage';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import DailyReportForm from './pages/DailyReportForm';
@@ -23,36 +25,52 @@ function AppContent() {
   return (
     <>
       <Routes>
-        {/* Login */}
-        <Route path="/" element={<Login />} />
+        {/* Landing Page */}
+        <Route path="/" element={<LandingPage />} />
         
-        {/* Rotas protegidas */}
+        {/* Sistema Interno - com Splash Screen */}
+        <Route
+          path="/login"
+          element={
+            <SystemWrapper>
+              <Login />
+            </SystemWrapper>
+          }
+        />
+        
+        {/* Rotas protegidas - com Splash Screen */}
         <Route
           path="/dashboard"
           element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
+            <SystemWrapper>
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            </SystemWrapper>
           }
         />
         <Route
           path="/registro"
           element={
-            <ProtectedRoute>
-              <DailyReportForm />
-            </ProtectedRoute>
+            <SystemWrapper>
+              <ProtectedRoute>
+                <DailyReportForm />
+              </ProtectedRoute>
+            </SystemWrapper>
           }
         />
         <Route
           path="/alterar-senha"
           element={
-            <ProtectedRoute>
-              <ChangePassword />
-            </ProtectedRoute>
+            <SystemWrapper>
+              <ProtectedRoute>
+                <ChangePassword />
+              </ProtectedRoute>
+            </SystemWrapper>
           }
         />
         
-        {/* Redirecionar rotas não encontradas para login */}
+        {/* Redirecionar rotas não encontradas para landing page */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 

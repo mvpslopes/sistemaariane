@@ -117,6 +117,99 @@
 }
 
 @layer components {
+  .site-background {
+    background-image: linear-gradient(
+      to bottom,
+      rgba(248, 247, 244, 0.98),
+      rgba(230, 216, 195, 0.98)
+    );
+  }
+
+  .hero-background {
+    background-image: linear-gradient(
+      to bottom right,
+      rgba(248, 247, 244, 0.98),
+      rgba(230, 216, 195, 0.98)
+    );
+  }
+
+  .reveal {
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 0.7s ease-out, transform 0.7s ease-out;
+  }
+
+  .reveal-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .logo-shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .logo-shimmer::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -150%;
+    width: 50%;
+    height: 100%;
+    background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+    transform: skewX(-20deg);
+    opacity: 0.8;
+    pointer-events: none;
+    animation: logoShimmer 3s ease-in-out infinite;
+  }
+
+  @keyframes logoShimmer {
+    0% {
+      left: -150%;
+    }
+    60% {
+      left: 120%;
+    }
+    100% {
+      left: 120%;
+    }
+  }
+
+  .loader-bar {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .loader-bar-inner {
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(129, 112, 95, 0.9), transparent);
+    animation: loaderBar 1.4s ease-in-out infinite;
+  }
+
+  @keyframes loaderBar {
+    0% {
+      transform: translateX(-100%);
+    }
+    60% {
+      transform: translateX(0%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  /* Animações suaves para hover */
+  .hover-lift {
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .hover-lift:hover {
+    transform: translateY(-4px);
+  }
+
+  /* Sombra suave e realista */
   .shadow-soft {
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.05);
   }
@@ -129,6 +222,7 @@
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15), 0 4px 12px rgba(0, 0, 0, 0.1);
   }
 
+  /* Animação de escala suave */
   @keyframes scaleIn {
     from {
       opacity: 0;
@@ -144,6 +238,96 @@
     animation: scaleIn 0.5s ease-out;
   }
 
+  /* Efeito de brilho sutil */
+  .glow-effect {
+    position: relative;
+  }
+
+  .glow-effect::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    padding: 2px;
+    background: linear-gradient(135deg, rgba(160, 137, 106, 0.3), rgba(129, 112, 95, 0.1));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .glow-effect:hover::after {
+    opacity: 1;
+  }
+
+  /* Linha decorativa animada */
+  .decorative-line {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .decorative-line::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, rgba(160, 137, 106, 0.6), transparent);
+    animation: lineSlide 3s ease-in-out infinite;
+  }
+
+  @keyframes lineSlide {
+    0% {
+      left: -100%;
+    }
+    50% {
+      left: 100%;
+    }
+    100% {
+      left: 100%;
+    }
+  }
+
+  /* Transição suave para cards */
+  .card-transition {
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Efeito de profundidade */
+  .depth-effect {
+    box-shadow: 
+      0 1px 3px rgba(0, 0, 0, 0.05),
+      0 4px 12px rgba(0, 0, 0, 0.08),
+      0 8px 24px rgba(0, 0, 0, 0.06);
+  }
+
+  .depth-effect:hover {
+    box-shadow: 
+      0 2px 6px rgba(0, 0, 0, 0.08),
+      0 8px 24px rgba(0, 0, 0, 0.12),
+      0 16px 48px rgba(0, 0, 0, 0.1);
+  }
+
+  /* Animação de formas flutuantes */
+  @keyframes float {
+    0%, 100% {
+      transform: translate(0, 0) rotate(0deg);
+    }
+    33% {
+      transform: translate(30px, -30px) rotate(120deg);
+    }
+    66% {
+      transform: translate(-20px, 20px) rotate(240deg);
+    }
+  }
+
+  .floating-shape {
+    animation: float linear infinite;
+  }
+
+  /* Glassmorphism aprimorado */
   .glass-effect {
     background: rgba(255, 255, 255, 0.7);
     backdrop-filter: blur(20px) saturate(180%);
