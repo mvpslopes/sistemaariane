@@ -19,6 +19,9 @@ const copies = [
   ['database/fix-root-password.sql', 'fix-root-password.sql'],
   ['database/seed-ficticios.sql', 'seed-ficticios.sql'],
   ['database/seed-fotos-animais.sql', 'seed-fotos-animais.sql'],
+  ['database/migration-contratos.sql', 'migration-contratos.sql'],
+  ['database/migration-avatar-usuarios.sql', 'migration-avatar-usuarios.sql'],
+  ['database/seed-papeis.sql', 'seed-papeis.sql'],
 ];
 
 // Garante pasta de uploads no pacote de deploy
@@ -27,6 +30,12 @@ mkdirSync(uploadsAnimals, { recursive: true });
 writeFileSync(join(uploadsAnimals, '.gitkeep'), '');
 writeFileSync(join(uploadsAnimals, '.htaccess'), 'Options -Indexes\n');
 console.log('✓ uploads/animals/');
+
+const uploadsAvatars = join(outDir, 'uploads', 'avatars');
+mkdirSync(uploadsAvatars, { recursive: true });
+writeFileSync(join(uploadsAvatars, '.gitkeep'), '');
+writeFileSync(join(uploadsAvatars, '.htaccess'), 'Options -Indexes\n');
+console.log('✓ uploads/avatars/');
 
 for (const [fromRel, toRel] of copies) {
   const from = join(root, fromRel);
@@ -51,12 +60,17 @@ writeFileSync(
    (index.html, assets/, api.php, config.local.php, .htaccess, etc.).
 
 3. No phpMyAdmin, importe schema.sql no banco u179630068_mvp_ariane
-   (só na primeira vez).
+   (só na primeira vez). Se o banco já existir, importe também
+   migration-contratos.sql (papéis, contratos e cobranças).
 
-4. Confirme que a pasta uploads/animals existe e tem permissão de escrita
-   (chmod 755 ou 775 no File Manager). Fotos dos animais são salvas aí.
+4. Confirme que as pastas uploads/animals e uploads/avatars existem e têm
+   permissão de escrita (chmod 755 ou 775). Fotos de animais e avatares
+   ficam nessas pastas.
 
-5. Teste:
+5. Se o banco já existir, rode também migration-avatar-usuarios.sql
+   (coluna avatar_url em users).
+
+6. Teste:
    - https://sistema.arianeandradeassessoria.app.br/
    - https://sistema.arianeandradeassessoria.app.br/api.php/health
 

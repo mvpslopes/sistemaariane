@@ -5,6 +5,7 @@
 @layer base {
   body {
     @apply font-sans;
+    margin: 0;
   }
 }
 
@@ -36,6 +37,40 @@
 
   .animate-expand {
     animation: expand 1.5s ease-out;
+  }
+
+  /* Scrollbar discreta do menu lateral */
+  .scrollbar-sidebar {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+
+  .scrollbar-sidebar:hover,
+  .scrollbar-sidebar:focus-within {
+    scrollbar-color: rgba(201, 169, 98, 0.45) transparent;
+  }
+
+  .scrollbar-sidebar::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .scrollbar-sidebar::-webkit-scrollbar-track {
+    background: transparent;
+    margin-block: 8px;
+  }
+
+  .scrollbar-sidebar::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border-radius: 999px;
+  }
+
+  .scrollbar-sidebar:hover::-webkit-scrollbar-thumb,
+  .scrollbar-sidebar:focus-within::-webkit-scrollbar-thumb {
+    background-color: rgba(201, 169, 98, 0.45);
+  }
+
+  .scrollbar-sidebar::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(201, 169, 98, 0.7);
   }
 
   .animate-progress-bar {

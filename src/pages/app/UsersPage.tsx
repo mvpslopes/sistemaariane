@@ -12,6 +12,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 import Modal from '../../components/Modal';
+import UserAvatar from '../../components/UserAvatar';
 
 const roleOptions: { value: Role; label: string }[] = [
   { value: 'admin', label: 'Admin' },
@@ -281,9 +282,7 @@ export default function UsersPage() {
               <tr key={u.id} className="border-t border-brand-beige/60 transition-colors hover:bg-brand-off-white/70">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-olive/20 text-xs font-semibold text-brand-olive">
-                      {u.name.charAt(0).toUpperCase()}
-                    </div>
+                    <UserAvatar name={u.name} avatarUrl={u.avatarUrl} size="md" />
                     <span className="font-medium text-brand-dark-brown">{u.name}</span>
                   </div>
                 </td>

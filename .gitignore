@@ -35,4 +35,7 @@ backend/config.local.php
 backend/uploads/animals/*
 !backend/uploads/animals/.gitkeep
 !backend/uploads/animals/.htaccess
+backend/uploads/avatars/*
+!backend/uploads/avatars/.gitkeep
+!backend/uploads/avatars/.htaccess
 

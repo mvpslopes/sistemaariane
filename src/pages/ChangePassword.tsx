@@ -43,8 +43,8 @@ export default function ChangePassword() {
           <h2 className="text-2xl font-semibold text-brand-dark-brown">Alterar senha</h2>
           <p className="text-sm text-brand-olive">Atualize sua senha de acesso</p>
         </div>
-        <Link to="/app" className="text-sm text-brand-brown hover:underline">
-          Voltar
+        <Link to="/app/perfil" className="text-sm text-brand-brown hover:underline">
+          Voltar ao perfil
         </Link>
       </div>
 

@@ -10,37 +10,45 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 
-const empty: Partial<Client> = {
-  name: '',
-  document_type: 'CPF',
-  document: '',
-  email: '',
-  phone: '',
-  whatsapp: '',
-  city: '',
-  state: '',
-  address: '',
-  notes: '',
-  active: true,
-};
+type PartyRole = 'buyer' | 'seller' | 'assessor';
+
+function emptyForm(defaultPartyRole?: PartyRole): Partial<Client> {
+  return {
+    name: '',
+    document_type: 'CPF',
+    document: '',
+    email: '',
+    phone: '',
+    whatsapp: '',
+    city: '',
+    state: '',
+    address: '',
+    notes: '',
+    active: true,
+    is_seller: defaultPartyRole === 'seller',
+    is_buyer: defaultPartyRole === 'buyer' || !defaultPartyRole,
+    is_assessor: defaultPartyRole === 'assessor',
+  };
+}
 
 interface ClientFormProps {
   clientId: string | null;
+  defaultPartyRole?: PartyRole;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export default function ClientForm({ clientId, onClose, onSaved }: ClientFormProps) {
+export default function ClientForm({ clientId, defaultPartyRole, onClose, onSaved }: ClientFormProps) {
   const isNew = !clientId;
   const { canWrite } = useAuth();
   const { success, error: toastError } = useToast();
-  const [form, setForm] = useState<Partial<Client>>(empty);
+  const [form, setForm] = useState<Partial<Client>>(() => emptyForm(defaultPartyRole));
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (isNew) {
-      setForm(empty);
+      setForm(emptyForm(defaultPartyRole));
       setLoading(false);
       return;
     }
@@ -132,6 +140,25 @@ export default function ClientForm({ clientId, onClose, onSaved }: ClientFormPro
         <Field label="Observações" className="sm:col-span-2">
           <textarea disabled={!canWrite} rows={3} value={form.notes || ''} onChange={(e) => set('notes', e.target.value)} className={inputClass} />
         </Field>
+        {canWrite && (
+          <div className="space-y-2 sm:col-span-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Papéis</span>
+            <div className="flex flex-wrap gap-4 text-sm text-brand-dark-brown/80">
+              <label className="inline-flex items-center gap-2">
+                <input type="checkbox" checked={!!form.is_buyer} onChange={(e) => set('is_buyer', e.target.checked)} />
+                Comprador
+              </label>
+              <label className="inline-flex items-center gap-2">
+                <input type="checkbox" checked={!!form.is_seller} onChange={(e) => set('is_seller', e.target.checked)} />
+                Vendedor
+              </label>
+              <label className="inline-flex items-center gap-2">
+                <input type="checkbox" checked={!!form.is_assessor} onChange={(e) => set('is_assessor', e.target.checked)} />
+                Assessor
+              </label>
+            </div>
+          </div>
+        )}
         {!isNew && canWrite && (
           <label className="flex items-center gap-2 text-sm text-brand-dark-brown/80 sm:col-span-2">
             <input type="checkbox" checked={form.active !== false} onChange={(e) => set('active', e.target.checked)} />

@@ -13,6 +13,7 @@ interface AuthContextType {
   user: AuthUser | null;
   login: (username: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
+  refreshUser: (next: AuthUser) => void;
   isAuthenticated: boolean;
   hasRole: (...roles: Role[]) => boolean;
   canWrite: boolean;
@@ -41,6 +42,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
     setTimeRemaining(0);
+  };
+
+  const refreshUser = (next: AuthUser) => {
+    localStorage.setItem('user', JSON.stringify(next));
+    setUser(next);
   };
 
   const resetInactivityTimer = () => {
@@ -115,6 +121,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         login,
         logout,
+        refreshUser,
         isAuthenticated: !!user,
         hasRole,
         canWrite,

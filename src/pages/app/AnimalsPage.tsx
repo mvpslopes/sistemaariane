@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Search, Pencil, Trash2, Camera, PawPrint } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Camera, PawPrint, FileText } from 'lucide-react';
 import { deleteAnimal, getAnimals, mediaUrl, type Animal } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 import Modal from '../../components/Modal';
 import AnimalForm from './AnimalForm';
+import ContractForm from './ContractForm';
 
 const statusTone: Record<Animal['status'], string> = {
   ativo: 'bg-emerald-50 text-emerald-700',
@@ -37,6 +38,7 @@ export default function AnimalsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [saleAnimalId, setSaleAnimalId] = useState<string | null>(null);
 
   const load = async (search?: string) => {
     setLoading(true);
@@ -190,6 +192,17 @@ export default function AnimalsPage() {
                         <Pencil className="h-4 w-4" />
                         {canWrite ? 'Editar' : 'Ver'}
                       </button>
+                      {canWrite && a.status === 'ativo' && (
+                        <button
+                          type="button"
+                          onClick={() => setSaleAnimalId(a.id)}
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-brand-gold hover:bg-brand-gold/10"
+                          title="Gerar venda"
+                        >
+                          <FileText className="h-4 w-4" />
+                          Venda
+                        </button>
+                      )}
                       {canWrite && (
                         <button
                           type="button"
@@ -219,6 +232,23 @@ export default function AnimalsPage() {
         size="xl"
       >
         <AnimalForm animalId={editingId} onClose={closeModal} onSaved={() => load(q)} />
+      </Modal>
+
+      <Modal
+        open={!!saleAnimalId}
+        onClose={() => setSaleAnimalId(null)}
+        title="Gerar venda"
+        subtitle="Contrato + cobranças deste animal"
+        size="xl"
+      >
+        <ContractForm
+          animalId={saleAnimalId}
+          onClose={() => setSaleAnimalId(null)}
+          onSaved={() => {
+            setSaleAnimalId(null);
+            load(q);
+          }}
+        />
       </Modal>
     </div>
   );
