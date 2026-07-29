@@ -1,0 +1,51 @@
+# Força MIME correto (evita CSS/JS servidos como HTML)
+AddType text/css .css
+AddType application/javascript .js
+AddType application/javascript .mjs
+AddType image/png .png
+AddType image/jpeg .jpg .jpeg
+AddType image/svg+xml .svg
+AddType image/webp .webp
+
+<IfModule mod_mime.c>
+  AddCharset UTF-8 .css .js .html
+</IfModule>
+
+# SPA + segurança básica
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Nunca reescrever assets estáticos / uploads
+  RewriteRule ^assets/ - [L]
+  RewriteRule ^uploads/ - [L]
+
+  # Atalho /api/... -> api.php/...
+  RewriteRule ^api/(.*)$ api.php/$1 [QSA,L]
+
+  # SPA: só se NÃO for arquivo/pasta real
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . index.html [L]
+</IfModule>
+
+# Bloquear acesso direto a config
+<Files "config.local.php">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</Files>
+
+# Cache de assets com hash no nome
+<IfModule mod_headers.c>
+  <FilesMatch "\.(css|js)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "index\.html">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+  </FilesMatch>
+</IfModule>

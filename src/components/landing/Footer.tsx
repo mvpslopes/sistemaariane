@@ -213,7 +213,7 @@ export default function Footer() {
               className="inline-flex items-center gap-2 px-4 py-2 text-xs md:text-sm text-white/70 hover:text-brand-beige bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 hover:border-brand-beige/30 transition-all duration-200"
             >
               <Lock className="w-3.5 h-3.5" />
-              <span>Acesso ao Sistema Interno</span>
+              <span>Acesso ao Sistema</span>
             </Link>
           </div>
         </div>

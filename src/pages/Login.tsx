@@ -1,151 +1,168 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LogIn, Lock, Mail, X } from 'lucide-react';
+import { useToast } from '../contexts/ToastContext';
+import { LogIn, Lock, User, PawPrint, ShieldCheck, Users } from 'lucide-react';
 
 export default function Login() {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, isAuthenticated } = useAuth();
+  const { error: toastError, success } = useToast();
   const navigate = useNavigate();
+
+  if (isAuthenticated) {
+    return <Navigate to="/app" replace />;
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
     setIsLoading(true);
 
     try {
-      const success = await login(email, password);
-      
-      if (success) {
-        navigate('/dashboard');
+      const result = await login(username.trim(), password);
+      if (result.ok) {
+        success('Login realizado com sucesso');
+        navigate('/app');
       } else {
-        setError('Email ou senha incorretos. Tente novamente.');
+        toastError(result.error || 'Usuário ou senha incorretos. Tente novamente.');
         setIsLoading(false);
       }
-    } catch (error) {
-      setError('Erro ao fazer login. Tente novamente.');
+    } catch {
+      toastError('Erro ao fazer login. Tente novamente.');
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-brand-beige via-brand-off-white to-white flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Efeitos de fundo animados */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-20 left-10 w-72 h-72 bg-brand-brown/5 rounded-full blur-3xl animate-float"></div>
-        <div className="absolute bottom-20 right-10 w-96 h-96 bg-brand-olive/5 rounded-full blur-3xl animate-float-delayed"></div>
+    <div className="flex min-h-screen bg-brand-off-white">
+      {/* Painel decorativo — visível em telas grandes */}
+      <div className="relative hidden w-1/2 overflow-hidden bg-gradient-to-br from-brand-dark-brown via-[#3d2f26] to-brand-brown lg:flex lg:flex-col lg:justify-between lg:p-12">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          <div className="absolute -left-24 top-10 h-80 w-80 rounded-full bg-brand-gold/10 blur-3xl animate-float" />
+          <div className="absolute -right-16 bottom-0 h-96 w-96 rounded-full bg-brand-forest/10 blur-3xl animate-float-delayed" />
+          <div className="absolute inset-0 opacity-[0.04]" style={{
+            backgroundImage: 'radial-gradient(circle, #fff 1px, transparent 1px)',
+            backgroundSize: '28px 28px',
+          }} />
+        </div>
+
+        <div className="relative z-10">
+          <img
+            src="/logo-ariane-wide_branco.png"
+            alt="Ariane Andrade Assessoria"
+            className="h-16 w-auto max-w-[320px] object-contain object-left drop-shadow-lg md:h-20"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = 'none';
+            }}
+          />
+        </div>
+
+        <div className="relative z-10 max-w-md">
+          <h2 className="text-3xl font-semibold leading-tight text-white">
+            Gestão completa do seu plantel, em um só lugar.
+          </h2>
+          <p className="mt-4 text-sm text-brand-beige/60">
+            Cadastro de clientes, animais e genealogia com segurança e organização — pensado para
+            haras e assessorias equestres.
+          </p>
+
+          <div className="mt-8 space-y-4">
+            <Feature icon={PawPrint} text="Ficha completa dos animais, com foto e genealogia" />
+            <Feature icon={Users} text="Clientes e proprietários organizados por haras" />
+            <Feature icon={ShieldCheck} text="Acesso por perfil: root, admin, usuário e cliente" />
+          </div>
+        </div>
+
+        <p className="relative z-10 text-xs text-brand-beige/30">
+          © {new Date().getFullYear()} Ariane Andrade Assessoria
+        </p>
       </div>
 
-      <div className="w-full max-w-md relative z-10">
-        <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-soft-xl p-8 md:p-10 border border-brand-olive/20 animate-scale-in hover:shadow-soft-xl transition-shadow duration-300">
-          {/* Logo e Título */}
-          <div className="text-center mb-8 animate-slide-up">
-            <div className="mb-6 animate-fade-in">
+      {/* Formulário */}
+      <div className="relative flex w-full flex-1 items-center justify-center overflow-hidden p-4 lg:w-1/2">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden lg:hidden">
+          <div className="absolute -left-20 top-20 h-72 w-72 rounded-full bg-brand-brown/10 blur-3xl" />
+          <div className="absolute -right-10 bottom-10 h-96 w-96 rounded-full bg-brand-olive/10 blur-3xl" />
+        </div>
+
+        <div className="relative z-10 w-full max-w-md">
+          <div className="rounded-2xl border border-brand-olive/20 bg-white/90 p-8 shadow-soft-xl backdrop-blur-sm md:p-10">
+            <div className="mb-8 text-center">
               <img
                 src="/logo-ariane-wide.png"
                 alt="Logo Ariane"
-                className="h-20 md:h-24 mx-auto object-contain drop-shadow-lg"
+                className="mx-auto mb-6 h-16 object-contain md:h-20 lg:hidden"
                 onError={(e) => {
-                  // Fallback se a logo não existir
-                  const target = e.target as HTMLImageElement;
-                  target.style.display = 'none';
+                  (e.target as HTMLImageElement).style.display = 'none';
                 }}
               />
-            </div>
-            <h1 className="text-3xl md:text-4xl font-bold text-brand-brown mb-2 bg-gradient-to-r from-brand-brown to-brand-olive bg-clip-text text-transparent">
-              Sistema Interno
-            </h1>
-            <p className="text-brand-olive/70 text-sm md:text-base">
-              Registro Diário de Atendimento
-            </p>
-            <div className="mt-4 w-24 h-1 bg-gradient-to-r from-brand-brown to-brand-olive mx-auto rounded-full animate-expand"></div>
-          </div>
-
-          {/* Formulário */}
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Email */}
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-brand-brown mb-2">
-                Email
-              </label>
-              <div className="relative">
-                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-brand-olive/50 w-5 h-5" />
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="w-full pl-10 pr-4 py-3 border border-brand-olive/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-olive/50 focus:border-brand-olive bg-white text-brand-brown placeholder:text-brand-olive/40 transition-all"
-                  placeholder="seu@email.com"
-                />
-              </div>
+              <h1 className="bg-gradient-to-r from-brand-brown to-brand-olive bg-clip-text text-3xl font-bold text-transparent">
+                Bem-vindo de volta
+              </h1>
+              <p className="mt-2 text-sm text-brand-olive/70">Entre para acessar seu painel</p>
+              <div className="mx-auto mt-4 h-1 w-20 rounded-full bg-gradient-to-r from-brand-brown to-brand-olive" />
             </div>
 
-            {/* Senha */}
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-brand-brown mb-2">
-                Senha
-              </label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-brand-olive/50 w-5 h-5" />
-                <input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  className="w-full pl-10 pr-4 py-3 border border-brand-olive/30 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-olive/50 focus:border-brand-olive bg-white text-brand-brown placeholder:text-brand-olive/40 transition-all"
-                  placeholder="••••••••"
-                />
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label htmlFor="username" className="mb-2 block text-sm font-medium text-brand-brown">
+                  Usuário
+                </label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-brand-olive/50" />
+                  <input
+                    id="username"
+                    type="text"
+                    autoComplete="username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    required
+                    className="w-full rounded-xl border border-brand-olive/20 py-3 pl-10 pr-4 text-sm outline-none transition focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
+                    placeholder="marcus.lopes"
+                  />
+                </div>
               </div>
-            </div>
 
-            {/* Erro */}
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm animate-fade-in">
-                {error}
+              <div>
+                <label htmlFor="password" className="mb-2 block text-sm font-medium text-brand-brown">
+                  Senha
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-brand-olive/50" />
+                  <input
+                    id="password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    className="w-full rounded-xl border border-brand-olive/20 py-3 pl-10 pr-4 text-sm outline-none transition focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
+                    placeholder="••••••••"
+                  />
+                </div>
               </div>
-            )}
 
-            {/* Botões */}
-            <div className="flex flex-col sm:flex-row gap-3">
-              <button
-                type="button"
-                onClick={() => navigate('/')}
-                disabled={isLoading}
-                className="w-full sm:w-auto px-6 py-3 border-2 border-brand-olive/40 text-brand-brown rounded-lg font-semibold hover:bg-brand-olive/10 hover:border-brand-olive transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transform hover:scale-[1.02] active:scale-[0.98]"
-              >
-                <X className="w-5 h-5" />
-                Cancelar
-              </button>
               <button
                 type="submit"
                 disabled={isLoading}
-                className="w-full sm:flex-1 bg-gradient-to-r from-brand-brown to-brand-olive text-white py-3 rounded-lg font-semibold hover:from-brand-brown/90 hover:to-brand-olive transition-all duration-300 shadow-soft-lg hover:shadow-soft-xl disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 transform hover:scale-[1.02] active:scale-[0.98]"
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-brown py-3 text-sm font-semibold text-white shadow-lg shadow-brand-brown/25 transition hover:bg-brand-olive disabled:opacity-60"
               >
-                {isLoading ? (
-                  <>
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span className="animate-pulse">Entrando...</span>
-                  </>
-                ) : (
-                  <>
-                    <LogIn className="w-5 h-5 transition-transform group-hover:translate-x-1" />
-                    Entrar
-                  </>
-                )}
+                <LogIn className="h-5 w-5" />
+                {isLoading ? 'Entrando...' : 'Entrar'}
               </button>
-            </div>
-          </form>
+            </form>
 
-          {/* Rodapé */}
-          <div className="mt-8 pt-6 border-t border-brand-olive/20 text-center">
-            <p className="text-xs text-brand-olive/60">
-              Acesso restrito a colaboradores autorizados
+            <p className="mt-6 text-center text-xs text-brand-olive/50">
+              <a
+                href="https://arianeandradeassessoria.app.br/"
+                className="hover:text-brand-brown"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Site institucional
+              </a>
             </p>
           </div>
         </div>
@@ -154,3 +171,13 @@ export default function Login() {
   );
 }
 
+function Feature({ icon: Icon, text }: { icon: typeof PawPrint; text: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/10 text-brand-gold-light">
+        <Icon className="h-4 w-4" />
+      </div>
+      <p className="text-sm text-brand-beige/80">{text}</p>
+    </div>
+  );
+}

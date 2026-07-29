@@ -1,85 +1,67 @@
-import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
-import * as apiService from '../services/apiService';
-
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-  password: string; // Em produção, isso seria hash
-}
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useRef,
+  ReactNode,
+} from 'react';
+import * as api from '../services/apiService';
+import type { AuthUser, Role } from '../services/apiService';
 
 interface AuthContextType {
-  user: User | null;
-  login: (email: string, password: string) => boolean;
+  user: AuthUser | null;
+  login: (username: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
   isAuthenticated: boolean;
+  hasRole: (...roles: Role[]) => boolean;
+  canWrite: boolean;
+  canManageUsers: boolean;
   resetInactivityTimer: () => void;
-  timeRemaining: number; // Tempo restante em segundos
+  timeRemaining: number;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-// Tempo de inatividade para logout automático (30 minutos)
-const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutos em milissegundos
-
-// Usuários hardcoded removidos - agora sempre busca do banco de dados via API
+const INACTIVITY_TIMEOUT = 30 * 60 * 1000;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    // Verificar se há usuário salvo no localStorage
-    const savedUser = localStorage.getItem('user');
-    return savedUser ? JSON.parse(savedUser) : null;
+  const [user, setUser] = useState<AuthUser | null>(() => {
+    const saved = localStorage.getItem('user');
+    return saved ? JSON.parse(saved) : null;
   });
-
   const [timeRemaining, setTimeRemaining] = useState(INACTIVITY_TIMEOUT / 1000);
-  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const countdownTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
 
   const logout = () => {
     setUser(null);
     localStorage.removeItem('user');
-    if (inactivityTimerRef.current) {
-      clearTimeout(inactivityTimerRef.current);
-      inactivityTimerRef.current = null;
-    }
-    if (countdownTimerRef.current) {
-      clearInterval(countdownTimerRef.current);
-      countdownTimerRef.current = null;
-    }
+    localStorage.removeItem('token');
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
     setTimeRemaining(0);
   };
 
   const resetInactivityTimer = () => {
-    // Limpar timers anteriores
-    if (inactivityTimerRef.current) {
-      clearTimeout(inactivityTimerRef.current);
-    }
-    if (countdownTimerRef.current) {
-      clearInterval(countdownTimerRef.current);
-    }
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
 
-    // Se o usuário estiver autenticado, criar novo timer
     if (user) {
       lastActivityRef.current = Date.now();
       setTimeRemaining(INACTIVITY_TIMEOUT / 1000);
 
-      // Timer de logout
       inactivityTimerRef.current = setTimeout(() => {
         logout();
-        window.location.href = '/';
+        window.location.href = '/login';
       }, INACTIVITY_TIMEOUT);
 
-      // Timer de contagem regressiva
       countdownTimerRef.current = setInterval(() => {
         const elapsed = Date.now() - lastActivityRef.current;
         const remaining = Math.max(0, INACTIVITY_TIMEOUT - elapsed);
         setTimeRemaining(Math.floor(remaining / 1000));
-
-        if (remaining <= 0) {
-          if (countdownTimerRef.current) {
-            clearInterval(countdownTimerRef.current);
-          }
+        if (remaining <= 0 && countdownTimerRef.current) {
+          clearInterval(countdownTimerRef.current);
         }
       }, 1000);
     } else {
@@ -87,68 +69,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const login = async (email: string, password: string): Promise<boolean> => {
-    const API_URL = import.meta.env.VITE_API_URL;
-    
-    // Sempre tentar login via API (MySQL) - sem fallback para dados hardcoded
-    if (API_URL) {
-      try {
-        const response = await apiService.login(email, password);
-        if (response.success && response.user) {
-          const user: User = {
-            id: response.user.id,
-            name: response.user.name,
-            email: response.user.email,
-            password: '', // Não armazenar senha
-          };
-          setUser(user);
-          localStorage.setItem('user', JSON.stringify(user));
-          resetInactivityTimer();
-          return true;
-        }
-      } catch (error) {
-        console.error('Erro no login via API:', error);
-        return false;
+  const login = async (
+    username: string,
+    password: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const response = await api.login(username, password);
+      if (response.success && response.user && response.token) {
+        localStorage.setItem('token', response.token);
+        localStorage.setItem('user', JSON.stringify(response.user));
+        setUser(response.user);
+        return { ok: true };
       }
+      return { ok: false, error: 'Usuário ou senha incorretos. Tente novamente.' };
+    } catch (error) {
+      console.error('Erro no login:', error);
+      const message =
+        error instanceof Error ? error.message : 'Erro ao fazer login. Tente novamente.';
+      return { ok: false, error: message };
     }
-
-    // Se não houver API configurada, retornar erro
-    console.error('API não configurada. Configure VITE_API_URL no .env');
-    return false;
   };
 
-  // Configurar eventos de atividade do usuário
+  const hasRole = (...roles: Role[]) => !!user && roles.includes(user.role);
+  const canWrite = hasRole('root', 'admin', 'user');
+  const canManageUsers = hasRole('root', 'admin');
+
   useEffect(() => {
-    if (user) {
-      resetInactivityTimer();
+    if (!user) return;
 
-      // Eventos que indicam atividade do usuário
-      const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
-      
-      const handleActivity = () => {
-        resetInactivityTimer();
-      };
+    resetInactivityTimer();
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
+    const handleActivity = () => resetInactivityTimer();
+    events.forEach((e) => window.addEventListener(e, handleActivity));
 
-      events.forEach((event) => {
-        window.addEventListener(event, handleActivity);
-      });
-
-      return () => {
-        events.forEach((event) => {
-          window.removeEventListener(event, handleActivity);
-        });
-        if (inactivityTimerRef.current) {
-          clearTimeout(inactivityTimerRef.current);
-        }
-        if (countdownTimerRef.current) {
-          clearInterval(countdownTimerRef.current);
-        }
-      };
-    }
+    return () => {
+      events.forEach((e) => window.removeEventListener(e, handleActivity));
+      if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    };
   }, [user]);
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, isAuthenticated: !!user, resetInactivityTimer, timeRemaining }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        login,
+        logout,
+        isAuthenticated: !!user,
+        hasRole,
+        canWrite,
+        canManageUsers,
+        resetInactivityTimer,
+        timeRemaining,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -156,9 +130,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 }
-

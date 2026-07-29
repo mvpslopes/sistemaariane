@@ -28,4 +28,11 @@ dist-ssr
 .env.local
 .env.production.local
 .env.development.local
+backend/.env
+backend/config.local.php
+
+# Uploads de fotos (mantém .gitkeep)
+backend/uploads/animals/*
+!backend/uploads/animals/.gitkeep
+!backend/uploads/animals/.htaccess
 
