@@ -123,8 +123,12 @@ export default function AppShell() {
         }`}
       >
         <div className={`flex items-center gap-3 px-4 py-5 ${collapsed ? 'justify-center' : ''}`}>
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-brand-gold to-brand-gold-light text-base font-bold text-brand-dark-brown shadow-lg shadow-black/20">
-            A
+          <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-brand-beige shadow-lg shadow-black/20">
+            <img
+              src={`${import.meta.env.BASE_URL}logo-sistema-ariane.png`}
+              alt="Ariane Andrade Assessoria"
+              className="h-full w-full object-cover"
+            />
           </div>
           {!collapsed && (
             <div className="min-w-0 flex-1">
