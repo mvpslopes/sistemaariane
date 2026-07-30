@@ -2,9 +2,6 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
-  ShoppingBag,
-  Store,
-  Briefcase,
   Users,
   PawPrint,
   UserCog,
@@ -17,6 +14,9 @@ import {
   UserCircle,
   PanelLeftClose,
   PanelLeftOpen,
+  Gavel,
+  Split,
+  FileStack,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import UserAvatar from './UserAvatar';
@@ -30,25 +30,31 @@ const roleLabel: Record<string, string> = {
 
 const pageMeta: Record<string, { title: string; subtitle: string }> = {
   '/app': { title: 'Dashboard', subtitle: 'Visão geral do plantel e cadastros' },
-  '/app/clientes': { title: 'Clientes', subtitle: 'Todos os cadastros de pessoas' },
-  '/app/compradores': { title: 'Compradores', subtitle: 'Quem adquire animais e frações' },
-  '/app/vendedores': { title: 'Vendedores', subtitle: 'Proprietários e ofertantes' },
-  '/app/assessores': { title: 'Assessores', subtitle: 'Intermediação e acompanhamento' },
+  '/app/pessoas': {
+    title: 'Pessoas',
+    subtitle: 'Compradores, vendedores, assessores e testemunhas em um só cadastro',
+  },
   '/app/animais': { title: 'Animais', subtitle: 'Plantel e documentação básica' },
+  '/app/leiloes': {
+    title: 'Leilões',
+    subtitle: 'Eventos, lotes e registro de arremates',
+  },
   '/app/contratos': { title: 'Contratos', subtitle: 'Vendas e aceites digitais' },
+  '/app/modelos-contrato': {
+    title: 'Modelos de contrato',
+    subtitle: 'Versos (cláusulas) reutilizáveis na nota de leilão',
+  },
   '/app/cobrancas': { title: 'Cobranças', subtitle: 'Parcelas, PIX e boletos' },
+  '/app/repasses': {
+    title: 'Repasses',
+    subtitle: 'Assessoria, dono do animal e assessores por parcela',
+  },
   '/app/perfil': { title: 'Meu perfil', subtitle: 'Nome e foto de exibição' },
   '/app/usuarios': { title: 'Usuários', subtitle: 'Acessos ao sistema' },
   '/app/alterar-senha': { title: 'Alterar senha', subtitle: 'Segurança da sua conta' },
 };
 
-const cadastroPaths = [
-  '/app/clientes',
-  '/app/compradores',
-  '/app/vendedores',
-  '/app/assessores',
-  '/app/animais',
-];
+const cadastroPaths = ['/app/pessoas', '/app/animais'];
 
 const contaPaths = ['/app/perfil', '/app/alterar-senha'];
 
@@ -180,47 +186,14 @@ export default function AppShell() {
 
               {showCadastrosChildren && (
                 <div className={`flex flex-col gap-0.5 ${collapsed ? '' : 'mt-0.5'}`}>
-                  <NavLink to="/app/clientes" className={subLinkClass} title="Clientes">
+                  <NavLink to="/app/pessoas" className={subLinkClass} title="Pessoas">
                     {({ isActive }) => (
                       <>
                         {isActive && (
                           <span className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
                         )}
                         <Users className="h-4 w-4 shrink-0" />
-                        {!collapsed && <span>Clientes</span>}
-                      </>
-                    )}
-                  </NavLink>
-                  <NavLink to="/app/compradores" className={subLinkClass} title="Compradores">
-                    {({ isActive }) => (
-                      <>
-                        {isActive && (
-                          <span className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                        )}
-                        <ShoppingBag className="h-4 w-4 shrink-0" />
-                        {!collapsed && <span>Compradores</span>}
-                      </>
-                    )}
-                  </NavLink>
-                  <NavLink to="/app/vendedores" className={subLinkClass} title="Vendedores">
-                    {({ isActive }) => (
-                      <>
-                        {isActive && (
-                          <span className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                        )}
-                        <Store className="h-4 w-4 shrink-0" />
-                        {!collapsed && <span>Vendedores</span>}
-                      </>
-                    )}
-                  </NavLink>
-                  <NavLink to="/app/assessores" className={subLinkClass} title="Assessores">
-                    {({ isActive }) => (
-                      <>
-                        {isActive && (
-                          <span className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                        )}
-                        <Briefcase className="h-4 w-4 shrink-0" />
-                        {!collapsed && <span>Assessores</span>}
+                        {!collapsed && <span>Pessoas</span>}
                       </>
                     )}
                   </NavLink>
@@ -259,6 +232,19 @@ export default function AppShell() {
               Operação
             </p>
           )}
+          {!isCliente && (
+            <NavLink to="/app/leiloes" className={linkClass} title="Leilões">
+              {({ isActive }) => (
+                <>
+                  {isActive && (
+                    <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
+                  )}
+                  <Gavel className="h-[18px] w-[18px] shrink-0" />
+                  {!collapsed && <span>Leilões</span>}
+                </>
+              )}
+            </NavLink>
+          )}
           <NavLink to="/app/contratos" className={linkClass} title="Contratos">
             {({ isActive }) => (
               <>
@@ -270,6 +256,19 @@ export default function AppShell() {
               </>
             )}
           </NavLink>
+          {!isCliente && (
+            <NavLink to="/app/modelos-contrato" className={linkClass} title="Modelos de contrato">
+              {({ isActive }) => (
+                <>
+                  {isActive && (
+                    <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
+                  )}
+                  <FileStack className="h-[18px] w-[18px] shrink-0" />
+                  {!collapsed && <span>Modelos</span>}
+                </>
+              )}
+            </NavLink>
+          )}
           <NavLink to="/app/cobrancas" className={linkClass} title="Cobranças">
             {({ isActive }) => (
               <>
@@ -281,6 +280,19 @@ export default function AppShell() {
               </>
             )}
           </NavLink>
+          {!isCliente && (
+            <NavLink to="/app/repasses" className={linkClass} title="Repasses">
+              {({ isActive }) => (
+                <>
+                  {isActive && (
+                    <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
+                  )}
+                  <Split className="h-[18px] w-[18px] shrink-0" />
+                  {!collapsed && <span>Repasses</span>}
+                </>
+              )}
+            </NavLink>
+          )}
           {canManageUsers && (
             <NavLink to="/app/usuarios" className={linkClass} title="Usuários">
               {({ isActive }) => (

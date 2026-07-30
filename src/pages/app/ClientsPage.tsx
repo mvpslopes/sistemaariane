@@ -7,8 +7,6 @@ import Loading from '../../components/Loading';
 import Modal from '../../components/Modal';
 import ClientForm from './ClientForm';
 
-export type PartyRoleFilter = 'all' | 'buyer' | 'seller' | 'assessor';
-
 const avatarPalette = [
   'bg-brand-gold/20 text-brand-gold',
   'bg-brand-forest/20 text-brand-forest',
@@ -21,41 +19,7 @@ function avatarTone(seed: string) {
   return avatarPalette[idx];
 }
 
-const roleConfig: Record<
-  PartyRoleFilter,
-  { label: string; plural: string; singular: string; emptyHint: string }
-> = {
-  all: {
-    label: 'Clientes',
-    plural: 'clientes',
-    singular: 'cliente',
-    emptyHint: 'Ajuste a busca ou cadastre um novo cliente para começar.',
-  },
-  buyer: {
-    label: 'Compradores',
-    plural: 'compradores',
-    singular: 'comprador',
-    emptyHint: 'Cadastre um comprador ou marque o papel em um cliente existente.',
-  },
-  seller: {
-    label: 'Vendedores',
-    plural: 'vendedores',
-    singular: 'vendedor',
-    emptyHint: 'Cadastre um vendedor ou marque o papel em um cliente existente.',
-  },
-  assessor: {
-    label: 'Assessores',
-    plural: 'assessores',
-    singular: 'assessor',
-    emptyHint: 'Cadastre um assessor ou marque o papel em um cliente existente.',
-  },
-};
-
-interface ClientsPageProps {
-  partyRole?: PartyRoleFilter;
-}
-
-export default function ClientsPage({ partyRole = 'all' }: ClientsPageProps) {
+export default function ClientsPage() {
   const { canWrite } = useAuth();
   const { success, error: toastError } = useToast();
   const [clients, setClients] = useState<Client[]>([]);
@@ -64,23 +28,13 @@ export default function ClientsPage({ partyRole = 'all' }: ClientsPageProps) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const cfg = roleConfig[partyRole];
 
   const load = async (search?: string) => {
     setLoading(true);
     try {
-      const all = await getClients(search);
-      const filtered =
-        partyRole === 'buyer'
-          ? all.filter((c) => c.is_buyer)
-          : partyRole === 'seller'
-            ? all.filter((c) => c.is_seller)
-            : partyRole === 'assessor'
-              ? all.filter((c) => c.is_assessor)
-              : all;
-      setClients(filtered);
+      setClients(await getClients(search));
     } catch (e: any) {
-      toastError(e.message || `Erro ao carregar ${cfg.plural}`);
+      toastError(e.message || 'Erro ao carregar pessoas');
     } finally {
       setLoading(false);
     }
@@ -88,7 +42,7 @@ export default function ClientsPage({ partyRole = 'all' }: ClientsPageProps) {
 
   useEffect(() => {
     load();
-  }, [partyRole]);
+  }, []);
 
   const activeCount = useMemo(() => clients.filter((c) => c.active).length, [clients]);
 
@@ -119,7 +73,7 @@ export default function ClientsPage({ partyRole = 'all' }: ClientsPageProps) {
     setDeletingId(client.id);
     try {
       await deleteClient(client.id);
-      success('Registro excluído');
+      success('Pessoa excluída');
       await load(q);
     } catch (e: any) {
       toastError(e.message || 'Erro ao excluir');
@@ -132,8 +86,8 @@ export default function ClientsPage({ partyRole = 'all' }: ClientsPageProps) {
     <div className="space-y-5 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
-          <span className="font-semibold text-brand-dark-brown">{clients.length}</span> {cfg.plural} ·{' '}
-          <span className="font-semibold text-brand-dark-brown">{activeCount}</span> ativos
+          <span className="font-semibold text-brand-dark-brown">{clients.length}</span> pessoas ·{' '}
+          <span className="font-semibold text-brand-dark-brown">{activeCount}</span> ativas
         </p>
         {canWrite && (
           <button
@@ -141,7 +95,7 @@ export default function ClientsPage({ partyRole = 'all' }: ClientsPageProps) {
             onClick={openNew}
             className="inline-flex items-center gap-2 rounded-xl bg-brand-brown px-4 py-2 text-sm font-medium text-white shadow-lg shadow-brand-brown/20 transition hover:bg-brand-olive"
           >
-            <Plus className="h-4 w-4" /> Novo {cfg.singular}
+            <Plus className="h-4 w-4" /> Nova pessoa
           </button>
         )}
       </div>
@@ -162,15 +116,18 @@ export default function ClientsPage({ partyRole = 'all' }: ClientsPageProps) {
             className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
           />
         </div>
-        <button type="submit" className="rounded-xl border border-brand-beige bg-white px-4 py-2 text-sm font-medium hover:bg-brand-off-white">
+        <button
+          type="submit"
+          className="rounded-xl border border-brand-beige bg-white px-4 py-2 text-sm font-medium hover:bg-brand-off-white"
+        >
           Buscar
         </button>
       </form>
 
       {loading ? (
-        <Loading message={`Carregando ${cfg.plural}...`} />
+        <Loading message="Carregando pessoas..." />
       ) : clients.length === 0 ? (
-        <EmptyState label={cfg.label} hint={cfg.emptyHint} />
+        <EmptyState />
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
           <table className="min-w-full text-left text-sm">
@@ -199,13 +156,15 @@ export default function ClientsPage({ partyRole = 'all' }: ClientsPageProps) {
                       </div>
                       <div>
                         <span className="font-medium text-brand-dark-brown">{c.name}</span>
-                        {partyRole === 'all' && (
-                          <div className="mt-0.5 flex flex-wrap gap-1">
-                            {c.is_buyer && <RoleChip label="Comprador" />}
-                            {c.is_seller && <RoleChip label="Vendedor" />}
-                            {c.is_assessor && <RoleChip label="Assessor" />}
-                          </div>
-                        )}
+                        <div className="mt-0.5 flex flex-wrap gap-1">
+                          {c.is_buyer && <RoleChip label="Comprador" />}
+                          {c.is_seller && <RoleChip label="Vendedor" />}
+                          {c.is_assessor && <RoleChip label="Assessor" />}
+                          {c.is_witness && <RoleChip label="Testemunha" />}
+                          {!c.is_buyer && !c.is_seller && !c.is_assessor && !c.is_witness && (
+                            <span className="text-[10px] text-brand-olive/60">Sem papel definido</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </td>
@@ -255,16 +214,11 @@ export default function ClientsPage({ partyRole = 'all' }: ClientsPageProps) {
       <Modal
         open={modalOpen}
         onClose={closeModal}
-        title={editingId ? `Editar ${cfg.singular}` : `Novo ${cfg.singular}`}
-        subtitle="Dados cadastrais e papéis na operação"
+        title={editingId ? 'Editar pessoa' : 'Nova pessoa'}
+        subtitle="Uma pessoa pode ser comprador, vendedor, assessor e/ou testemunha ao mesmo tempo"
         size="xl"
       >
-        <ClientForm
-          clientId={editingId}
-          defaultPartyRole={partyRole === 'all' ? undefined : partyRole}
-          onClose={closeModal}
-          onSaved={() => load(q)}
-        />
+        <ClientForm clientId={editingId} onClose={closeModal} onSaved={() => load(q)} />
       </Modal>
     </div>
   );
@@ -291,14 +245,16 @@ function RoleChip({ label }: { label: string }) {
   );
 }
 
-function EmptyState({ label, hint }: { label: string; hint: string }) {
+function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-brand-beige bg-white py-16 text-center shadow-card">
       <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-off-white text-brand-olive">
         <Users className="h-6 w-6" />
       </div>
-      <p className="text-sm font-medium text-brand-dark-brown">Nenhum {label.toLowerCase()} encontrado</p>
-      <p className="max-w-xs text-xs text-brand-olive">{hint}</p>
+      <p className="text-sm font-medium text-brand-dark-brown">Nenhuma pessoa encontrada</p>
+      <p className="max-w-xs text-xs text-brand-olive">
+        Cadastre compradores, vendedores e assessores no mesmo lugar. Marque os papéis no formulário.
+      </p>
     </div>
   );
 }

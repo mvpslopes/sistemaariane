@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Fluxo de trabalho — Ariane Andrade Assessoria</title>
+  <style>
+    @page { size: A4 landscape; margin: 11mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: #3d2f26;
+      background: #fff;
+    }
+    h1 {
+      font-size: 13pt;
+      margin: 0 0 2px;
+      text-align: center;
+    }
+    .sub {
+      color: #6b5c4c;
+      font-size: 8.5pt;
+      margin: 0 0 12px;
+      text-align: center;
+    }
+    .flow {
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      gap: 0;
+      margin-bottom: 12px;
+    }
+    .step {
+      flex: 1 1 0;
+      max-width: 112px;
+      border: 1px solid #d4c4a8;
+      border-radius: 9px;
+      padding: 8px 6px;
+      position: relative;
+      text-align: center;
+    }
+    .step + .step { margin-left: 14px; }
+    .step + .step::before {
+      content: "";
+      position: absolute;
+      left: -12px;
+      top: 50%;
+      width: 10px;
+      height: 2px;
+      background: #a0896a;
+      transform: translateY(-50%);
+    }
+    .step + .step::after {
+      content: "";
+      position: absolute;
+      left: -6px;
+      top: 50%;
+      width: 0;
+      height: 0;
+      border-top: 4px solid transparent;
+      border-bottom: 4px solid transparent;
+      border-left: 5px solid #a0896a;
+      transform: translateY(-50%);
+    }
+    .step.hoje { background: #f3f7f3; }
+    .step.validar { background: #fff8ee; }
+    .step.depois { background: #faf8f5; }
+    .step.ok { background: #eef6f0; border-color: #9bbb9a; }
+    .step .n {
+      font-size: 7pt;
+      color: #6b5c4c;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 3px;
+    }
+    .step .t {
+      font-size: 9pt;
+      font-weight: 700;
+      margin: 0 0 4px;
+      line-height: 1.15;
+    }
+    .step .d {
+      font-size: 7pt;
+      color: #6b5c4c;
+      line-height: 1.25;
+    }
+    h2 {
+      font-size: 10pt;
+      margin: 0 0 6px;
+      border-bottom: 1px solid #e5d9c5;
+      padding-bottom: 3px;
+    }
+    .validated {
+      border: 1px solid #9bbb9a;
+      background: #f3f8f4;
+      border-radius: 8px;
+      padding: 8px 12px;
+      margin-bottom: 10px;
+      font-size: 8.5pt;
+      line-height: 1.4;
+    }
+    .validated strong { font-size: 9pt; }
+    .validated ul {
+      margin: 4px 0 0;
+      padding-left: 16px;
+    }
+    .validated li { margin-bottom: 2px; }
+    .q {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 7px 12px;
+    }
+    .item {
+      border: 1px solid #e5d9c5;
+      border-radius: 8px;
+      padding: 7px 9px;
+      background: #fdfbf7;
+      break-inside: avoid;
+    }
+    .item .num {
+      font-size: 7pt;
+      font-weight: 700;
+      color: #8a7355;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 2px;
+    }
+    .item .ask {
+      font-size: 8pt;
+      font-weight: 600;
+      line-height: 1.25;
+      margin: 0 0 4px;
+    }
+    .item .opts {
+      font-size: 7.5pt;
+      color: #5c4d3f;
+      line-height: 1.4;
+      margin: 0;
+    }
+    .check { font-family: "Segoe UI Symbol", sans-serif; }
+    .logo-footer {
+      position: fixed;
+      right: 0;
+      bottom: 0;
+      width: 120px;
+      height: auto;
+      opacity: 0.95;
+      z-index: 10;
+    }
+    .no-print { text-align: center; margin-bottom: 10px; }
+    @media print {
+      .no-print { display: none !important; }
+      .logo-footer { position: fixed; right: 0; bottom: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="no-print">
+    <button onclick="window.print()" style="padding:8px 14px;border-radius:8px;border:0;background:#4F3E32;color:#fff;font-weight:600;cursor:pointer">
+      Imprimir / Salvar PDF
+    </button>
+  </div>
+
+  <img
+    class="logo-footer"
+    src="../public/logo-ariane-wide-transparente.png"
+    alt="Ariane Andrade Assessoria"
+  />
+
+  <h1>Fluxo de trabalho — Ariane Andrade Assessoria</h1>
+  <p class="sub">Validação do fluxo operacional</p>
+
+  <div class="flow">
+    <div class="step hoje">
+      <div class="n">1</div>
+      <div class="t">Pessoas</div>
+      <div class="d">Comprador, vendedor, assessor, testemunha</div>
+    </div>
+    <div class="step hoje">
+      <div class="n">2</div>
+      <div class="t">Animais</div>
+      <div class="d">Plantel e documentação</div>
+    </div>
+    <div class="step validar">
+      <div class="n">3</div>
+      <div class="t">Leilão</div>
+      <div class="d">Evento de oferta dos animais</div>
+    </div>
+    <div class="step validar">
+      <div class="n">4</div>
+      <div class="t">Lote / Oferta</div>
+      <div class="d">Animal no leilão com condições</div>
+    </div>
+    <div class="step validar">
+      <div class="n">5</div>
+      <div class="t">Arremate / Venda</div>
+      <div class="d">Venda + % de repasse</div>
+    </div>
+    <div class="step depois">
+      <div class="n">6</div>
+      <div class="t">Contrato</div>
+      <div class="d">Modelo padrão ou específico</div>
+    </div>
+    <div class="step hoje">
+      <div class="n">7</div>
+      <div class="t">Aceites</div>
+      <div class="d">Assinaturas e testemunhas</div>
+    </div>
+    <div class="step hoje">
+      <div class="n">8</div>
+      <div class="t">Cobranças</div>
+      <div class="d">Parcelas e pagamentos</div>
+    </div>
+    <div class="step ok">
+      <div class="n">9</div>
+      <div class="t">Repasses</div>
+      <div class="d">Assessoria, dono e assessores</div>
+    </div>
+  </div>
+
+  <h2>Validado — Repasses</h2>
+  <div class="validated">
+    <strong>Combinado com a Ariane:</strong>
+    <ul>
+      <li>Após as <strong>cobranças</strong>, vem o controle de <strong>repasses</strong>.</li>
+      <li>Destinatários: <strong>assessoria</strong>, <strong>dono do animal (vendedor)</strong> e <strong>assessores</strong> envolvidos.</li>
+      <li>Venda parcelada → <strong>repasse também parcelado</strong> (acompanha as parcelas da cobrança).</li>
+      <li>Quem participa e a <strong>%</strong> de cada um são definidos <strong>antes da venda</strong>.</li>
+      <li>Em geral, é uma <strong>porcentagem retida em cada parcela</strong> recebida.</li>
+      <li>No sistema: configurar o repasse na <strong>venda</strong> (antecipado) e acompanhar pago / pendente por parcela.</li>
+    </ul>
+  </div>
+
+  <h2>Ainda em aberto</h2>
+  <div class="q">
+    <div class="item">
+      <div class="num">1 · Documentação</div>
+      <p class="ask">Quais documentos guardar e em qual etapa?</p>
+      <p class="opts">
+        <span class="check">☐</span> Animal (RG, AIE, vacinas…)<br>
+        <span class="check">☐</span> Pessoa (RG/CPF…)<br>
+        <span class="check">☐</span> Contrato / comprovantes<br>
+        <span class="check">☐</span> Outros: ____________
+      </p>
+    </div>
+    <div class="item">
+      <div class="num">2 · Leilões</div>
+      <p class="ask">Cadastrar leilão? Gerenciar ao vivo?</p>
+      <p class="opts">
+        <span class="check">☐</span> Só cadastro do evento<br>
+        <span class="check">☐</span> Sem evento (só a venda)<br>
+        <span class="check">☐</span> Ao vivo no sistema<br>
+        <span class="check">☐</span> Leilão fora do sistema
+      </p>
+    </div>
+    <div class="item">
+      <div class="num">3 · Vendas e cobranças</div>
+      <p class="ask">Como entram as vendas e as cobranças?</p>
+      <p class="opts">
+        <span class="check">☐</span> Venda: manual / planilha / integração<br>
+        <span class="check">☐</span> Cobrança: sistema / banco / manual<br>
+        <span class="check">☐</span> Baixa: automática / manual / mista
+      </p>
+    </div>
+  </div>
+</body>
+</html>

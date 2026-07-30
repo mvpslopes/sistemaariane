@@ -19,8 +19,13 @@ const copies = [
   ['database/fix-root-password.sql', 'fix-root-password.sql'],
   ['database/seed-ficticios.sql', 'seed-ficticios.sql'],
   ['database/seed-fotos-animais.sql', 'seed-fotos-animais.sql'],
+  ['database/seed-leiloes.sql', 'seed-leiloes.sql'],
   ['database/migration-contratos.sql', 'migration-contratos.sql'],
   ['database/migration-avatar-usuarios.sql', 'migration-avatar-usuarios.sql'],
+  ['database/migration-testemunha.sql', 'migration-testemunha.sql'],
+  ['database/migration-leiloes-repasses.sql', 'migration-leiloes-repasses.sql'],
+  ['database/migration-modelos-contrato.sql', 'migration-modelos-contrato.sql'],
+  ['database/seed-modelo-contrato-padrao.sql', 'seed-modelo-contrato-padrao.sql'],
   ['database/seed-papeis.sql', 'seed-papeis.sql'],
 ];
 
@@ -68,7 +73,8 @@ writeFileSync(
    ficam nessas pastas.
 
 5. Se o banco já existir, rode também migration-avatar-usuarios.sql
-   (coluna avatar_url em users).
+   (coluna avatar_url em users), migration-testemunha.sql e
+   migration-leiloes-repasses.sql (leilões, lotes e repasses).
 
 6. Teste:
    - https://sistema.arianeandradeassessoria.app.br/

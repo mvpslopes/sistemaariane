@@ -33,6 +33,7 @@ CREATE TABLE clients (
   is_seller       TINYINT(1) NOT NULL DEFAULT 0,
   is_buyer        TINYINT(1) NOT NULL DEFAULT 1,
   is_assessor     TINYINT(1) NOT NULL DEFAULT 0,
+  is_witness      TINYINT(1) NOT NULL DEFAULT 0,
   created_by      BIGINT UNSIGNED NULL,
   created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -119,6 +120,19 @@ CREATE TABLE contracts (
   seller_id       BIGINT UNSIGNED NOT NULL,
   buyer_id        BIGINT UNSIGNED NOT NULL,
   assessor_id     BIGINT UNSIGNED NULL,
+  auction_id      BIGINT UNSIGNED NULL,
+  lot_id          BIGINT UNSIGNED NULL,
+  template_id     BIGINT UNSIGNED NULL,
+  contract_number VARCHAR(40) NULL,
+  lot_label       VARCHAR(40) NULL,
+  animal_category VARCHAR(80) NULL,
+  quantity        DECIMAL(10,2) NOT NULL DEFAULT 1,
+  commission_total_pct  DECIMAL(5,2) NULL,
+  commission_buyer_pct  DECIMAL(5,2) NULL,
+  commission_seller_pct DECIMAL(5,2) NULL,
+  witness1_id     BIGINT UNSIGNED NULL,
+  witness2_id     BIGINT UNSIGNED NULL,
+  via_label       VARCHAR(80) NULL DEFAULT 'VIA - VENDEDOR / CONTRATO',
   total_amount    DECIMAL(12,2) NOT NULL,
   payment_method  ENUM('pix','boleto','transferencia','outro') NOT NULL DEFAULT 'boleto',
   installments    INT UNSIGNED NOT NULL DEFAULT 1,
@@ -132,17 +146,43 @@ CREATE TABLE contracts (
   INDEX idx_contracts_buyer (buyer_id),
   INDEX idx_contracts_seller (seller_id),
   INDEX idx_contracts_status (status),
+  INDEX idx_contracts_auction (auction_id),
+  INDEX idx_contracts_lot (lot_id),
+  INDEX idx_contracts_template (template_id),
+  INDEX idx_contracts_number (contract_number),
   CONSTRAINT fk_contracts_animal FOREIGN KEY (animal_id) REFERENCES animals(id) ON DELETE RESTRICT,
   CONSTRAINT fk_contracts_seller FOREIGN KEY (seller_id) REFERENCES clients(id) ON DELETE RESTRICT,
   CONSTRAINT fk_contracts_buyer FOREIGN KEY (buyer_id) REFERENCES clients(id) ON DELETE RESTRICT,
   CONSTRAINT fk_contracts_assessor FOREIGN KEY (assessor_id) REFERENCES clients(id) ON DELETE SET NULL,
-  CONSTRAINT fk_contracts_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+  CONSTRAINT fk_contracts_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_contracts_witness1 FOREIGN KEY (witness1_id) REFERENCES clients(id) ON DELETE SET NULL,
+  CONSTRAINT fk_contracts_witness2 FOREIGN KEY (witness2_id) REFERENCES clients(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE contract_templates (
+  id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name            VARCHAR(200) NOT NULL,
+  code            VARCHAR(60) NULL,
+  title           VARCHAR(255) NOT NULL DEFAULT 'NOTA DE LEILÃO E CONTRATO COM RESERVA DE DOMÍNIO',
+  body_text       MEDIUMTEXT NOT NULL,
+  is_default      TINYINT(1) NOT NULL DEFAULT 0,
+  active          TINYINT(1) NOT NULL DEFAULT 1,
+  notes           TEXT NULL,
+  created_by      BIGINT UNSIGNED NULL,
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_templates_code (code),
+  INDEX idx_templates_active (active),
+  CONSTRAINT fk_templates_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE contracts
+  ADD CONSTRAINT fk_contracts_template FOREIGN KEY (template_id) REFERENCES contract_templates(id) ON DELETE SET NULL;
 
 CREATE TABLE contract_signatures (
   id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   contract_id   BIGINT UNSIGNED NOT NULL,
-  party_role    ENUM('seller','buyer','assessor') NOT NULL,
+  party_role    ENUM('seller','buyer','assessor','witness1','witness2') NOT NULL,
   client_id     BIGINT UNSIGNED NOT NULL,
   signer_name   VARCHAR(200) NOT NULL,
   signed_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -173,6 +213,83 @@ CREATE TABLE charges (
   INDEX idx_charges_due (due_date),
   CONSTRAINT fk_charges_contract FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
   CONSTRAINT fk_charges_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE auctions (
+  id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  name            VARCHAR(200) NOT NULL,
+  auction_date    DATE NULL,
+  location        VARCHAR(255) NULL,
+  organizer       VARCHAR(200) NULL,
+  status          ENUM('rascunho','agendado','em_andamento','encerrado','cancelado') NOT NULL DEFAULT 'rascunho',
+  notes           TEXT NULL,
+  created_by      BIGINT UNSIGNED NULL,
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_auctions_status (status),
+  INDEX idx_auctions_date (auction_date),
+  CONSTRAINT fk_auctions_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE auction_lots (
+  id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  auction_id      BIGINT UNSIGNED NOT NULL,
+  animal_id       BIGINT UNSIGNED NOT NULL,
+  lot_number      VARCHAR(40) NULL,
+  seller_id       BIGINT UNSIGNED NOT NULL,
+  min_price       DECIMAL(12,2) NULL,
+  conditions_text TEXT NULL,
+  status          ENUM('disponivel','arrematado','retirado') NOT NULL DEFAULT 'disponivel',
+  contract_id     BIGINT UNSIGNED NULL,
+  created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_lots_auction (auction_id),
+  INDEX idx_lots_animal (animal_id),
+  INDEX idx_lots_status (status),
+  CONSTRAINT fk_lots_auction FOREIGN KEY (auction_id) REFERENCES auctions(id) ON DELETE CASCADE,
+  CONSTRAINT fk_lots_animal FOREIGN KEY (animal_id) REFERENCES animals(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_lots_seller FOREIGN KEY (seller_id) REFERENCES clients(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_lots_contract FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE contract_payout_rules (
+  id                    BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  contract_id           BIGINT UNSIGNED NOT NULL,
+  beneficiary_role      ENUM('assessoria','seller','assessor','outro') NOT NULL,
+  beneficiary_client_id BIGINT UNSIGNED NULL,
+  label                 VARCHAR(120) NULL,
+  pct                   DECIMAL(5,2) NOT NULL,
+  sort_order            INT UNSIGNED NOT NULL DEFAULT 0,
+  created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_payout_rules_contract (contract_id),
+  CONSTRAINT fk_payout_rules_contract FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
+  CONSTRAINT fk_payout_rules_client FOREIGN KEY (beneficiary_client_id) REFERENCES clients(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE payouts (
+  id                    BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  contract_id           BIGINT UNSIGNED NOT NULL,
+  charge_id             BIGINT UNSIGNED NOT NULL,
+  rule_id               BIGINT UNSIGNED NULL,
+  installment_no        INT UNSIGNED NOT NULL,
+  beneficiary_role      ENUM('assessoria','seller','assessor','outro') NOT NULL,
+  beneficiary_client_id BIGINT UNSIGNED NULL,
+  label                 VARCHAR(120) NULL,
+  pct                   DECIMAL(5,2) NOT NULL,
+  amount                DECIMAL(12,2) NOT NULL,
+  status                ENUM('aguardando','pendente','pago','cancelado') NOT NULL DEFAULT 'aguardando',
+  paid_at               DATETIME NULL,
+  notes                 TEXT NULL,
+  created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_payouts_contract (contract_id),
+  INDEX idx_payouts_charge (charge_id),
+  INDEX idx_payouts_status (status),
+  INDEX idx_payouts_beneficiary (beneficiary_client_id),
+  CONSTRAINT fk_payouts_contract FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
+  CONSTRAINT fk_payouts_charge FOREIGN KEY (charge_id) REFERENCES charges(id) ON DELETE CASCADE,
+  CONSTRAINT fk_payouts_rule FOREIGN KEY (rule_id) REFERENCES contract_payout_rules(id) ON DELETE SET NULL,
+  CONSTRAINT fk_payouts_client FOREIGN KEY (beneficiary_client_id) REFERENCES clients(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Root: marcus.lopes / *.Admin14!

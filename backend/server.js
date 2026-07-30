@@ -327,6 +327,7 @@ app.get('/api/dashboard', auth(), async (req, res) => {
         buyers: 0,
         sellers: 0,
         assessors: 0,
+        witnesses: 0,
         animals: animals.total,
         activeAnimals: activeAnimals.total,
         contracts: contracts.total,
@@ -348,6 +349,9 @@ app.get('/api/dashboard', auth(), async (req, res) => {
     );
     const [[assessors]] = await pool.execute(
       'SELECT COUNT(*) AS total FROM clients WHERE active = 1 AND is_assessor = 1'
+    );
+    const [[witnesses]] = await pool.execute(
+      'SELECT COUNT(*) AS total FROM clients WHERE active = 1 AND is_witness = 1'
     );
     const [[animals]] = await pool.execute('SELECT COUNT(*) AS total FROM animals');
     const [[activeAnimals]] = await pool.execute(
@@ -377,6 +381,7 @@ app.get('/api/dashboard', auth(), async (req, res) => {
       buyers: buyers.total,
       sellers: sellers.total,
       assessors: assessors.total,
+      witnesses: witnesses.total,
       animals: animals.total,
       activeAnimals: activeAnimals.total,
       contracts: contracts.total,
@@ -401,6 +406,7 @@ function mapClient(r) {
     is_seller: Boolean(r.is_seller),
     is_buyer: Boolean(r.is_buyer ?? 1),
     is_assessor: Boolean(r.is_assessor),
+    is_witness: Boolean(r.is_witness),
   };
 }
 
@@ -423,19 +429,132 @@ async function generateCharges(conn, contractId, buyerId, total, n, firstDue, me
   }
 }
 
+/** Regras de repasse (% por beneficiário) → parcelas vinculadas a cada cobrança */
+async function generatePayouts(conn, contractId, rules) {
+  await conn.execute('DELETE FROM payouts WHERE contract_id = ?', [contractId]);
+  await conn.execute('DELETE FROM contract_payout_rules WHERE contract_id = ?', [contractId]);
+  if (!Array.isArray(rules) || rules.length === 0) return;
+
+  const cleaned = [];
+  for (const r of rules) {
+    const pct = Number(r.pct);
+    const role = r.beneficiaryRole || r.beneficiary_role;
+    if (!['assessoria', 'seller', 'assessor', 'outro'].includes(role)) continue;
+    if (!(pct > 0)) continue;
+    cleaned.push({
+      role,
+      clientId: r.beneficiaryClientId || r.beneficiary_client_id || null,
+      label: r.label || null,
+      pct,
+    });
+  }
+  if (!cleaned.length) return;
+
+  const sumPct = cleaned.reduce((s, r) => s + r.pct, 0);
+  if (sumPct > 100.01) {
+    const err = new Error('A soma dos percentuais de repasse não pode passar de 100%');
+    err.status = 400;
+    throw err;
+  }
+
+  const ruleIds = [];
+  for (let i = 0; i < cleaned.length; i++) {
+    const r = cleaned[i];
+    const [ins] = await conn.execute(
+      `INSERT INTO contract_payout_rules
+       (contract_id, beneficiary_role, beneficiary_client_id, label, pct, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [contractId, r.role, r.clientId ? Number(r.clientId) : null, r.label, r.pct, i]
+    );
+    ruleIds.push({ ...r, id: ins.insertId });
+  }
+
+  const [charges] = await conn.execute(
+    'SELECT id, installment_no, amount FROM charges WHERE contract_id = ? ORDER BY installment_no ASC',
+    [contractId]
+  );
+  for (const ch of charges) {
+    let allocated = 0;
+    for (let i = 0; i < ruleIds.length; i++) {
+      const r = ruleIds[i];
+      let amount =
+        i === ruleIds.length - 1 && Math.abs(sumPct - 100) < 0.01
+          ? Math.round((Number(ch.amount) - allocated) * 100) / 100
+          : Math.round(Number(ch.amount) * (r.pct / 100) * 100) / 100;
+      allocated += amount;
+      await conn.execute(
+        `INSERT INTO payouts
+         (contract_id, charge_id, rule_id, installment_no, beneficiary_role, beneficiary_client_id, label, pct, amount, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'aguardando')`,
+        [
+          contractId,
+          ch.id,
+          r.id,
+          ch.installment_no,
+          r.role,
+          r.clientId ? Number(r.clientId) : null,
+          r.label,
+          r.pct,
+          amount,
+        ]
+      );
+    }
+  }
+}
+
 function mapContract(r) {
   return {
     id: String(r.id),
     animal_id: String(r.animal_id),
     animal_name: r.animal_name || null,
+    animal_chip: r.animal_chip || null,
+    animal_color: r.animal_color || null,
+    animal_birth_date: r.animal_birth_date || null,
+    animal_sex: r.animal_sex || null,
     sale_type: r.sale_type,
     share_pct: r.share_pct != null ? Number(r.share_pct) : null,
     seller_id: String(r.seller_id),
     seller_name: r.seller_name || null,
+    seller_document: r.seller_document || null,
+    seller_document_type: r.seller_document_type || null,
+    seller_email: r.seller_email || null,
+    seller_phone: r.seller_phone || null,
+    seller_whatsapp: r.seller_whatsapp || null,
+    seller_address: r.seller_address || null,
+    seller_city: r.seller_city || null,
+    seller_state: r.seller_state || null,
     buyer_id: String(r.buyer_id),
     buyer_name: r.buyer_name || null,
+    buyer_document: r.buyer_document || null,
+    buyer_document_type: r.buyer_document_type || null,
+    buyer_email: r.buyer_email || null,
+    buyer_phone: r.buyer_phone || null,
+    buyer_whatsapp: r.buyer_whatsapp || null,
+    buyer_address: r.buyer_address || null,
+    buyer_city: r.buyer_city || null,
+    buyer_state: r.buyer_state || null,
     assessor_id: r.assessor_id ? String(r.assessor_id) : null,
     assessor_name: r.assessor_name || null,
+    auction_id: r.auction_id ? String(r.auction_id) : null,
+    auction_name: r.auction_name || null,
+    auction_date: r.auction_date || null,
+    lot_id: r.lot_id ? String(r.lot_id) : null,
+    template_id: r.template_id ? String(r.template_id) : null,
+    template_name: r.template_name || null,
+    template_title: r.template_title || null,
+    template_body: r.template_body || null,
+    contract_number: r.contract_number || null,
+    lot_label: r.lot_label || null,
+    animal_category: r.animal_category || null,
+    quantity: r.quantity != null ? Number(r.quantity) : 1,
+    commission_total_pct: r.commission_total_pct != null ? Number(r.commission_total_pct) : null,
+    commission_buyer_pct: r.commission_buyer_pct != null ? Number(r.commission_buyer_pct) : null,
+    commission_seller_pct: r.commission_seller_pct != null ? Number(r.commission_seller_pct) : null,
+    witness1_id: r.witness1_id ? String(r.witness1_id) : null,
+    witness1_name: r.witness1_name || null,
+    witness2_id: r.witness2_id ? String(r.witness2_id) : null,
+    witness2_name: r.witness2_name || null,
+    via_label: r.via_label || 'VIA - VENDEDOR / CONTRATO',
     total_amount: Number(r.total_amount),
     payment_method: r.payment_method,
     installments: Number(r.installments),
@@ -443,6 +562,72 @@ function mapContract(r) {
     status: r.status,
     notes: r.notes,
     created_at: r.created_at || null,
+  };
+}
+
+function mapTemplate(r) {
+  return {
+    id: String(r.id),
+    name: r.name,
+    code: r.code,
+    title: r.title,
+    body_text: r.body_text,
+    is_default: Boolean(r.is_default),
+    active: Boolean(r.active),
+    notes: r.notes,
+    created_at: r.created_at || null,
+  };
+}
+
+function mapAuction(r) {
+  return {
+    id: String(r.id),
+    name: r.name,
+    auction_date: r.auction_date,
+    location: r.location,
+    organizer: r.organizer,
+    status: r.status,
+    notes: r.notes,
+    lots_count: r.lots_count != null ? Number(r.lots_count) : undefined,
+    created_at: r.created_at || null,
+  };
+}
+
+function mapLot(r) {
+  return {
+    id: String(r.id),
+    auction_id: String(r.auction_id),
+    animal_id: String(r.animal_id),
+    animal_name: r.animal_name || null,
+    lot_number: r.lot_number,
+    seller_id: String(r.seller_id),
+    seller_name: r.seller_name || null,
+    min_price: r.min_price != null ? Number(r.min_price) : null,
+    conditions_text: r.conditions_text,
+    status: r.status,
+    contract_id: r.contract_id ? String(r.contract_id) : null,
+    created_at: r.created_at || null,
+  };
+}
+
+function mapPayout(r) {
+  return {
+    id: String(r.id),
+    contract_id: String(r.contract_id),
+    charge_id: String(r.charge_id),
+    installment_no: Number(r.installment_no),
+    beneficiary_role: r.beneficiary_role,
+    beneficiary_client_id: r.beneficiary_client_id ? String(r.beneficiary_client_id) : null,
+    beneficiary_name: r.beneficiary_name || null,
+    label: r.label,
+    pct: Number(r.pct),
+    amount: Number(r.amount),
+    status: r.status,
+    paid_at: r.paid_at,
+    notes: r.notes,
+    animal_name: r.animal_name || null,
+    charge_status: r.charge_status || null,
+    charge_due_date: r.charge_due_date || null,
   };
 }
 
@@ -468,6 +653,7 @@ app.get('/api/clients', auth(), async (req, res) => {
     if (roleFilter === 'seller') sql += ' AND is_seller = 1';
     if (roleFilter === 'buyer') sql += ' AND is_buyer = 1';
     if (roleFilter === 'assessor') sql += ' AND is_assessor = 1';
+    if (roleFilter === 'witness') sql += ' AND is_witness = 1';
 
     sql += ' ORDER BY name ASC';
     const [rows] = await pool.execute(sql, params);
@@ -497,15 +683,15 @@ app.post('/api/clients', auth(['root', 'admin', 'user']), async (req, res) => {
     const {
       name, document_type = 'CPF', document, email, phone, whatsapp,
       city, state, address, notes, active = true,
-      is_seller = false, is_buyer = true, is_assessor = false,
+      is_seller = false, is_buyer = true, is_assessor = false, is_witness = false,
     } = req.body;
 
     if (!name?.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
 
     const [result] = await pool.execute(
       `INSERT INTO clients
-       (name, document_type, document, email, phone, whatsapp, city, state, address, notes, active, is_seller, is_buyer, is_assessor, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (name, document_type, document, email, phone, whatsapp, city, state, address, notes, active, is_seller, is_buyer, is_assessor, is_witness, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name.trim(),
         document_type || 'CPF',
@@ -521,6 +707,7 @@ app.post('/api/clients', auth(['root', 'admin', 'user']), async (req, res) => {
         is_seller ? 1 : 0,
         is_buyer ? 1 : 0,
         is_assessor ? 1 : 0,
+        is_witness ? 1 : 0,
         req.user.id,
       ]
     );
@@ -540,7 +727,7 @@ app.put('/api/clients/:id', auth(['root', 'admin', 'user']), async (req, res) =>
     const {
       name, document_type, document, email, phone, whatsapp,
       city, state, address, notes, active,
-      is_seller, is_buyer, is_assessor,
+      is_seller, is_buyer, is_assessor, is_witness,
     } = req.body;
 
     if (!name?.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
@@ -548,7 +735,7 @@ app.put('/api/clients/:id', auth(['root', 'admin', 'user']), async (req, res) =>
     await pool.execute(
       `UPDATE clients SET
         name=?, document_type=?, document=?, email=?, phone=?, whatsapp=?,
-        city=?, state=?, address=?, notes=?, active=?, is_seller=?, is_buyer=?, is_assessor=?
+        city=?, state=?, address=?, notes=?, active=?, is_seller=?, is_buyer=?, is_assessor=?, is_witness=?
        WHERE id=?`,
       [
         name.trim(),
@@ -565,6 +752,7 @@ app.put('/api/clients/:id', auth(['root', 'admin', 'user']), async (req, res) =>
         is_seller ? 1 : 0,
         is_buyer ? 1 : 0,
         is_assessor ? 1 : 0,
+        is_witness ? 1 : 0,
         id,
       ]
     );
@@ -986,13 +1174,28 @@ app.put('/api/users/:id', auth(['root', 'admin']), async (req, res) => {
   }
 });
 
-const contractSelect = `SELECT c.*, a.name AS animal_name,
-    s.name AS seller_name, b.name AS buyer_name, ass.name AS assessor_name
+const contractSelect = `SELECT c.*,
+    a.name AS animal_name, a.chip_no AS animal_chip, a.color AS animal_color,
+    a.birth_date AS animal_birth_date, a.sex AS animal_sex,
+    s.name AS seller_name, s.document AS seller_document, s.document_type AS seller_document_type,
+    s.email AS seller_email, s.phone AS seller_phone, s.whatsapp AS seller_whatsapp,
+    s.address AS seller_address, s.city AS seller_city, s.state AS seller_state,
+    b.name AS buyer_name, b.document AS buyer_document, b.document_type AS buyer_document_type,
+    b.email AS buyer_email, b.phone AS buyer_phone, b.whatsapp AS buyer_whatsapp,
+    b.address AS buyer_address, b.city AS buyer_city, b.state AS buyer_state,
+    ass.name AS assessor_name,
+    w1.name AS witness1_name, w2.name AS witness2_name,
+    au.name AS auction_name, au.auction_date AS auction_date,
+    t.name AS template_name, t.title AS template_title, t.body_text AS template_body
   FROM contracts c
   INNER JOIN animals a ON a.id = c.animal_id
   INNER JOIN clients s ON s.id = c.seller_id
   INNER JOIN clients b ON b.id = c.buyer_id
   LEFT JOIN clients ass ON ass.id = c.assessor_id
+  LEFT JOIN clients w1 ON w1.id = c.witness1_id
+  LEFT JOIN clients w2 ON w2.id = c.witness2_id
+  LEFT JOIN auctions au ON au.id = c.auction_id
+  LEFT JOIN contract_templates t ON t.id = c.template_id
   WHERE 1=1`;
 
 app.get('/api/contracts', auth(), async (req, res) => {
@@ -1038,6 +1241,12 @@ app.get('/api/contracts/:id', auth(), async (req, res) => {
       'SELECT * FROM charges WHERE contract_id = ? ORDER BY installment_no ASC',
       [id]
     );
+    const [rules] = await pool.execute(
+      `SELECT r.*, cl.name AS beneficiary_name FROM contract_payout_rules r
+       LEFT JOIN clients cl ON cl.id = r.beneficiary_client_id
+       WHERE r.contract_id = ? ORDER BY r.sort_order ASC, r.id ASC`,
+      [id]
+    );
     res.json({
       ...mapContract(r),
       signatures: signatures.map((s) => ({
@@ -1060,6 +1269,14 @@ app.get('/api/contracts/:id', auth(), async (req, res) => {
         paid_at: c.paid_at,
         notes: c.notes,
       })),
+      payoutRules: rules.map((x) => ({
+        id: String(x.id),
+        beneficiary_role: x.beneficiary_role,
+        beneficiary_client_id: x.beneficiary_client_id ? String(x.beneficiary_client_id) : null,
+        beneficiary_name: x.beneficiary_name || null,
+        label: x.label,
+        pct: Number(x.pct),
+      })),
     });
   } catch (error) {
     console.error(error);
@@ -1073,6 +1290,10 @@ app.post('/api/contracts', auth(['root', 'admin', 'user']), async (req, res) => 
     const {
       animalId, sellerId, buyerId, assessorId, saleType = 'inteiro', sharePct,
       totalAmount, paymentMethod = 'boleto', installments = 1, firstDueDate, notes,
+      auctionId, lotId, payoutRules,
+      templateId, lotLabel, animalCategory, quantity = 1,
+      commissionTotalPct, commissionBuyerPct, commissionSellerPct,
+      witness1Id, witness2Id, viaLabel,
     } = req.body;
     const n = Math.max(1, Math.min(40, Number(installments) || 1));
     const total = Number(totalAmount);
@@ -1085,24 +1306,60 @@ app.post('/api/contracts', auth(['root', 'admin', 'user']), async (req, res) => 
       return res.status(400).json({ error: 'Informe o percentual da fração (1–100)' });
     }
 
+    let resolvedTemplateId = templateId ? Number(templateId) : null;
+    if (!resolvedTemplateId) {
+      const [[def]] = await conn.execute(
+        'SELECT id FROM contract_templates WHERE is_default = 1 AND active = 1 LIMIT 1'
+      );
+      if (def) resolvedTemplateId = def.id;
+    }
+
     await conn.beginTransaction();
     const [result] = await conn.execute(
       `INSERT INTO contracts
-       (animal_id, sale_type, share_pct, seller_id, buyer_id, assessor_id, total_amount, payment_method, installments, first_due_date, status, notes, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'aguardando_assinatura', ?, ?)`,
+       (animal_id, sale_type, share_pct, seller_id, buyer_id, assessor_id, auction_id, lot_id,
+        template_id, lot_label, animal_category, quantity,
+        commission_total_pct, commission_buyer_pct, commission_seller_pct,
+        witness1_id, witness2_id, via_label,
+        total_amount, payment_method, installments, first_due_date, status, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'aguardando_assinatura', ?, ?)`,
       [
         Number(animalId), saleType, share || null, Number(sellerId), Number(buyerId),
-        assessorId ? Number(assessorId) : null, total, paymentMethod, n, firstDueDate,
+        assessorId ? Number(assessorId) : null,
+        auctionId ? Number(auctionId) : null,
+        lotId ? Number(lotId) : null,
+        resolvedTemplateId,
+        lotLabel || null,
+        animalCategory || null,
+        quantity != null && quantity !== '' ? Number(quantity) : 1,
+        commissionTotalPct != null && commissionTotalPct !== '' ? Number(commissionTotalPct) : null,
+        commissionBuyerPct != null && commissionBuyerPct !== '' ? Number(commissionBuyerPct) : null,
+        commissionSellerPct != null && commissionSellerPct !== '' ? Number(commissionSellerPct) : null,
+        witness1Id ? Number(witness1Id) : null,
+        witness2Id ? Number(witness2Id) : null,
+        viaLabel || 'VIA - VENDEDOR / CONTRATO',
+        total, paymentMethod, n, firstDueDate,
         notes || null, req.user.id,
       ]
     );
     const contractId = result.insertId;
+    const year = new Date().getFullYear();
+    const contractNumber = `${String(10000000 + contractId).slice(-8)}-${year}`;
+    await conn.execute('UPDATE contracts SET contract_number = ? WHERE id = ?', [contractNumber, contractId]);
     await generateCharges(conn, contractId, Number(buyerId), total, n, firstDueDate, paymentMethod);
+    await generatePayouts(conn, contractId, payoutRules || []);
+    if (lotId) {
+      await conn.execute(
+        `UPDATE auction_lots SET status = 'arrematado', contract_id = ? WHERE id = ? AND status = 'disponivel'`,
+        [contractId, Number(lotId)]
+      );
+    }
     await conn.commit();
-    res.json({ success: true, id: String(contractId) });
+    res.json({ success: true, id: String(contractId), contractNumber });
   } catch (error) {
     await conn.rollback();
     console.error(error);
+    if (error.status === 400) return res.status(400).json({ error: error.message });
     res.status(500).json({ error: 'Erro ao criar contrato' });
   } finally {
     conn.release();
@@ -1136,7 +1393,11 @@ app.post('/api/contracts/:id/sign', auth(), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { partyRole, signerName, accepted } = req.body;
-    if (!['seller', 'buyer', 'assessor'].includes(partyRole) || !String(signerName || '').trim() || !accepted) {
+    if (
+      !['seller', 'buyer', 'assessor', 'witness1', 'witness2'].includes(partyRole) ||
+      !String(signerName || '').trim() ||
+      !accepted
+    ) {
       return res.status(400).json({ error: 'Informe o papel, o nome e confirme o aceite' });
     }
     const [[contract]] = await pool.execute('SELECT * FROM contracts WHERE id = ?', [id]);
@@ -1147,6 +1408,8 @@ app.post('/api/contracts/:id/sign', auth(), async (req, res) => {
     if (partyRole === 'seller') clientId = Number(contract.seller_id);
     if (partyRole === 'buyer') clientId = Number(contract.buyer_id);
     if (partyRole === 'assessor') clientId = contract.assessor_id ? Number(contract.assessor_id) : null;
+    if (partyRole === 'witness1') clientId = contract.witness1_id ? Number(contract.witness1_id) : null;
+    if (partyRole === 'witness2') clientId = contract.witness2_id ? Number(contract.witness2_id) : null;
     if (!clientId) return res.status(400).json({ error: 'Papel não se aplica a este contrato' });
     if (req.user.role === 'cliente' && Number(req.user.clientId) !== clientId) {
       return res.status(403).json({ error: 'Sem permissão para assinar neste papel' });
@@ -1163,6 +1426,8 @@ app.post('/api/contracts/:id/sign', auth(), async (req, res) => {
 
     const need = ['seller', 'buyer'];
     if (contract.assessor_id) need.push('assessor');
+    if (contract.witness1_id) need.push('witness1');
+    if (contract.witness2_id) need.push('witness2');
     const [sigs] = await pool.execute('SELECT party_role FROM contract_signatures WHERE contract_id = ?', [id]);
     const have = sigs.map((s) => s.party_role);
     const all = need.every((r) => have.includes(r));
@@ -1245,9 +1510,389 @@ app.put('/api/charges/:id', auth(['root', 'admin', 'user']), async (req, res) =>
       notes || null,
       id,
     ]);
+    if (status === 'pago') {
+      await pool.execute(
+        `UPDATE payouts SET status = 'pendente' WHERE charge_id = ? AND status = 'aguardando'`,
+        [id]
+      );
+    } else if (status === 'pendente' || status === 'atrasado') {
+      await pool.execute(
+        `UPDATE payouts SET status = 'aguardando', paid_at = NULL WHERE charge_id = ? AND status IN ('pendente','aguardando')`,
+        [id]
+      );
+    } else if (status === 'cancelado') {
+      await pool.execute(
+        `UPDATE payouts SET status = 'cancelado' WHERE charge_id = ? AND status != 'pago'`,
+        [id]
+      );
+    }
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Erro ao atualizar cobrança' });
+  }
+});
+
+app.get('/api/auctions', auth(), async (req, res) => {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT a.*, (SELECT COUNT(*) FROM auction_lots l WHERE l.auction_id = a.id) AS lots_count
+       FROM auctions a
+       ORDER BY COALESCE(a.auction_date, a.created_at) DESC, a.id DESC`
+    );
+    res.json(rows.map(mapAuction));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao listar leilões' });
+  }
+});
+
+app.get('/api/auctions/:id', auth(), async (req, res) => {
+  try {
+    const [[row]] = await pool.execute('SELECT * FROM auctions WHERE id = ?', [Number(req.params.id)]);
+    if (!row) return res.status(404).json({ error: 'Leilão não encontrado' });
+    const [lots] = await pool.execute(
+      `SELECT l.*, an.name AS animal_name, s.name AS seller_name
+       FROM auction_lots l
+       INNER JOIN animals an ON an.id = l.animal_id
+       INNER JOIN clients s ON s.id = l.seller_id
+       WHERE l.auction_id = ?
+       ORDER BY l.lot_number ASC, l.id ASC`,
+      [row.id]
+    );
+    res.json({ ...mapAuction(row), lots: lots.map(mapLot) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao abrir leilão' });
+  }
+});
+
+app.post('/api/auctions', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const { name, auctionDate, location, organizer, status = 'rascunho', notes } = req.body;
+    if (!String(name || '').trim()) return res.status(400).json({ error: 'Nome do leilão é obrigatório' });
+    const st = ['rascunho', 'agendado', 'em_andamento', 'encerrado', 'cancelado'].includes(status)
+      ? status
+      : 'rascunho';
+    const [result] = await pool.execute(
+      `INSERT INTO auctions (name, auction_date, location, organizer, status, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        String(name).trim(),
+        auctionDate || null,
+        location || null,
+        organizer || null,
+        st,
+        notes || null,
+        req.user.id,
+      ]
+    );
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao criar leilão' });
+  }
+});
+
+app.put('/api/auctions/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { name, auctionDate, location, organizer, status, notes } = req.body;
+    const fields = [];
+    const params = [];
+    if (name !== undefined) {
+      fields.push('name=?');
+      params.push(String(name).trim());
+    }
+    if (auctionDate !== undefined) {
+      fields.push('auction_date=?');
+      params.push(auctionDate || null);
+    }
+    if (location !== undefined) {
+      fields.push('location=?');
+      params.push(location || null);
+    }
+    if (organizer !== undefined) {
+      fields.push('organizer=?');
+      params.push(organizer || null);
+    }
+    if (status !== undefined) {
+      if (!['rascunho', 'agendado', 'em_andamento', 'encerrado', 'cancelado'].includes(status)) {
+        return res.status(400).json({ error: 'Status inválido' });
+      }
+      fields.push('status=?');
+      params.push(status);
+    }
+    if (notes !== undefined) {
+      fields.push('notes=?');
+      params.push(notes || null);
+    }
+    if (!fields.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(id);
+    await pool.execute(`UPDATE auctions SET ${fields.join(',')} WHERE id=?`, params);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao atualizar leilão' });
+  }
+});
+
+app.get('/api/auction-lots', auth(), async (req, res) => {
+  try {
+    let sql = `SELECT l.*, an.name AS animal_name, s.name AS seller_name
+               FROM auction_lots l
+               INNER JOIN animals an ON an.id = l.animal_id
+               INNER JOIN clients s ON s.id = l.seller_id
+               WHERE 1=1`;
+    const params = [];
+    if (req.query.auctionId) {
+      sql += ' AND l.auction_id = ?';
+      params.push(Number(req.query.auctionId));
+    }
+    if (req.query.status) {
+      sql += ' AND l.status = ?';
+      params.push(req.query.status);
+    }
+    sql += ' ORDER BY l.lot_number ASC, l.id ASC';
+    const [rows] = await pool.execute(sql, params);
+    res.json(rows.map(mapLot));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao listar lotes' });
+  }
+});
+
+app.post('/api/auction-lots', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const { auctionId, animalId, sellerId, lotNumber, minPrice, conditionsText } = req.body;
+    if (!auctionId || !animalId || !sellerId) {
+      return res.status(400).json({ error: 'Leilão, animal e vendedor são obrigatórios' });
+    }
+    const [result] = await pool.execute(
+      `INSERT INTO auction_lots (auction_id, animal_id, lot_number, seller_id, min_price, conditions_text, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'disponivel')`,
+      [
+        Number(auctionId),
+        Number(animalId),
+        lotNumber || null,
+        Number(sellerId),
+        minPrice != null && minPrice !== '' ? Number(minPrice) : null,
+        conditionsText || null,
+      ]
+    );
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao criar lote' });
+  }
+});
+
+app.put('/api/auction-lots/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { lotNumber, minPrice, conditionsText, status, sellerId } = req.body;
+    const fields = [];
+    const params = [];
+    if (lotNumber !== undefined) {
+      fields.push('lot_number=?');
+      params.push(lotNumber || null);
+    }
+    if (minPrice !== undefined) {
+      fields.push('min_price=?');
+      params.push(minPrice != null && minPrice !== '' ? Number(minPrice) : null);
+    }
+    if (conditionsText !== undefined) {
+      fields.push('conditions_text=?');
+      params.push(conditionsText || null);
+    }
+    if (sellerId !== undefined) {
+      fields.push('seller_id=?');
+      params.push(Number(sellerId));
+    }
+    if (status !== undefined) {
+      if (!['disponivel', 'arrematado', 'retirado'].includes(status)) {
+        return res.status(400).json({ error: 'Status inválido' });
+      }
+      fields.push('status=?');
+      params.push(status);
+    }
+    if (!fields.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(id);
+    await pool.execute(`UPDATE auction_lots SET ${fields.join(',')} WHERE id=?`, params);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao atualizar lote' });
+  }
+});
+
+app.get('/api/payouts', auth(), async (req, res) => {
+  try {
+    let sql = `SELECT p.*, cl.name AS beneficiary_name, a.name AS animal_name,
+                      ch.status AS charge_status, ch.due_date AS charge_due_date
+               FROM payouts p
+               INNER JOIN contracts c ON c.id = p.contract_id
+               INNER JOIN animals a ON a.id = c.animal_id
+               INNER JOIN charges ch ON ch.id = p.charge_id
+               LEFT JOIN clients cl ON cl.id = p.beneficiary_client_id
+               WHERE 1=1`;
+    const params = [];
+    if (req.user.role === 'cliente') {
+      if (!req.user.clientId) return res.json([]);
+      sql += ' AND p.beneficiary_client_id = ?';
+      params.push(req.user.clientId);
+    }
+    if (req.query.status) {
+      sql += ' AND p.status = ?';
+      params.push(req.query.status);
+    }
+    if (req.query.contractId) {
+      sql += ' AND p.contract_id = ?';
+      params.push(Number(req.query.contractId));
+    }
+    sql += ' ORDER BY ch.due_date ASC, p.installment_no ASC, p.id ASC';
+    const [rows] = await pool.execute(sql, params);
+    res.json(rows.map(mapPayout));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao listar repasses' });
+  }
+});
+
+app.put('/api/payouts/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { status, notes } = req.body;
+    if (!['aguardando', 'pendente', 'pago', 'cancelado'].includes(status)) {
+      return res.status(400).json({ error: 'Status inválido' });
+    }
+    const paidAt = status === 'pago' ? new Date() : null;
+    await pool.execute('UPDATE payouts SET status=?, paid_at=?, notes=? WHERE id=?', [
+      status,
+      paidAt,
+      notes || null,
+      id,
+    ]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao atualizar repasse' });
+  }
+});
+
+// ——— Modelos de contrato (versos) ———
+app.get('/api/contract-templates', auth(), async (req, res) => {
+  try {
+    let sql = 'SELECT * FROM contract_templates WHERE 1=1';
+    const params = [];
+    if (req.query.active === '1') {
+      sql += ' AND active = 1';
+    }
+    sql += ' ORDER BY is_default DESC, name ASC';
+    const [rows] = await pool.execute(sql, params);
+    res.json(rows.map(mapTemplate));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao listar modelos' });
+  }
+});
+
+app.get('/api/contract-templates/:id', auth(), async (req, res) => {
+  try {
+    const [[row]] = await pool.execute('SELECT * FROM contract_templates WHERE id = ?', [
+      Number(req.params.id),
+    ]);
+    if (!row) return res.status(404).json({ error: 'Modelo não encontrado' });
+    res.json(mapTemplate(row));
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao abrir modelo' });
+  }
+});
+
+app.post('/api/contract-templates', auth(['root', 'admin', 'user']), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { name, code, title, bodyText, isDefault = false, active = true, notes } = req.body;
+    if (!String(name || '').trim() || !String(bodyText || '').trim()) {
+      return res.status(400).json({ error: 'Nome e texto do verso são obrigatórios' });
+    }
+    await conn.beginTransaction();
+    if (isDefault) {
+      await conn.execute('UPDATE contract_templates SET is_default = 0');
+    }
+    const [result] = await conn.execute(
+      `INSERT INTO contract_templates (name, code, title, body_text, is_default, active, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        String(name).trim(),
+        code || null,
+        title || 'NOTA DE LEILÃO E CONTRATO COM RESERVA DE DOMÍNIO',
+        bodyText,
+        isDefault ? 1 : 0,
+        active ? 1 : 0,
+        notes || null,
+        req.user.id,
+      ]
+    );
+    await conn.commit();
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    await conn.rollback();
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao criar modelo' });
+  } finally {
+    conn.release();
+  }
+});
+
+app.put('/api/contract-templates/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const id = Number(req.params.id);
+    const { name, code, title, bodyText, isDefault, active, notes } = req.body;
+    await conn.beginTransaction();
+    if (isDefault) {
+      await conn.execute('UPDATE contract_templates SET is_default = 0');
+    }
+    const fields = [];
+    const params = [];
+    if (name !== undefined) {
+      fields.push('name=?');
+      params.push(String(name).trim());
+    }
+    if (code !== undefined) {
+      fields.push('code=?');
+      params.push(code || null);
+    }
+    if (title !== undefined) {
+      fields.push('title=?');
+      params.push(title);
+    }
+    if (bodyText !== undefined) {
+      fields.push('body_text=?');
+      params.push(bodyText);
+    }
+    if (isDefault !== undefined) {
+      fields.push('is_default=?');
+      params.push(isDefault ? 1 : 0);
+    }
+    if (active !== undefined) {
+      fields.push('active=?');
+      params.push(active ? 1 : 0);
+    }
+    if (notes !== undefined) {
+      fields.push('notes=?');
+      params.push(notes || null);
+    }
+    if (!fields.length) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'Nada para atualizar' });
+    }
+    params.push(id);
+    await conn.execute(`UPDATE contract_templates SET ${fields.join(',')} WHERE id=?`, params);
+    await conn.commit();
+    res.json({ success: true });
+  } catch (error) {
+    await conn.rollback();
+    res.status(500).json({ error: 'Erro ao atualizar modelo' });
+  } finally {
+    conn.release();
   }
 });
 

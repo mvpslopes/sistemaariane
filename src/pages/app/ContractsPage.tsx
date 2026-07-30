@@ -46,7 +46,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const [detail, setDetail] = useState<Contract | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
-  const [signRole, setSignRole] = useState<'seller' | 'buyer' | 'assessor'>('buyer');
+  const [signRole, setSignRole] = useState<'seller' | 'buyer' | 'assessor' | 'witness1' | 'witness2'>('buyer');
   const [signerName, setSignerName] = useState('');
   const [accepted, setAccepted] = useState(false);
   const [signing, setSigning] = useState(false);
@@ -160,7 +160,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
           <table className="min-w-full text-left text-sm">
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
-                <th className="px-4 py-3 font-medium">Animal</th>
+                <th className="px-4 py-3 font-medium">Nº / Animal</th>
                 <th className="hidden px-4 py-3 font-medium md:table-cell">Tipo</th>
                 <th className="hidden px-4 py-3 font-medium lg:table-cell">Comprador</th>
                 <th className="px-4 py-3 font-medium">Valor</th>
@@ -178,7 +178,12 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
               )}
               {filtered.map((c) => (
                 <tr key={c.id} className="border-t border-brand-beige/60 hover:bg-brand-off-white/70">
-                  <td className="px-4 py-3 font-medium text-brand-dark-brown">{c.animal_name}</td>
+                  <td className="px-4 py-3 font-medium text-brand-dark-brown">
+                    <div>{c.animal_name}</div>
+                    {c.contract_number && (
+                      <div className="text-xs font-normal text-brand-olive">{c.contract_number}</div>
+                    )}
+                  </td>
                   <td className="hidden px-4 py-3 text-brand-brown md:table-cell">
                     {saleLabel[c.sale_type]}
                     {c.share_pct != null && c.sale_type !== 'inteiro' ? ` (${c.share_pct}%)` : ''}
@@ -250,6 +255,12 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                 {detail.assessor_id && (
                   <li>Assessor: {signed('assessor') ? '✓ Assinado' : 'Pendente'}</li>
                 )}
+                {detail.witness1_id && (
+                  <li>Testemunha 1: {signed('witness1') ? '✓ Assinado' : 'Pendente'}</li>
+                )}
+                {detail.witness2_id && (
+                  <li>Testemunha 2: {signed('witness2') ? '✓ Assinado' : 'Pendente'}</li>
+                )}
               </ul>
             </div>
 
@@ -265,6 +276,8 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     <option value="seller">Como vendedor</option>
                     <option value="buyer">Como comprador</option>
                     {detail.assessor_id && <option value="assessor">Como assessor</option>}
+                    {detail.witness1_id && <option value="witness1">Como testemunha 1</option>}
+                    {detail.witness2_id && <option value="witness2">Como testemunha 2</option>}
                   </select>
                   <input
                     value={signerName}
@@ -313,6 +326,21 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     </tbody>
                   </table>
                 </div>
+              </div>
+            )}
+
+            {detail.payoutRules && detail.payoutRules.length > 0 && (
+              <div>
+                <h4 className="mb-2 text-sm font-semibold text-brand-dark-brown">Regras de repasse</h4>
+                <ul className="space-y-1 text-sm text-brand-olive">
+                  {detail.payoutRules.map((r) => (
+                    <li key={r.id} className="flex flex-wrap gap-x-2 rounded-lg border border-brand-beige bg-brand-off-white/50 px-3 py-2">
+                      <span className="font-medium text-brand-dark-brown">{r.label || r.beneficiary_name || r.beneficiary_role}</span>
+                      <span>{r.pct}%</span>
+                      {r.beneficiary_name && <span>· {r.beneficiary_name}</span>}
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 

@@ -4,6 +4,9 @@ import AnimalsPage from './pages/app/AnimalsPage';
 import UsersPage from './pages/app/UsersPage';
 import ContractsPage from './pages/app/ContractsPage';
 import ChargesPage from './pages/app/ChargesPage';
+import AuctionsPage from './pages/app/AuctionsPage';
+import PayoutsPage from './pages/app/PayoutsPage';
+import ContractTemplatesPage from './pages/app/ContractTemplatesPage';
 import ContractPrintView from './pages/app/ContractPrintView';
 import ChangePassword from './pages/ChangePassword';
 import ProfilePage from './pages/app/ProfilePage';
@@ -72,42 +75,48 @@ function AppContent() {
         >
           <Route index element={<AppDashboard />} />
           <Route
-            path="compradores"
+            path="pessoas"
             element={
               <ProtectedRoute roles={['root', 'admin', 'user']}>
-                <ClientsPage partyRole="buyer" />
+                <ClientsPage />
               </ProtectedRoute>
             }
           />
-          <Route
-            path="vendedores"
-            element={
-              <ProtectedRoute roles={['root', 'admin', 'user']}>
-                <ClientsPage partyRole="seller" />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="assessores"
-            element={
-              <ProtectedRoute roles={['root', 'admin', 'user']}>
-                <ClientsPage partyRole="assessor" />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="clientes"
-            element={
-              <ProtectedRoute roles={['root', 'admin', 'user']}>
-                <ClientsPage partyRole="all" />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="clientes/:id" element={<Navigate to="/app/clientes" replace />} />
+          <Route path="pessoas/:id" element={<Navigate to="/app/pessoas" replace />} />
+          {/* Compatibilidade com rotas antigas de papéis */}
+          <Route path="clientes" element={<Navigate to="/app/pessoas" replace />} />
+          <Route path="clientes/:id" element={<Navigate to="/app/pessoas" replace />} />
+          <Route path="compradores" element={<Navigate to="/app/pessoas" replace />} />
+          <Route path="vendedores" element={<Navigate to="/app/pessoas" replace />} />
+          <Route path="assessores" element={<Navigate to="/app/pessoas" replace />} />
           <Route path="animais" element={<AnimalsPage />} />
           <Route path="animais/:id" element={<Navigate to="/app/animais" replace />} />
+          <Route
+            path="leiloes"
+            element={
+              <ProtectedRoute roles={['root', 'admin', 'user']}>
+                <AuctionsPage />
+              </ProtectedRoute>
+            }
+          />
           <Route path="contratos" element={<ContractsPage />} />
+          <Route
+            path="modelos-contrato"
+            element={
+              <ProtectedRoute roles={['root', 'admin', 'user']}>
+                <ContractTemplatesPage />
+              </ProtectedRoute>
+            }
+          />
           <Route path="cobrancas" element={<ChargesPage />} />
+          <Route
+            path="repasses"
+            element={
+              <ProtectedRoute roles={['root', 'admin', 'user']}>
+                <PayoutsPage />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="usuarios"
             element={

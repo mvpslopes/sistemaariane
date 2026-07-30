@@ -60,10 +60,14 @@ export default function ContractDocument({
             className="h-14 w-auto object-contain sm:h-16"
           />
         </div>
-        <h1 className="text-2xl font-semibold tracking-tight">Contrato de Compra e Venda</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          {contract.template_title || 'Nota de Leilão e Contrato'}
+        </h1>
         <p className="mt-1 text-sm text-brand-olive">
-          Nº {contract.id} ·{' '}
+          Nº {contract.contract_number || contract.id}
+          {contract.lot_label ? ` · Lote ${contract.lot_label}` : ''} ·{' '}
           {new Date(contract.created_at || Date.now()).toLocaleDateString('pt-BR')}
+          {contract.template_name ? ` · Modelo: ${contract.template_name}` : ''}
         </p>
       </header>
 

@@ -167,6 +167,7 @@ export default function AppDashboard() {
       { label: 'Compradores', value: stats?.buyers ?? 0, color: '#C08A3E' },
       { label: 'Vendedores', value: stats?.sellers ?? 0, color: '#4F3E32' },
       { label: 'Assessores', value: stats?.assessors ?? 0, color: '#4A6650' },
+      { label: 'Testemunhas', value: stats?.witnesses ?? 0, color: '#81705F' },
     ];
   }, [stats, isCliente]);
 
@@ -230,10 +231,10 @@ export default function AppDashboard() {
         {canWrite && !isCliente && (
           <div className="flex flex-wrap gap-2">
             <Link
-              to="/app/compradores"
+              to="/app/pessoas"
               className="inline-flex items-center gap-2 rounded-xl bg-brand-brown px-4 py-2 text-sm font-medium text-white shadow-lg shadow-brand-brown/20 transition hover:bg-brand-olive"
             >
-              <Plus className="h-4 w-4" /> Comprador
+              <Plus className="h-4 w-4" /> Pessoa
             </Link>
             <Link
               to="/app/animais"
@@ -258,10 +259,13 @@ export default function AppDashboard() {
             Cadastros
           </h3>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard icon={Users} label="Clientes ativos" value={s?.clients ?? 0} to="/app/clientes" tone="olive" />
-            <StatCard icon={ShoppingBag} label="Compradores" value={s?.buyers ?? 0} to="/app/compradores" tone="gold" />
-            <StatCard icon={Store} label="Vendedores" value={s?.sellers ?? 0} to="/app/vendedores" tone="brown" />
-            <StatCard icon={Briefcase} label="Assessores" value={s?.assessors ?? 0} to="/app/assessores" tone="forest" />
+            <StatCard icon={Users} label="Pessoas ativas" value={s?.clients ?? 0} to="/app/pessoas" tone="olive" />
+            <StatCard icon={ShoppingBag} label="Compradores" value={s?.buyers ?? 0} to="/app/pessoas" tone="gold" />
+            <StatCard icon={Store} label="Vendedores" value={s?.sellers ?? 0} to="/app/pessoas" tone="brown" />
+            <StatCard icon={Briefcase} label="Assessores" value={s?.assessors ?? 0} to="/app/pessoas" tone="forest" />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard icon={Users} label="Testemunhas" value={s?.witnesses ?? 0} to="/app/pessoas" tone="olive" />
           </div>
         </section>
       )}
@@ -385,7 +389,7 @@ export default function AppDashboard() {
             <p className="mt-2 text-sm text-brand-beige/70">
               {isCliente
                 ? 'Acompanhe seus animais, contratos e cobranças vinculadas.'
-                : `${s?.buyers ?? 0} compradores · ${s?.sellers ?? 0} vendedores · ${s?.assessors ?? 0} assessores em operação.`}
+                : `${s?.buyers ?? 0} compradores · ${s?.sellers ?? 0} vendedores · ${s?.assessors ?? 0} assessores · ${s?.witnesses ?? 0} testemunhas.`}
             </p>
           </div>
           <div className="mt-6 flex flex-wrap gap-2">
@@ -395,14 +399,14 @@ export default function AppDashboard() {
           </div>
           {!isCliente && (
             <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-brand-beige/80">
-              <Link to="/app/compradores" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
-                Ver compradores
+              <Link to="/app/pessoas" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
+                Ver pessoas
               </Link>
-              <Link to="/app/vendedores" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
-                Ver vendedores
+              <Link to="/app/contratos" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
+                Ver contratos
               </Link>
-              <Link to="/app/assessores" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
-                Ver assessores
+              <Link to="/app/animais" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
+                Ver animais
               </Link>
               <Link to="/app/cobrancas" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
                 Ver cobranças
@@ -427,21 +431,16 @@ function buildRecent(
         c.is_buyer ? 'Comprador' : null,
         c.is_seller ? 'Vendedor' : null,
         c.is_assessor ? 'Assessor' : null,
+        c.is_witness ? 'Testemunha' : null,
       ].filter(Boolean);
-      const to = c.is_assessor
-        ? '/app/assessores'
-        : c.is_seller
-          ? '/app/vendedores'
-          : c.is_buyer
-            ? '/app/compradores'
-            : '/app/clientes';
+      const to = '/app/pessoas';
       return {
         id: c.id,
         kind: 'cliente' as const,
         title: c.name,
         subtitle: roles.length
           ? roles.join(' · ')
-          : [c.city, c.state].filter(Boolean).join('/') || 'Cliente',
+          : [c.city, c.state].filter(Boolean).join('/') || 'Pessoa',
         to,
         createdAt: c.created_at!,
       };

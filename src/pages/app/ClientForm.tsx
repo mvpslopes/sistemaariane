@@ -10,7 +10,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 
-type PartyRole = 'buyer' | 'seller' | 'assessor';
+type PartyRole = 'buyer' | 'seller' | 'assessor' | 'witness';
 
 function emptyForm(defaultPartyRole?: PartyRole): Partial<Client> {
   return {
@@ -28,6 +28,7 @@ function emptyForm(defaultPartyRole?: PartyRole): Partial<Client> {
     is_seller: defaultPartyRole === 'seller',
     is_buyer: defaultPartyRole === 'buyer' || !defaultPartyRole,
     is_assessor: defaultPartyRole === 'assessor',
+    is_witness: defaultPartyRole === 'witness',
   };
 }
 
@@ -69,10 +70,10 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
     try {
       if (isNew) {
         await createClient(form);
-        success('Cliente cadastrado com sucesso');
+        success('Pessoa cadastrada com sucesso');
       } else {
         await updateClient(clientId!, form);
-        success('Cliente atualizado com sucesso');
+        success('Pessoa atualizada com sucesso');
       }
       onSaved();
       onClose();
@@ -94,7 +95,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
     }
     try {
       await deleteClient(clientId!);
-      success('Cliente excluído');
+      success('Pessoa excluída');
       onSaved();
       onClose();
     } catch (err: any) {
@@ -142,7 +143,9 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
         </Field>
         {canWrite && (
           <div className="space-y-2 sm:col-span-2">
-            <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Papéis</span>
+            <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">
+              Papéis (pode marcar mais de um)
+            </span>
             <div className="flex flex-wrap gap-4 text-sm text-brand-dark-brown/80">
               <label className="inline-flex items-center gap-2">
                 <input type="checkbox" checked={!!form.is_buyer} onChange={(e) => set('is_buyer', e.target.checked)} />
@@ -156,13 +159,17 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
                 <input type="checkbox" checked={!!form.is_assessor} onChange={(e) => set('is_assessor', e.target.checked)} />
                 Assessor
               </label>
+              <label className="inline-flex items-center gap-2">
+                <input type="checkbox" checked={!!form.is_witness} onChange={(e) => set('is_witness', e.target.checked)} />
+                Testemunha
+              </label>
             </div>
           </div>
         )}
         {!isNew && canWrite && (
           <label className="flex items-center gap-2 text-sm text-brand-dark-brown/80 sm:col-span-2">
             <input type="checkbox" checked={form.active !== false} onChange={(e) => set('active', e.target.checked)} />
-            Cliente ativo
+            Pessoa ativa
           </label>
         )}
       </div>

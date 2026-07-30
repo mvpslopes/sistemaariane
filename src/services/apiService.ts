@@ -70,6 +70,7 @@ export interface Client {
   is_seller?: boolean;
   is_buyer?: boolean;
   is_assessor?: boolean;
+  is_witness?: boolean;
   created_at?: string;
 }
 
@@ -77,19 +78,63 @@ export type SaleType = 'inteiro' | 'fracao' | 'condominio';
 export type PaymentMethod = 'pix' | 'boleto' | 'transferencia' | 'outro';
 export type ContractStatus = 'rascunho' | 'aguardando_assinatura' | 'ativo' | 'concluido' | 'cancelado';
 export type ChargeStatus = 'pendente' | 'pago' | 'atrasado' | 'cancelado';
+export type PayoutStatus = 'aguardando' | 'pendente' | 'pago' | 'cancelado';
+export type PayoutRole = 'assessoria' | 'seller' | 'assessor' | 'outro';
+export type AuctionStatus = 'rascunho' | 'agendado' | 'em_andamento' | 'encerrado' | 'cancelado';
+export type LotStatus = 'disponivel' | 'arrematado' | 'retirado';
 
 export interface Contract {
   id: string;
   animal_id: string;
   animal_name?: string | null;
+  animal_chip?: string | null;
+  animal_color?: string | null;
+  animal_birth_date?: string | null;
+  animal_sex?: string | null;
   sale_type: SaleType;
   share_pct: number | null;
   seller_id: string;
   seller_name?: string | null;
+  seller_document?: string | null;
+  seller_document_type?: string | null;
+  seller_email?: string | null;
+  seller_phone?: string | null;
+  seller_whatsapp?: string | null;
+  seller_address?: string | null;
+  seller_city?: string | null;
+  seller_state?: string | null;
   buyer_id: string;
   buyer_name?: string | null;
+  buyer_document?: string | null;
+  buyer_document_type?: string | null;
+  buyer_email?: string | null;
+  buyer_phone?: string | null;
+  buyer_whatsapp?: string | null;
+  buyer_address?: string | null;
+  buyer_city?: string | null;
+  buyer_state?: string | null;
   assessor_id: string | null;
   assessor_name?: string | null;
+  auction_id?: string | null;
+  auction_name?: string | null;
+  auction_date?: string | null;
+  lot_id?: string | null;
+  template_id?: string | null;
+  template_name?: string | null;
+  template_title?: string | null;
+  template_body?: string | null;
+  contract_number?: string | null;
+  lot_label?: string | null;
+  animal_category?: string | null;
+  quantity?: number;
+  commission_total_pct?: number | null;
+  commission_buyer_pct?: number | null;
+  commission_seller_pct?: number | null;
+  witness1_id?: string | null;
+  witness1_name?: string | null;
+  witness2_id?: string | null;
+  witness2_name?: string | null;
+  via_label?: string | null;
   total_amount: number;
   payment_method: PaymentMethod;
   installments: number;
@@ -99,11 +144,80 @@ export interface Contract {
   created_at?: string;
   signatures?: ContractSignature[];
   charges?: Charge[];
+  payoutRules?: PayoutRule[];
+}
+
+export interface ContractTemplate {
+  id: string;
+  name: string;
+  code: string | null;
+  title: string;
+  body_text: string;
+  is_default: boolean;
+  active: boolean;
+  notes: string | null;
+  created_at?: string;
+}
+
+export interface PayoutRule {
+  id?: string;
+  beneficiary_role: PayoutRole;
+  beneficiary_client_id: string | null;
+  beneficiary_name?: string | null;
+  label?: string | null;
+  pct: number;
+}
+
+export interface Payout {
+  id: string;
+  contract_id: string;
+  charge_id: string;
+  installment_no: number;
+  beneficiary_role: PayoutRole;
+  beneficiary_client_id: string | null;
+  beneficiary_name?: string | null;
+  label?: string | null;
+  pct: number;
+  amount: number;
+  status: PayoutStatus;
+  paid_at: string | null;
+  notes: string | null;
+  animal_name?: string | null;
+  charge_status?: string | null;
+  charge_due_date?: string | null;
+}
+
+export interface Auction {
+  id: string;
+  name: string;
+  auction_date: string | null;
+  location: string | null;
+  organizer: string | null;
+  status: AuctionStatus;
+  notes: string | null;
+  lots_count?: number | null;
+  created_at?: string;
+  lots?: AuctionLot[];
+}
+
+export interface AuctionLot {
+  id: string;
+  auction_id: string;
+  animal_id: string;
+  animal_name?: string | null;
+  lot_number: string | null;
+  seller_id: string;
+  seller_name?: string | null;
+  min_price: number | null;
+  conditions_text: string | null;
+  status: LotStatus;
+  contract_id: string | null;
+  created_at?: string;
 }
 
 export interface ContractSignature {
   id: string;
-  party_role: 'seller' | 'buyer' | 'assessor';
+  party_role: 'seller' | 'buyer' | 'assessor' | 'witness1' | 'witness2';
   client_id: string;
   signer_name: string;
   signed_at: string;
@@ -171,6 +285,7 @@ export interface DashboardStats {
   buyers: number;
   sellers: number;
   assessors: number;
+  witnesses: number;
   animals: number;
   activeAnimals: number;
   contracts: number;
@@ -211,7 +326,7 @@ export async function getDashboard() {
   return request<DashboardStats>('/dashboard');
 }
 
-export async function getClients(q?: string, role?: 'seller' | 'buyer' | 'assessor') {
+export async function getClients(q?: string, role?: 'seller' | 'buyer' | 'assessor' | 'witness') {
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (role) params.set('role', role);
@@ -386,6 +501,90 @@ export async function getCharges(filters?: { status?: string; contractId?: strin
 
 export async function updateCharge(id: string, data: { status: ChargeStatus; notes?: string }) {
   return request<{ success: boolean }>(`/charges/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getAuctions() {
+  return request<Auction[]>('/auctions');
+}
+
+export async function getAuction(id: string) {
+  return request<Auction>(`/auctions/${id}`);
+}
+
+export async function createAuction(data: Record<string, unknown>) {
+  return request<{ success: boolean; id: string }>('/auctions', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateAuction(id: string, data: Record<string, unknown>) {
+  return request<{ success: boolean }>(`/auctions/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getAuctionLots(filters?: { auctionId?: string; status?: string }) {
+  const params = new URLSearchParams();
+  if (filters?.auctionId) params.set('auctionId', filters.auctionId);
+  if (filters?.status) params.set('status', filters.status);
+  const qs = params.toString() ? `?${params}` : '';
+  return request<AuctionLot[]>(`/auction-lots${qs}`);
+}
+
+export async function createAuctionLot(data: Record<string, unknown>) {
+  return request<{ success: boolean; id: string }>('/auction-lots', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateAuctionLot(id: string, data: Record<string, unknown>) {
+  return request<{ success: boolean }>(`/auction-lots/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getPayouts(filters?: { status?: string; contractId?: string }) {
+  const params = new URLSearchParams();
+  if (filters?.status) params.set('status', filters.status);
+  if (filters?.contractId) params.set('contractId', filters.contractId);
+  const qs = params.toString() ? `?${params}` : '';
+  return request<Payout[]>(`/payouts${qs}`);
+}
+
+export async function updatePayout(id: string, data: { status: PayoutStatus; notes?: string }) {
+  return request<{ success: boolean }>(`/payouts/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getContractTemplates(filters?: { active?: boolean }) {
+  const params = new URLSearchParams();
+  if (filters?.active) params.set('active', '1');
+  const qs = params.toString() ? `?${params}` : '';
+  return request<ContractTemplate[]>(`/contract-templates${qs}`);
+}
+
+export async function getContractTemplate(id: string) {
+  return request<ContractTemplate>(`/contract-templates/${id}`);
+}
+
+export async function createContractTemplate(data: Record<string, unknown>) {
+  return request<{ success: boolean; id: string }>('/contract-templates', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateContractTemplate(id: string, data: Record<string, unknown>) {
+  return request<{ success: boolean }>(`/contract-templates/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
