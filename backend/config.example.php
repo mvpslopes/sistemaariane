@@ -10,4 +10,8 @@ return [
     'db_password' => 'SUA_SENHA_AQUI',
     'db_name' => 'u179630068_mvp_ariane',
     'jwt_secret' => 'altere_este_segredo_jwt',
+
+    // Clicksign (NÃO versionar o token real — use config.local.php)
+    'clicksign_access_token' => '',
+    'clicksign_base_url' => 'https://app.clicksign.com', // sandbox: https://sandbox.clicksign.com
 ];

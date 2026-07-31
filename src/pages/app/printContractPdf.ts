@@ -123,8 +123,8 @@ function partyBlock(
   </div>`;
 }
 
-/** Gera impressão/PDF estilo Nota de Leilão (frente) + verso do modelo. */
-export function printContractPdf(contract: Contract) {
+/** HTML completo do contrato (frente + verso + assinaturas + promissórias). */
+export function buildContractHtml(contract: Contract): string {
   const logoUrl = `${window.location.origin}/logo-ariane-wide-transparente.png`;
   const emit = new Date(contract.created_at || Date.now()).toLocaleString('pt-BR');
   const number = contract.contract_number || contract.id;
@@ -587,6 +587,12 @@ export function printContractPdf(contract: Contract) {
   ${promissory}
 </body>
 </html>`;
+  return html;
+}
+
+/** Gera impressão/PDF estilo Nota de Leilão (frente) + verso do modelo. */
+export function printContractPdf(contract: Contract) {
+  const html = buildContractHtml(contract);
 
   const existing = document.getElementById('contract-print-frame');
   if (existing) existing.remove();
@@ -631,4 +637,26 @@ export function printContractPdf(contract: Contract) {
   } else {
     setTimeout(runPrint, 150);
   }
+}
+
+/** Gera PDF em data-URL (base64) para envio à Clicksign. */
+export async function getContractPdfBase64(contract: Contract): Promise<string> {
+  const mod = await import('html2pdf.js');
+  const html2pdf = (mod as { default: any }).default;
+  const html = buildContractHtml(contract);
+  const dataUrl: string = await html2pdf()
+    .set({
+      margin: [8, 8, 8, 8],
+      filename: `contrato-${contract.contract_number || contract.id}.pdf`,
+      image: { type: 'jpeg', quality: 0.92 },
+      html2canvas: { scale: 2, useCORS: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] },
+    })
+    .from(html)
+    .outputPdf('datauristring');
+  if (!dataUrl || !dataUrl.includes('base64,')) {
+    throw new Error('Falha ao gerar PDF do contrato');
+  }
+  return dataUrl;
 }

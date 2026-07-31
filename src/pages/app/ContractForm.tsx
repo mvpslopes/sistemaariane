@@ -63,6 +63,34 @@ const newRule = (partial?: Partial<PayoutRuleInput>): PayoutRuleInput => ({
   ...partial,
 });
 
+interface ScheduleRow {
+  amount: string;
+  dueDate: string;
+}
+
+const money = (v: number) =>
+  v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+/** Parcelas iguais, mensais, com a diferença de centavos na última. */
+function buildEqualSchedule(total: number, n: number, firstDue: string): ScheduleRow[] {
+  const rows: ScheduleRow[] = [];
+  if (!(n > 0) || !firstDue) return rows;
+  const base = Math.floor((total / n) * 100) / 100;
+  const due = new Date(`${firstDue.slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(due.getTime())) return rows;
+  let sum = 0;
+  for (let i = 1; i <= n; i++) {
+    const amount = i === n ? Math.round((total - sum) * 100) / 100 : base;
+    sum += amount;
+    const y = due.getFullYear();
+    const m = String(due.getMonth() + 1).padStart(2, '0');
+    const d = String(due.getDate()).padStart(2, '0');
+    rows.push({ amount: amount.toFixed(2), dueDate: `${y}-${m}-${d}` });
+    due.setMonth(due.getMonth() + 1);
+  }
+  return rows;
+}
+
 export default function ContractForm({
   contractId = null,
   animalId,
@@ -125,6 +153,8 @@ export default function ContractForm({
     newRule({ beneficiaryRole: 'assessoria', pct: '10', label: 'Assessoria' }),
     newRule({ beneficiaryRole: 'seller', pct: '90', label: 'Vendedor' }),
   ]);
+  const [customSchedule, setCustomSchedule] = useState(false);
+  const [schedule, setSchedule] = useState<ScheduleRow[]>([]);
 
   const loadSaleTypes = async () => {
     const defaults: CatalogItem[] = [
@@ -237,6 +267,25 @@ export default function ContractForm({
             firstDueDate: contract.first_due_date,
             notes: contract.notes || '',
           });
+          if (contract.charges?.length) {
+            const rows = contract.charges
+              .slice()
+              .sort((a, b) => a.installment_no - b.installment_no)
+              .map((c) => ({
+                amount: Number(c.amount).toFixed(2),
+                dueDate: String(c.due_date).slice(0, 10),
+              }));
+            const equal = buildEqualSchedule(
+              Number(contract.total_amount),
+              contract.installments,
+              String(contract.first_due_date).slice(0, 10)
+            );
+            const isEqual =
+              equal.length === rows.length &&
+              equal.every((r, i) => r.amount === rows[i].amount && r.dueDate === rows[i].dueDate);
+            setSchedule(rows);
+            setCustomSchedule(!isEqual);
+          }
           if (contract.payoutRules?.length) {
             setRules(
               contract.payoutRules.map((r) =>
@@ -286,6 +335,30 @@ export default function ContractForm({
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
+  useEffect(() => {
+    const n = Number(form.installments) || 0;
+    const total = Number(form.totalAmount) || 0;
+    if (!customSchedule) {
+      setSchedule(buildEqualSchedule(total, n, form.firstDueDate));
+      return;
+    }
+    // No modo manual só reajusta a quantidade de linhas, preservando o que já foi digitado
+    setSchedule((prev) => {
+      if (prev.length === n) return prev;
+      const base = buildEqualSchedule(total, n, form.firstDueDate);
+      return base.map((row, i) => prev[i] ?? row);
+    });
+  }, [customSchedule, form.installments, form.totalAmount, form.firstDueDate]);
+
+  const scheduleSum = useMemo(
+    () => schedule.reduce((s, r) => s + (Number(r.amount) || 0), 0),
+    [schedule]
+  );
+  const scheduleDiff = scheduleSum - (Number(form.totalAmount) || 0);
+
+  const updateScheduleRow = (index: number, patch: Partial<ScheduleRow>) =>
+    setSchedule((prev) => prev.map((r, i) => (i === index ? { ...r, ...patch } : r)));
+
   const pctSum = useMemo(
     () => rules.reduce((s, r) => s + (Number(r.pct) || 0), 0),
     [rules]
@@ -298,6 +371,35 @@ export default function ContractForm({
       toastError('A soma dos % de repasse não pode passar de 100%');
       return;
     }
+
+    let schedulePayload:
+      | Array<{ installmentNo: number; amount: number; dueDate: string }>
+      | undefined;
+    if (customSchedule) {
+      const rows = schedule.map((r, i) => ({
+        installmentNo: i + 1,
+        amount: Number(r.amount),
+        dueDate: r.dueDate,
+      }));
+      if (rows.length !== Number(form.installments)) {
+        toastError('O cronograma não bate com a quantidade de parcelas');
+        return;
+      }
+      if (rows.some((r) => !(r.amount > 0) || !r.dueDate)) {
+        toastError('Informe valor e vencimento em todas as parcelas');
+        return;
+      }
+      const total = Number(form.totalAmount) || 0;
+      const sum = rows.reduce((s, r) => s + r.amount, 0);
+      if (Math.abs(sum - total) > 0.02) {
+        toastError(
+          `A soma das parcelas (${money(sum)}) precisa ser igual ao total do contrato (${money(total)})`
+        );
+        return;
+      }
+      schedulePayload = rows;
+    }
+
     setSaving(true);
     try {
       const payload = {
@@ -327,6 +429,7 @@ export default function ContractForm({
         paymentMethod: form.paymentMethod,
         firstDueDate: form.firstDueDate,
         notes: form.notes || null,
+        ...(schedulePayload ? { schedule: schedulePayload } : {}),
       };
 
       if (isEdit && contractId) {
@@ -760,6 +863,90 @@ export default function ContractForm({
           />
         </label>
 
+        <div className="space-y-2 sm:col-span-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">
+                Cronograma de parcelas
+              </span>
+              <p className="mt-0.5 text-[11px] text-brand-olive/80">
+                Por padrão as parcelas são iguais. Marque abaixo para definir valores e vencimentos
+                diferentes (ex.: 29 parcelas de um valor e 3 com outro).
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-brand-dark-brown">
+              <input
+                type="checkbox"
+                disabled={!canWrite}
+                checked={customSchedule}
+                onChange={(e) => setCustomSchedule(e.target.checked)}
+                className="h-4 w-4 rounded border-brand-beige text-brand-brown focus:ring-brand-beige"
+              />
+              Personalizar parcelas
+            </label>
+          </div>
+
+          {customSchedule && (
+            <div className="space-y-2 rounded-xl border border-brand-beige bg-brand-off-white/40 p-3">
+              <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+                {schedule.map((row, index) => (
+                  <div key={index} className="grid grid-cols-[38px_1fr_1fr] items-center gap-2">
+                    <span className="text-xs font-medium text-brand-olive">
+                      {String(index + 1).padStart(2, '0')}
+                    </span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      disabled={!canWrite}
+                      value={row.amount}
+                      onChange={(e) => updateScheduleRow(index, { amount: e.target.value })}
+                      className={`${inputClass} py-1.5`}
+                      placeholder="Valor"
+                    />
+                    <input
+                      type="date"
+                      disabled={!canWrite}
+                      value={row.dueDate}
+                      onChange={(e) => updateScheduleRow(index, { dueDate: e.target.value })}
+                      className={`${inputClass} py-1.5`}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-brand-beige/70 pt-2">
+                <p className="text-xs text-brand-olive">
+                  Soma: <strong className="text-brand-dark-brown">{money(scheduleSum)}</strong> de{' '}
+                  {money(Number(form.totalAmount) || 0)}
+                  {Math.abs(scheduleDiff) > 0.02 && (
+                    <span className="text-red-600">
+                      {' '}· faltam {money(Math.abs(scheduleDiff))}
+                      {scheduleDiff > 0 ? ' a menos' : ''}
+                    </span>
+                  )}
+                </p>
+                {canWrite && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSchedule(
+                        buildEqualSchedule(
+                          Number(form.totalAmount) || 0,
+                          Number(form.installments) || 0,
+                          form.firstDueDate
+                        )
+                      )
+                    }
+                    className="rounded-lg border border-brand-beige bg-white px-2.5 py-1 text-xs font-medium text-brand-brown hover:bg-brand-beige/40"
+                  >
+                    Distribuir igualmente
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         <label className="block space-y-1.5 sm:col-span-2">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Observações</span>
           <textarea disabled={!canWrite} rows={2} value={form.notes} onChange={(e) => set('notes', e.target.value)} className={inputClass} />
@@ -770,11 +957,35 @@ export default function ContractForm({
         <div>
           <h3 className="text-sm font-semibold text-brand-dark-brown">Verso do contrato</h3>
           <p className="text-xs text-brand-olive">
-            Preenchido após os dados da frente. Ajustes aqui valem só para este contrato.
+            O texto abaixo é uma cópia do modelo, guardada neste contrato. Alterar o modelo depois
+            não muda contratos já criados — use "Recarregar do modelo" para trazer a versão atual.
           </p>
         </div>
         <label className="block space-y-1.5">
-          <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Modelo do verso *</span>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Modelo do verso *</span>
+            {canWrite && (
+              <button
+                type="button"
+                onClick={() => {
+                  const tpl = templates.find((t) => t.id === form.templateId);
+                  if (!tpl) {
+                    toastError('Selecione um modelo primeiro');
+                    return;
+                  }
+                  setForm((f) => ({
+                    ...f,
+                    versoTitle: tpl.title || '',
+                    versoBody: tpl.body_text || '',
+                  }));
+                  success('Texto do verso atualizado com a versão atual do modelo');
+                }}
+                className="rounded-lg border border-brand-beige bg-white px-2.5 py-1 text-xs font-medium text-brand-brown hover:bg-brand-beige/40"
+              >
+                Recarregar do modelo
+              </button>
+            )}
+          </div>
           <select
             required
             disabled={!canWrite}

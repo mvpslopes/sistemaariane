@@ -534,9 +534,53 @@ function client_ip(): string {
     return $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '';
 }
 
-function generate_charges(PDO $pdo, int $contractId, int $buyerId, float $total, int $n, string $firstDue, string $method): void {
-    $n = max(1, min(40, $n));
+/** Parcelas iguais, mensais, com a diferença de centavos na última. */
+function build_equal_schedule(float $total, int $n, string $firstDue): array {
     $base = floor(($total / $n) * 100) / 100;
+    $due = new DateTime(substr($firstDue, 0, 10));
+    $rows = [];
+    $sum = 0;
+    for ($i = 1; $i <= $n; $i++) {
+        $amount = $i === $n ? round($total - $sum, 2) : $base;
+        $sum += $amount;
+        $rows[] = ['amount' => $amount, 'dueDate' => $due->format('Y-m-d')];
+        $due->modify('+1 month');
+    }
+    return $rows;
+}
+
+/** Cronograma manual vindo do formulário. Retorna null quando não foi informado. */
+function normalize_schedule($raw, int $n, float $total): ?array {
+    if (!is_array($raw) || !count($raw)) return null;
+    if (count($raw) !== $n) {
+        throw new InvalidArgumentException('O cronograma informado não bate com a quantidade de parcelas');
+    }
+    $rows = [];
+    foreach (array_values($raw) as $i => $r) {
+        $rows[] = [
+            'order' => (int)($r['installmentNo'] ?? $i + 1),
+            'amount' => round((float)($r['amount'] ?? 0), 2),
+            'dueDate' => substr((string)($r['dueDate'] ?? ''), 0, 10),
+        ];
+    }
+    usort($rows, fn($a, $b) => $a['order'] <=> $b['order']);
+
+    $sum = 0;
+    foreach ($rows as $r) {
+        if (!($r['amount'] > 0) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $r['dueDate'])) {
+            throw new InvalidArgumentException('Informe valor e vencimento válidos em todas as parcelas');
+        }
+        $sum += $r['amount'];
+    }
+    if (abs($sum - $total) > 0.02) {
+        throw new InvalidArgumentException('A soma das parcelas deve ser igual ao valor total do contrato');
+    }
+    return array_map(fn($r) => ['amount' => $r['amount'], 'dueDate' => $r['dueDate']], $rows);
+}
+
+function generate_charges(PDO $pdo, int $contractId, int $buyerId, float $total, int $n, string $firstDue, string $method, ?array $schedule = null): void {
+    $n = max(1, min(40, $n));
+    $rows = $schedule ?? build_equal_schedule($total, $n, $firstDue);
     // Repasses dependem das cobranças — remove antes para evitar falha de FK
     $pdo->prepare('DELETE FROM payouts WHERE contract_id = ?')->execute([$contractId]);
     $pdo->prepare('DELETE FROM charges WHERE contract_id = ?')->execute([$contractId]);
@@ -544,22 +588,200 @@ function generate_charges(PDO $pdo, int $contractId, int $buyerId, float $total,
         'INSERT INTO charges (contract_id, client_id, installment_no, amount, due_date, payment_method, status)
          VALUES (?, ?, ?, ?, ?, ?, ?)'
     );
-    $due = new DateTime(substr($firstDue, 0, 10));
-    $sum = 0;
-    for ($i = 1; $i <= $n; $i++) {
-        $amount = $i === $n ? round($total - $sum, 2) : $base;
-        $sum += $amount;
+    foreach (array_values($rows) as $i => $row) {
         $ins->execute([
             $contractId,
             $buyerId,
-            $i,
-            $amount,
-            $due->format('Y-m-d'),
+            $i + 1,
+            $row['amount'],
+            $row['dueDate'],
             $method,
             'pendente',
         ]);
-        $due->modify('+1 month');
     }
+}
+
+function clicksign_config(array $config): array {
+    $token = trim((string)($config['clicksign_access_token'] ?? ''));
+    $base = rtrim((string)($config['clicksign_base_url'] ?? 'https://app.clicksign.com'), '/');
+    if ($token === '') {
+        throw new InvalidArgumentException('Clicksign não configurada. Defina clicksign_access_token em config.local.php');
+    }
+    return ['token' => $token, 'base' => $base];
+}
+
+function clicksign_request(array $config, string $method, string $path, ?array $payload = null): array {
+    $cs = clicksign_config($config);
+    $url = $cs['base'] . $path;
+    $ch = curl_init($url);
+    $headers = [
+        'Authorization: ' . $cs['token'],
+        'Accept: application/vnd.api+json',
+        'Content-Type: application/vnd.api+json',
+    ];
+    curl_setopt_array($ch, [
+        CURLOPT_CUSTOMREQUEST => strtoupper($method),
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_TIMEOUT => 120,
+    ]);
+    if ($payload !== null) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload, JSON_UNESCAPED_UNICODE));
+    }
+    $raw = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if ($raw === false) {
+        throw new RuntimeException('Falha ao contatar Clicksign: ' . $err);
+    }
+    $json = json_decode($raw, true);
+    if ($code < 200 || $code >= 300) {
+        $msg = $json['errors'][0]['detail']
+            ?? $json['errors'][0]['title']
+            ?? $json['error']
+            ?? ('Clicksign HTTP ' . $code);
+        throw new InvalidArgumentException(is_string($msg) ? $msg : 'Erro na Clicksign');
+    }
+    return is_array($json) ? $json : [];
+}
+
+/**
+ * Envia PDF para Clicksign: envelope + documento + 4 signatários + requisitos + ativação + notificação.
+ * @return array{envelopeId:string,documentId:string,status:string}
+ */
+function clicksign_send_contract(array $config, array $contract, string $pdfBase64): array {
+    if (strpos($pdfBase64, 'base64,') !== false) {
+        $pdfBase64 = substr($pdfBase64, strpos($pdfBase64, 'base64,') + 7);
+    }
+    $pdfBase64 = preg_replace('/\s+/', '', $pdfBase64) ?? '';
+    if ($pdfBase64 === '') {
+        throw new InvalidArgumentException('PDF do contrato é obrigatório');
+    }
+
+    $number = $contract['contract_number'] ?: $contract['id'];
+    $animal = $contract['animal_name'] ?: 'Animal';
+    $signers = [
+        [
+            'name' => trim((string)($contract['seller_name'] ?? '')),
+            'email' => trim((string)($contract['seller_email'] ?? '')),
+            'role' => 'seller',
+            'label' => 'vendedor',
+        ],
+        [
+            'name' => trim((string)($contract['buyer_name'] ?? '')),
+            'email' => trim((string)($contract['buyer_email'] ?? '')),
+            'role' => 'buyer',
+            'label' => 'comprador',
+        ],
+        [
+            'name' => trim((string)($contract['witness1_name'] ?? '')),
+            'email' => trim((string)($contract['witness1_email'] ?? '')),
+            'role' => 'witness',
+            'label' => 'testemunha 1',
+        ],
+        [
+            'name' => trim((string)($contract['witness2_name'] ?? '')),
+            'email' => trim((string)($contract['witness2_email'] ?? '')),
+            'role' => 'witness',
+            'label' => 'testemunha 2',
+        ],
+    ];
+    foreach ($signers as $s) {
+        if ($s['name'] === '' || $s['email'] === '' || !filter_var($s['email'], FILTER_VALIDATE_EMAIL)) {
+            throw new InvalidArgumentException(
+                'Para enviar à Clicksign, cadastre nome e e-mail válidos do ' . $s['label']
+            );
+        }
+    }
+
+    $env = clicksign_request($config, 'POST', '/api/v3/envelopes', [
+        'data' => [
+            'type' => 'envelopes',
+            'attributes' => [
+                'name' => "Contrato {$number} — {$animal}",
+                'locale' => 'pt-BR',
+                'auto_close' => true,
+                'remind_interval' => 3,
+            ],
+        ],
+    ]);
+    $envelopeId = $env['data']['id'] ?? null;
+    if (!$envelopeId) throw new RuntimeException('Clicksign não retornou o envelope');
+
+    $doc = clicksign_request($config, 'POST', "/api/v3/envelopes/{$envelopeId}/documents", [
+        'data' => [
+            'type' => 'documents',
+            'attributes' => [
+                'filename' => "contrato-{$number}.pdf",
+                'content_base64' => 'data:application/pdf;base64,' . $pdfBase64,
+            ],
+        ],
+    ]);
+    $documentId = $doc['data']['id'] ?? null;
+    if (!$documentId) throw new RuntimeException('Clicksign não retornou o documento');
+
+    foreach ($signers as $s) {
+        $signerRes = clicksign_request($config, 'POST', "/api/v3/envelopes/{$envelopeId}/signers", [
+            'data' => [
+                'type' => 'signers',
+                'attributes' => [
+                    'name' => $s['name'],
+                    'email' => $s['email'],
+                ],
+            ],
+        ]);
+        $signerId = $signerRes['data']['id'] ?? null;
+        if (!$signerId) throw new RuntimeException('Falha ao cadastrar signatário: ' . $s['label']);
+
+        clicksign_request($config, 'POST', "/api/v3/envelopes/{$envelopeId}/requirements", [
+            'data' => [
+                'type' => 'requirements',
+                'attributes' => [
+                    'action' => 'agree',
+                    'role' => $s['role'],
+                ],
+                'relationships' => [
+                    'document' => ['data' => ['type' => 'documents', 'id' => $documentId]],
+                    'signer' => ['data' => ['type' => 'signers', 'id' => $signerId]],
+                ],
+            ],
+        ]);
+        clicksign_request($config, 'POST', "/api/v3/envelopes/{$envelopeId}/requirements", [
+            'data' => [
+                'type' => 'requirements',
+                'attributes' => [
+                    'action' => 'provide_evidence',
+                    'auth' => 'email',
+                ],
+                'relationships' => [
+                    'document' => ['data' => ['type' => 'documents', 'id' => $documentId]],
+                    'signer' => ['data' => ['type' => 'signers', 'id' => $signerId]],
+                ],
+            ],
+        ]);
+    }
+
+    clicksign_request($config, 'PATCH', "/api/v3/envelopes/{$envelopeId}", [
+        'data' => [
+            'id' => $envelopeId,
+            'type' => 'envelopes',
+            'attributes' => ['status' => 'running'],
+        ],
+    ]);
+
+    clicksign_request($config, 'POST', "/api/v3/envelopes/{$envelopeId}/notifications", [
+        'data' => [
+            'type' => 'notifications',
+            'attributes' => new stdClass(),
+        ],
+    ]);
+
+    return [
+        'envelopeId' => $envelopeId,
+        'documentId' => $documentId,
+        'status' => 'running',
+    ];
 }
 
 function map_contract_row(array $r): array {
@@ -613,9 +835,15 @@ function map_contract_row(array $r): array {
         'commission_seller_pct' => $r['commission_seller_pct'] !== null ? (float)$r['commission_seller_pct'] : null,
         'witness1_id' => !empty($r['witness1_id']) ? (string)$r['witness1_id'] : null,
         'witness1_name' => $r['witness1_name'] ?? null,
+        'witness1_email' => $r['witness1_email'] ?? null,
         'witness2_id' => !empty($r['witness2_id']) ? (string)$r['witness2_id'] : null,
         'witness2_name' => $r['witness2_name'] ?? null,
+        'witness2_email' => $r['witness2_email'] ?? null,
         'via_label' => $r['via_label'] ?? 'VIA DAS PARTES — VENDEDOR E COMPRADOR',
+        'clicksign_envelope_id' => $r['clicksign_envelope_id'] ?? null,
+        'clicksign_document_id' => $r['clicksign_document_id'] ?? null,
+        'clicksign_status' => $r['clicksign_status'] ?? null,
+        'clicksign_sent_at' => $r['clicksign_sent_at'] ?? null,
         'total_amount' => (float)$r['total_amount'],
         'payment_method' => $r['payment_method'],
         'installments' => (int)$r['installments'],
@@ -1587,7 +1815,8 @@ if ($resource === 'contracts') {
         b.address AS buyer_address, b.address_number AS buyer_address_number,
         b.city AS buyer_city, b.state AS buyer_state,
         ass.name AS assessor_name,
-        w1.name AS witness1_name, w2.name AS witness2_name,
+        w1.name AS witness1_name, w1.email AS witness1_email,
+        w2.name AS witness2_name, w2.email AS witness2_email,
         au.name AS auction_name, au.auction_date AS auction_date,
         t.name AS template_name,
         COALESCE(c.verso_title, t.title) AS template_title,
@@ -1763,7 +1992,10 @@ if ($resource === 'contracts') {
             $contractId = (int)$pdo->lastInsertId();
             $contractNumber = sprintf('%08d-%d', (10000000 + $contractId) % 100000000, (int)date('Y'));
             $pdo->prepare('UPDATE contracts SET contract_number = ? WHERE id = ?')->execute([$contractNumber, $contractId]);
-            generate_charges($pdo, $contractId, $buyerId, $total, $n, $firstDue, $methodPay);
+            generate_charges(
+                $pdo, $contractId, $buyerId, $total, $n, $firstDue, $methodPay,
+                normalize_schedule($body['schedule'] ?? null, $n, $total)
+            );
             generate_payouts($pdo, $contractId, $body['payoutRules'] ?? []);
             if ($lotId) {
                 $pdo->prepare(
@@ -1888,7 +2120,13 @@ if ($resource === 'contracts') {
             abs((float)$chargeAgg['total_sum'] - $nextTotal) > 0.02
             || (int)$chargeAgg['qty'] !== $nextInstallments;
 
-        $shouldRecalc = !empty($body['recalcCharges']) || $financeChanged || $chargesOutOfSync;
+        try {
+            $schedule = normalize_schedule($body['schedule'] ?? null, $nextInstallments, $nextTotal);
+        } catch (InvalidArgumentException $e) {
+            json_out(['error' => $e->getMessage()], 400);
+        }
+
+        $shouldRecalc = $schedule !== null || !empty($body['recalcCharges']) || $financeChanged || $chargesOutOfSync;
 
         if ($shouldRecalc) {
             $paid = $pdo->prepare("SELECT COUNT(*) FROM charges WHERE contract_id = ? AND status = 'pago'");
@@ -1910,7 +2148,9 @@ if ($resource === 'contracts') {
                 );
                 $rulesStmt->execute([(int)$id]);
                 $ruleRows = $rulesStmt->fetchAll();
-                generate_charges($pdo, (int)$id, $nextBuyer, $nextTotal, $nextInstallments, $nextFirstDueNorm, $nextMethod);
+                generate_charges(
+                    $pdo, (int)$id, $nextBuyer, $nextTotal, $nextInstallments, $nextFirstDueNorm, $nextMethod, $schedule
+                );
                 generate_payouts($pdo, (int)$id, array_map(function ($r) {
                     return [
                         'beneficiaryRole' => $r['beneficiary_role'],
@@ -1929,6 +2169,46 @@ if ($resource === 'contracts') {
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
             json_out(['error' => 'Erro ao atualizar contrato'], 500);
+        }
+    }
+
+    if ($method === 'POST' && $id && $action === 'clicksign') {
+        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
+        $stmt->execute([(int)$id]);
+        $r = $stmt->fetch();
+        if (!$r) json_out(['error' => 'Contrato não encontrado'], 404);
+        if (in_array($r['status'], ['cancelado', 'concluido'], true)) {
+            json_out(['error' => 'Contrato cancelado ou concluído não pode ser enviado'], 400);
+        }
+        if (!empty($r['clicksign_envelope_id']) && ($r['clicksign_status'] ?? '') === 'running') {
+            json_out([
+                'error' => 'Este contrato já foi enviado à Clicksign',
+                'envelopeId' => $r['clicksign_envelope_id'],
+            ], 400);
+        }
+        $pdf = (string)($body['pdfBase64'] ?? '');
+        try {
+            $sent = clicksign_send_contract($config, map_contract_row($r), $pdf);
+            $pdo->prepare(
+                'UPDATE contracts SET clicksign_envelope_id=?, clicksign_document_id=?, clicksign_status=?, clicksign_sent_at=NOW(), status=? WHERE id=?'
+            )->execute([
+                $sent['envelopeId'],
+                $sent['documentId'],
+                $sent['status'],
+                'aguardando_assinatura',
+                (int)$id,
+            ]);
+            json_out([
+                'success' => true,
+                'envelopeId' => $sent['envelopeId'],
+                'documentId' => $sent['documentId'],
+                'status' => $sent['status'],
+            ]);
+        } catch (InvalidArgumentException $e) {
+            json_out(['error' => $e->getMessage()], 400);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Falha ao enviar para Clicksign: ' . $e->getMessage()], 500);
         }
     }
 

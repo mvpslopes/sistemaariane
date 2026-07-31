@@ -24,7 +24,7 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'ariane_mvp_dev_secret';
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 function uploadKind(req) {
@@ -483,27 +483,66 @@ function validateRequiredClient(body) {
   return null;
 }
 
-async function generateCharges(conn, contractId, buyerId, total, n, firstDue, method) {
-  n = Math.max(1, Math.min(40, n));
+/** Parcelas iguais, mensais, com a diferença de centavos na última. */
+function buildEqualSchedule(total, n, firstDue) {
   const base = Math.floor((total / n) * 100) / 100;
-  // Repasses dependem das cobranças — remove antes para evitar falha de FK
-  await conn.execute('DELETE FROM payouts WHERE contract_id = ?', [contractId]);
-  await conn.execute('DELETE FROM charges WHERE contract_id = ?', [contractId]);
-  let sum = 0;
   const due = new Date(`${String(firstDue).slice(0, 10)}T12:00:00`);
+  const rows = [];
+  let sum = 0;
   for (let i = 1; i <= n; i++) {
     const amount = i === n ? Math.round((total - sum) * 100) / 100 : base;
     sum += amount;
     const y = due.getFullYear();
     const m = String(due.getMonth() + 1).padStart(2, '0');
     const d = String(due.getDate()).padStart(2, '0');
-    const dueStr = `${y}-${m}-${d}`;
+    rows.push({ amount, dueDate: `${y}-${m}-${d}` });
+    due.setMonth(due.getMonth() + 1);
+  }
+  return rows;
+}
+
+/** Cronograma manual vindo do formulário. Retorna null quando não foi informado. */
+function normalizeSchedule(raw, n, total) {
+  if (!Array.isArray(raw) || !raw.length) return null;
+  if (raw.length !== n) {
+    const err = new Error('O cronograma informado não bate com a quantidade de parcelas');
+    err.status = 400;
+    throw err;
+  }
+  const rows = raw
+    .map((r, i) => ({
+      order: Number(r.installmentNo ?? i + 1),
+      amount: Math.round(Number(r.amount) * 100) / 100,
+      dueDate: String(r.dueDate || '').slice(0, 10),
+    }))
+    .sort((a, b) => a.order - b.order);
+
+  if (rows.some((r) => !(r.amount > 0) || !/^\d{4}-\d{2}-\d{2}$/.test(r.dueDate))) {
+    const err = new Error('Informe valor e vencimento válidos em todas as parcelas');
+    err.status = 400;
+    throw err;
+  }
+  const sum = rows.reduce((s, r) => s + r.amount, 0);
+  if (Math.abs(sum - total) > 0.02) {
+    const err = new Error('A soma das parcelas deve ser igual ao valor total do contrato');
+    err.status = 400;
+    throw err;
+  }
+  return rows.map(({ amount, dueDate }) => ({ amount, dueDate }));
+}
+
+async function generateCharges(conn, contractId, buyerId, total, n, firstDue, method, schedule = null) {
+  n = Math.max(1, Math.min(40, n));
+  const rows = schedule || buildEqualSchedule(total, n, firstDue);
+  // Repasses dependem das cobranças — remove antes para evitar falha de FK
+  await conn.execute('DELETE FROM payouts WHERE contract_id = ?', [contractId]);
+  await conn.execute('DELETE FROM charges WHERE contract_id = ?', [contractId]);
+  for (let i = 0; i < rows.length; i++) {
     await conn.execute(
       `INSERT INTO charges (contract_id, client_id, installment_no, amount, due_date, payment_method, status)
        VALUES (?, ?, ?, ?, ?, ?, 'pendente')`,
-      [contractId, buyerId, i, amount, dueStr, method]
+      [contractId, buyerId, i + 1, rows[i].amount, rows[i].dueDate, method]
     );
-    due.setMonth(due.getMonth() + 1);
   }
 }
 
@@ -631,9 +670,15 @@ function mapContract(r) {
     commission_seller_pct: r.commission_seller_pct != null ? Number(r.commission_seller_pct) : null,
     witness1_id: r.witness1_id ? String(r.witness1_id) : null,
     witness1_name: r.witness1_name || null,
+    witness1_email: r.witness1_email || null,
     witness2_id: r.witness2_id ? String(r.witness2_id) : null,
     witness2_name: r.witness2_name || null,
+    witness2_email: r.witness2_email || null,
     via_label: r.via_label || 'VIA DAS PARTES — VENDEDOR E COMPRADOR',
+    clicksign_envelope_id: r.clicksign_envelope_id || null,
+    clicksign_document_id: r.clicksign_document_id || null,
+    clicksign_status: r.clicksign_status || null,
+    clicksign_sent_at: r.clicksign_sent_at || null,
     total_amount: Number(r.total_amount),
     payment_method: r.payment_method,
     installments: Number(r.installments),
@@ -1695,7 +1740,8 @@ const contractSelect = `SELECT c.*,
     b.address AS buyer_address, b.address_number AS buyer_address_number,
     b.city AS buyer_city, b.state AS buyer_state,
     ass.name AS assessor_name,
-    w1.name AS witness1_name, w2.name AS witness2_name,
+    w1.name AS witness1_name, w1.email AS witness1_email,
+    w2.name AS witness2_name, w2.email AS witness2_email,
     au.name AS auction_name, au.auction_date AS auction_date,
     t.name AS template_name,
     COALESCE(c.verso_title, t.title) AS template_title,
@@ -1864,7 +1910,10 @@ app.post('/api/contracts', auth(['root', 'admin', 'user']), async (req, res) => 
     const year = new Date().getFullYear();
     const contractNumber = `${String(10000000 + contractId).slice(-8)}-${year}`;
     await conn.execute('UPDATE contracts SET contract_number = ? WHERE id = ?', [contractNumber, contractId]);
-    await generateCharges(conn, contractId, Number(buyerId), total, n, firstDueDate, paymentMethod);
+    await generateCharges(
+      conn, contractId, Number(buyerId), total, n, firstDueDate, paymentMethod,
+      normalizeSchedule(req.body.schedule, n, total)
+    );
     await generatePayouts(conn, contractId, payoutRules || []);
     if (lotId) {
       await conn.execute(
@@ -1992,6 +2041,8 @@ app.put('/api/contracts/:id', auth(['root', 'admin', 'user']), async (req, res) 
       [id]
     );
 
+    const schedule = normalizeSchedule(b.schedule, nextInstallments, nextTotal);
+
     const financeChanged =
       Math.abs(nextTotal - Number(existing.total_amount)) > 0.001 ||
       nextBuyer !== Number(existing.buyer_id) ||
@@ -2005,7 +2056,7 @@ app.put('/api/contracts/:id', auth(['root', 'admin', 'user']), async (req, res) 
       Number(chargeAgg.qty) !== nextInstallments;
 
     const shouldRecalc =
-      Boolean(b.recalcCharges) || financeChanged || chargesOutOfSync;
+      Boolean(schedule) || Boolean(b.recalcCharges) || financeChanged || chargesOutOfSync;
 
     if (shouldRecalc) {
       const [[paidOnly]] = await conn.execute(
@@ -2029,7 +2080,9 @@ app.put('/api/contracts/:id', auth(['root', 'admin', 'user']), async (req, res) 
          FROM contract_payout_rules WHERE contract_id = ? ORDER BY sort_order ASC, id ASC`,
         [id]
       );
-      await generateCharges(conn, id, nextBuyer, nextTotal, nextInstallments, nextFirstDueNorm, nextMethod);
+      await generateCharges(
+        conn, id, nextBuyer, nextTotal, nextInstallments, nextFirstDueNorm, nextMethod, schedule
+      );
       await generatePayouts(
         conn,
         id,
@@ -2051,6 +2104,180 @@ app.put('/api/contracts/:id', auth(['root', 'admin', 'user']), async (req, res) 
     res.status(500).json({ error: 'Erro ao atualizar contrato' });
   } finally {
     conn.release();
+  }
+});
+
+function loadClicksignConfig() {
+  let token = process.env.CLICKSIGN_ACCESS_TOKEN || '';
+  let base = process.env.CLICKSIGN_BASE_URL || 'https://app.clicksign.com';
+  try {
+    const php = fs.readFileSync(path.join(__dirname, 'config.local.php'), 'utf8');
+    const t = php.match(/'clicksign_access_token'\s*=>\s*'([^']*)'/);
+    const b = php.match(/'clicksign_base_url'\s*=>\s*'([^']*)'/);
+    if (!token && t?.[1]) token = t[1];
+    if (b?.[1]) base = b[1];
+  } catch {
+    /* config.local.php opcional no Node */
+  }
+  if (!token) {
+    const err = new Error('Clicksign não configurada. Defina clicksign_access_token em config.local.php');
+    err.status = 400;
+    throw err;
+  }
+  return { token, base: base.replace(/\/$/, '') };
+}
+
+async function clicksignRequest(method, pathUrl, payload) {
+  const { token, base } = loadClicksignConfig();
+  const res = await fetch(`${base}${pathUrl}`, {
+    method,
+    headers: {
+      Authorization: token,
+      Accept: 'application/vnd.api+json',
+      'Content-Type': 'application/vnd.api+json',
+    },
+    body: payload != null ? JSON.stringify(payload) : undefined,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg =
+      json?.errors?.[0]?.detail ||
+      json?.errors?.[0]?.title ||
+      json?.error ||
+      `Clicksign HTTP ${res.status}`;
+    const err = new Error(typeof msg === 'string' ? msg : 'Erro na Clicksign');
+    err.status = 400;
+    throw err;
+  }
+  return json;
+}
+
+async function clicksignSendContract(contract, pdfBase64Raw) {
+  let pdfBase64 = String(pdfBase64Raw || '');
+  if (pdfBase64.includes('base64,')) pdfBase64 = pdfBase64.split('base64,').pop() || '';
+  pdfBase64 = pdfBase64.replace(/\s+/g, '');
+  if (!pdfBase64) {
+    const err = new Error('PDF do contrato é obrigatório');
+    err.status = 400;
+    throw err;
+  }
+
+  const number = contract.contract_number || contract.id;
+  const animal = contract.animal_name || 'Animal';
+  const signers = [
+    { name: (contract.seller_name || '').trim(), email: (contract.seller_email || '').trim(), role: 'seller', label: 'vendedor' },
+    { name: (contract.buyer_name || '').trim(), email: (contract.buyer_email || '').trim(), role: 'buyer', label: 'comprador' },
+    { name: (contract.witness1_name || '').trim(), email: (contract.witness1_email || '').trim(), role: 'witness', label: 'testemunha 1' },
+    { name: (contract.witness2_name || '').trim(), email: (contract.witness2_email || '').trim(), role: 'witness', label: 'testemunha 2' },
+  ];
+  for (const s of signers) {
+    if (!s.name || !s.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.email)) {
+      const err = new Error(`Para enviar à Clicksign, cadastre nome e e-mail válidos do ${s.label}`);
+      err.status = 400;
+      throw err;
+    }
+  }
+
+  const env = await clicksignRequest('POST', '/api/v3/envelopes', {
+    data: {
+      type: 'envelopes',
+      attributes: {
+        name: `Contrato ${number} — ${animal}`,
+        locale: 'pt-BR',
+        auto_close: true,
+        remind_interval: 3,
+      },
+    },
+  });
+  const envelopeId = env?.data?.id;
+  if (!envelopeId) throw new Error('Clicksign não retornou o envelope');
+
+  const doc = await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/documents`, {
+    data: {
+      type: 'documents',
+      attributes: {
+        filename: `contrato-${number}.pdf`,
+        content_base64: `data:application/pdf;base64,${pdfBase64}`,
+      },
+    },
+  });
+  const documentId = doc?.data?.id;
+  if (!documentId) throw new Error('Clicksign não retornou o documento');
+
+  for (const s of signers) {
+    const signerRes = await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/signers`, {
+      data: {
+        type: 'signers',
+        attributes: { name: s.name, email: s.email },
+      },
+    });
+    const signerId = signerRes?.data?.id;
+    if (!signerId) throw new Error(`Falha ao cadastrar signatário: ${s.label}`);
+
+    await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/requirements`, {
+      data: {
+        type: 'requirements',
+        attributes: { action: 'agree', role: s.role },
+        relationships: {
+          document: { data: { type: 'documents', id: documentId } },
+          signer: { data: { type: 'signers', id: signerId } },
+        },
+      },
+    });
+    await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/requirements`, {
+      data: {
+        type: 'requirements',
+        attributes: { action: 'provide_evidence', auth: 'email' },
+        relationships: {
+          document: { data: { type: 'documents', id: documentId } },
+          signer: { data: { type: 'signers', id: signerId } },
+        },
+      },
+    });
+  }
+
+  await clicksignRequest('PATCH', `/api/v3/envelopes/${envelopeId}`, {
+    data: {
+      id: envelopeId,
+      type: 'envelopes',
+      attributes: { status: 'running' },
+    },
+  });
+  await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/notifications`, {
+    data: { type: 'notifications', attributes: {} },
+  });
+
+  return { envelopeId, documentId, status: 'running' };
+}
+
+app.post('/api/contracts/:id/clicksign', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [rows] = await pool.execute(`${contractSelect} AND c.id = ?`, [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Contrato não encontrado' });
+    const contract = mapContract(rows[0]);
+    if (['cancelado', 'concluido'].includes(contract.status)) {
+      return res.status(400).json({ error: 'Contrato cancelado ou concluído não pode ser enviado' });
+    }
+    if (contract.clicksign_envelope_id && contract.clicksign_status === 'running') {
+      return res.status(400).json({
+        error: 'Este contrato já foi enviado à Clicksign',
+        envelopeId: contract.clicksign_envelope_id,
+      });
+    }
+
+    const sent = await clicksignSendContract(contract, req.body.pdfBase64 || '');
+    await pool.execute(
+      `UPDATE contracts
+       SET clicksign_envelope_id=?, clicksign_document_id=?, clicksign_status=?, clicksign_sent_at=NOW(), status='aguardando_assinatura'
+       WHERE id=?`,
+      [sent.envelopeId, sent.documentId, sent.status, id]
+    );
+    res.json({ success: true, ...sent });
+  } catch (error) {
+    console.error(error);
+    const status = error.status || 500;
+    res.status(status).json({ error: error.message || 'Falha ao enviar para Clicksign' });
   }
 });
 

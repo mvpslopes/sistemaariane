@@ -229,9 +229,15 @@ export interface Contract {
   commission_seller_pct?: number | null;
   witness1_id?: string | null;
   witness1_name?: string | null;
+  witness1_email?: string | null;
   witness2_id?: string | null;
   witness2_name?: string | null;
+  witness2_email?: string | null;
   via_label?: string | null;
+  clicksign_envelope_id?: string | null;
+  clicksign_document_id?: string | null;
+  clicksign_status?: string | null;
+  clicksign_sent_at?: string | null;
   total_amount: number;
   payment_method: PaymentMethod;
   installments: number;
@@ -680,6 +686,18 @@ export async function signContract(
   return request<{ success: boolean; activated: boolean }>(`/contracts/${id}/sign`, {
     method: 'POST',
     body: JSON.stringify(data),
+  });
+}
+
+export async function sendContractToClicksign(id: string, pdfBase64: string) {
+  return request<{
+    success: boolean;
+    envelopeId: string;
+    documentId: string;
+    status: string;
+  }>(`/contracts/${id}/clicksign`, {
+    method: 'POST',
+    body: JSON.stringify({ pdfBase64 }),
   });
 }
 
