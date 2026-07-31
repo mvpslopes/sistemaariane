@@ -112,7 +112,7 @@ export default function ClientsPage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar por nome, documento, e-mail..."
+            placeholder="Buscar por nome, haras, documento, e-mail..."
             className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
           />
         </div>
@@ -134,6 +134,7 @@ export default function ClientsPage() {
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
                 <th className="px-4 py-3 font-medium">Nome</th>
+                <th className="px-4 py-3 font-medium">Propriedade rural</th>
                 <th className="px-4 py-3 font-medium">Documento</th>
                 <th className="hidden px-4 py-3 font-medium md:table-cell">Contato</th>
                 <th className="hidden px-4 py-3 font-medium lg:table-cell">Cidade</th>
@@ -168,6 +169,9 @@ export default function ClientsPage() {
                         </div>
                       </div>
                     </div>
+                  </td>
+                  <td className="px-4 py-3 text-brand-brown">
+                    {c.property_name || '—'}
                   </td>
                   <td className="px-4 py-3 text-brand-brown">
                     {c.document_type} {c.document || '—'}

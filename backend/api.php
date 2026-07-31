@@ -495,6 +495,7 @@ function map_client(array $r): array {
         'is_assessor' => (bool)($r['is_assessor'] ?? 0),
         'is_witness' => (bool)($r['is_witness'] ?? 0),
         'is_avalista' => (bool)($r['is_avalista'] ?? 0),
+        'property_name' => $r['property_name'] ?? null,
         'created_at' => $r['created_at'] ?? null,
     ];
 }
@@ -570,6 +571,7 @@ function map_contract_row(array $r): array {
         'animal_color' => $r['animal_color'] ?? null,
         'animal_birth_date' => $r['animal_birth_date'] ?? null,
         'animal_sex' => $r['animal_sex'] ?? null,
+        'animal_notes' => $r['animal_notes'] ?? null,
         'sale_type' => $r['sale_type'],
         'share_pct' => $r['share_pct'] !== null ? (float)$r['share_pct'] : null,
         'seller_id' => (string)$r['seller_id'],
@@ -613,7 +615,7 @@ function map_contract_row(array $r): array {
         'witness1_name' => $r['witness1_name'] ?? null,
         'witness2_id' => !empty($r['witness2_id']) ? (string)$r['witness2_id'] : null,
         'witness2_name' => $r['witness2_name'] ?? null,
-        'via_label' => $r['via_label'] ?? 'VIA - VENDEDOR / CONTRATO',
+        'via_label' => $r['via_label'] ?? 'VIA DAS PARTES — VENDEDOR E COMPRADOR',
         'total_amount' => (float)$r['total_amount'],
         'payment_method' => $r['payment_method'],
         'installments' => (int)$r['installments'],
@@ -893,24 +895,36 @@ if ($resource === 'clients') {
         $auth = require_auth($config['jwt_secret']);
         $q = trim($_GET['q'] ?? '');
         $roleFilter = trim($_GET['role'] ?? '');
-        $sql = 'SELECT * FROM clients WHERE 1=1';
+        $sql = 'SELECT c.*, (
+            SELECT cp.name FROM client_properties cp
+            WHERE cp.client_id = c.id
+            ORDER BY cp.is_primary DESC, cp.id ASC
+            LIMIT 1
+          ) AS property_name
+          FROM clients c WHERE 1=1';
         $params = [];
         if ($auth['role'] === 'cliente') {
             if (!$auth['clientId']) json_out([]);
-            $sql .= ' AND id = ?';
+            $sql .= ' AND c.id = ?';
             $params[] = $auth['clientId'];
         }
         if ($q !== '') {
-            $sql .= ' AND (name LIKE ? OR document LIKE ? OR email LIKE ? OR phone LIKE ?)';
+            $sql .= ' AND (
+              c.name LIKE ? OR c.document LIKE ? OR c.email LIKE ? OR c.phone LIKE ?
+              OR EXISTS (
+                SELECT 1 FROM client_properties cp
+                WHERE cp.client_id = c.id AND cp.name LIKE ?
+              )
+            )';
             $like = "%$q%";
-            array_push($params, $like, $like, $like, $like);
+            array_push($params, $like, $like, $like, $like, $like);
         }
-        if ($roleFilter === 'seller') $sql .= ' AND is_seller = 1';
-        if ($roleFilter === 'buyer') $sql .= ' AND is_buyer = 1';
-        if ($roleFilter === 'assessor') $sql .= ' AND is_assessor = 1';
-        if ($roleFilter === 'witness') $sql .= ' AND is_witness = 1';
-        if ($roleFilter === 'avalista') $sql .= ' AND is_avalista = 1';
-        $sql .= ' ORDER BY name ASC';
+        if ($roleFilter === 'seller') $sql .= ' AND c.is_seller = 1';
+        if ($roleFilter === 'buyer') $sql .= ' AND c.is_buyer = 1';
+        if ($roleFilter === 'assessor') $sql .= ' AND c.is_assessor = 1';
+        if ($roleFilter === 'witness') $sql .= ' AND c.is_witness = 1';
+        if ($roleFilter === 'avalista') $sql .= ' AND c.is_avalista = 1';
+        $sql .= ' ORDER BY c.name ASC';
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         json_out(array_map('map_client', $stmt->fetchAll()));
@@ -1255,9 +1269,11 @@ function upsert_owners(PDO $pdo, int $animalId, array $owners): void {
         'INSERT INTO animal_owners (animal_id, client_id, share_pct, is_primary) VALUES (?, ?, ?, ?)'
     );
     foreach ($owners as $owner) {
+        $clientId = (int)($owner['clientId'] ?? 0);
+        if (!$clientId) continue;
         $ins->execute([
             $animalId,
-            (int)$owner['clientId'],
+            $clientId,
             $owner['sharePct'] ?? 100,
             !empty($owner['isPrimary']) ? 1 : 0,
         ]);
@@ -1561,6 +1577,7 @@ if ($resource === 'contracts') {
     $contractSelect = "SELECT c.*,
         a.name AS animal_name, a.chip_no AS animal_chip, a.color AS animal_color,
         a.birth_date AS animal_birth_date, a.sex AS animal_sex,
+        a.notes AS animal_notes,
         s.name AS seller_name, s.document AS seller_document, s.document_type AS seller_document_type,
         s.email AS seller_email, s.phone AS seller_phone, s.whatsapp AS seller_whatsapp,
         s.address AS seller_address, s.address_number AS seller_address_number,
@@ -1713,7 +1730,7 @@ if ($resource === 'contracts') {
             ? (float)$body['commissionSellerPct'] : null;
         $witness1Id = !empty($body['witness1Id']) ? (int)$body['witness1Id'] : null;
         $witness2Id = !empty($body['witness2Id']) ? (int)$body['witness2Id'] : null;
-        $viaLabel = $body['viaLabel'] ?? 'VIA - VENDEDOR / CONTRATO';
+        $viaLabel = $body['viaLabel'] ?? 'VIA DAS PARTES — VENDEDOR E COMPRADOR';
 
         try {
             if (!$templateId) {

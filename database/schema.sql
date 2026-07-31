@@ -226,7 +226,7 @@ CREATE TABLE contracts (
   commission_seller_pct DECIMAL(5,2) NULL,
   witness1_id     BIGINT UNSIGNED NULL,
   witness2_id     BIGINT UNSIGNED NULL,
-  via_label       VARCHAR(80) NULL DEFAULT 'VIA - VENDEDOR / CONTRATO',
+  via_label       VARCHAR(80) NULL DEFAULT 'VIA DAS PARTES — VENDEDOR E COMPRADOR',
   total_amount    DECIMAL(12,2) NOT NULL,
   payment_method  ENUM('pix','boleto','transferencia','outro') NOT NULL DEFAULT 'boleto',
   installments    INT UNSIGNED NOT NULL DEFAULT 1,

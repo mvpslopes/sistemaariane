@@ -111,6 +111,8 @@ export interface Client {
   is_assessor?: boolean;
   is_witness?: boolean;
   is_avalista?: boolean;
+  /** Haras/fazenda principal (quando cadastrada em propriedades) */
+  property_name?: string | null;
   created_at?: string;
 }
 
@@ -185,6 +187,7 @@ export interface Contract {
   animal_color?: string | null;
   animal_birth_date?: string | null;
   animal_sex?: string | null;
+  animal_notes?: string | null;
   sale_type: SaleType;
   share_pct: number | null;
   seller_id: string;

@@ -42,8 +42,6 @@ interface FormState {
   damName: string;
 }
 
-const emptyOwner = (): OwnerRow => ({ clientId: '', sharePct: 100, isPrimary: true });
-
 const empty: FormState = {
   name: '',
   registration_no: '',
@@ -58,7 +56,7 @@ const empty: FormState = {
   ownership_type: 'unico',
   notes: '',
   photo_url: '',
-  owners: [emptyOwner()],
+  owners: [],
   sireName: '',
   damName: '',
 };
@@ -105,7 +103,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
                   sharePct: o.sharePct ?? (animal.ownership_type === 'unico' ? 100 : 0),
                   isPrimary: o.isPrimary ?? i === 0,
                 }))
-              : [emptyOwner()];
+              : [];
           setForm({
             name: animal.name || '',
             registration_no: animal.registration_no || '',
@@ -142,7 +140,8 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
   const setOwnershipType = (ownership_type: FormState['ownership_type']) => {
     setForm((prev) => {
       if (ownership_type === 'unico') {
-        const first = prev.owners[0] || emptyOwner();
+        if (!prev.owners.length) return { ...prev, ownership_type, owners: [] };
+        const first = prev.owners[0];
         return {
           ...prev,
           ownership_type,
@@ -154,7 +153,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
         ownership_type,
         owners: prev.owners.length
           ? prev.owners.map((o, i) => ({ ...o, isPrimary: i === 0 ? true : o.isPrimary }))
-          : [emptyOwner()],
+          : [],
       };
     });
   };
@@ -188,8 +187,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
   const removeOwner = (index: number) => {
     setForm((prev) => {
       let owners = prev.owners.filter((_, i) => i !== index);
-      if (!owners.length) owners = [emptyOwner()];
-      if (!owners.some((o) => o.isPrimary)) owners[0].isPrimary = true;
+      if (owners.length && !owners.some((o) => o.isPrimary)) owners[0].isPrimary = true;
       return {
         ...prev,
         ownership_type: owners.length > 1 ? 'condominio' : 'unico',
@@ -255,20 +253,18 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
     e.preventDefault();
     if (!canWrite) return;
     const filled = form.owners.filter((o) => o.clientId);
-    if (!filled.length) {
-      toastError('Informe ao menos um vendedor/proprietário');
-      return;
-    }
-    const ids = filled.map((o) => o.clientId);
-    if (new Set(ids).size !== ids.length) {
-      toastError('Não repita o mesmo vendedor');
-      return;
-    }
-    if (filled.length > 1) {
-      const total = filled.reduce((s, o) => s + Number(o.sharePct || 0), 0);
-      if (Math.abs(total - 100) > 0.05) {
-        toastError(`A soma das cotas deve ser 100% (atual: ${total.toFixed(2)}%)`);
+    if (filled.length) {
+      const ids = filled.map((o) => o.clientId);
+      if (new Set(ids).size !== ids.length) {
+        toastError('Não repita o mesmo vendedor');
         return;
+      }
+      if (filled.length > 1) {
+        const total = filled.reduce((s, o) => s + Number(o.sharePct || 0), 0);
+        if (Math.abs(total - 100) > 0.05) {
+          toastError(`A soma das cotas deve ser 100% (atual: ${total.toFixed(2)}%)`);
+          return;
+        }
       }
     }
     setSaving(true);
@@ -464,9 +460,14 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
         </Field>
         <div className="sm:col-span-2 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">
-              Vendedor(es) / proprietário(s)
-            </span>
+            <div>
+              <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">
+                Vendedor(es) / proprietário(s)
+              </span>
+              <p className="mt-0.5 text-[11px] text-brand-olive/80">
+                Opcional no plantel. O vendedor será exigido ao cadastrar o lote no leilão.
+              </p>
+            </div>
             {canWrite && (
               <button
                 type="button"
@@ -478,12 +479,14 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
             )}
           </div>
           <div className="space-y-2 rounded-xl border border-brand-beige bg-brand-off-white/40 p-3">
+            {!form.owners.length && (
+              <p className="py-1 text-center text-xs text-brand-olive">Nenhum vendedor vinculado</p>
+            )}
             {form.owners.map((owner, index) => (
               <div key={index} className="grid gap-2 sm:grid-cols-[1fr_100px_auto_auto] sm:items-end">
                 <label className="block space-y-1">
-                  <span className="text-[11px] uppercase text-brand-olive">Pessoa *</span>
+                  <span className="text-[11px] uppercase text-brand-olive">Pessoa</span>
                   <select
-                    required
                     disabled={!canWrite}
                     value={owner.clientId}
                     onChange={(e) => updateOwner(index, { clientId: e.target.value })}

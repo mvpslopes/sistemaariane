@@ -440,6 +440,7 @@ function mapClient(r) {
     country: r.country ?? 'Brasil',
     relationship_notes: r.relationship_notes ?? null,
     problems_notes: r.problems_notes ?? null,
+    property_name: r.property_name ?? null,
   };
 }
 
@@ -588,6 +589,7 @@ function mapContract(r) {
     animal_color: r.animal_color || null,
     animal_birth_date: r.animal_birth_date || null,
     animal_sex: r.animal_sex || null,
+    animal_notes: r.animal_notes || null,
     sale_type: r.sale_type,
     share_pct: r.share_pct != null ? Number(r.share_pct) : null,
     seller_id: String(r.seller_id),
@@ -631,7 +633,7 @@ function mapContract(r) {
     witness1_name: r.witness1_name || null,
     witness2_id: r.witness2_id ? String(r.witness2_id) : null,
     witness2_name: r.witness2_name || null,
-    via_label: r.via_label || 'VIA - VENDEDOR / CONTRATO',
+    via_label: r.via_label || 'VIA DAS PARTES — VENDEDOR E COMPRADOR',
     total_amount: Number(r.total_amount),
     payment_method: r.payment_method,
     installments: Number(r.installments),
@@ -831,27 +833,39 @@ app.get('/api/clients', auth(), async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
     const roleFilter = (req.query.role || '').trim();
-    let sql = `SELECT * FROM clients WHERE 1=1`;
+    let sql = `SELECT c.*, (
+        SELECT cp.name FROM client_properties cp
+        WHERE cp.client_id = c.id
+        ORDER BY cp.is_primary DESC, cp.id ASC
+        LIMIT 1
+      ) AS property_name
+      FROM clients c WHERE 1=1`;
     const params = [];
 
     if (req.user.role === 'cliente') {
       if (!req.user.clientId) return res.json([]);
-      sql += ' AND id = ?';
+      sql += ' AND c.id = ?';
       params.push(req.user.clientId);
     }
 
     if (q) {
-      sql += ' AND (name LIKE ? OR document LIKE ? OR email LIKE ? OR phone LIKE ?)';
+      sql += ` AND (
+        c.name LIKE ? OR c.document LIKE ? OR c.email LIKE ? OR c.phone LIKE ?
+        OR EXISTS (
+          SELECT 1 FROM client_properties cp
+          WHERE cp.client_id = c.id AND cp.name LIKE ?
+        )
+      )`;
       const like = `%${q}%`;
-      params.push(like, like, like, like);
+      params.push(like, like, like, like, like);
     }
-    if (roleFilter === 'seller') sql += ' AND is_seller = 1';
-    if (roleFilter === 'buyer') sql += ' AND is_buyer = 1';
-    if (roleFilter === 'assessor') sql += ' AND is_assessor = 1';
-    if (roleFilter === 'witness') sql += ' AND is_witness = 1';
-    if (roleFilter === 'avalista') sql += ' AND is_avalista = 1';
+    if (roleFilter === 'seller') sql += ' AND c.is_seller = 1';
+    if (roleFilter === 'buyer') sql += ' AND c.is_buyer = 1';
+    if (roleFilter === 'assessor') sql += ' AND c.is_assessor = 1';
+    if (roleFilter === 'witness') sql += ' AND c.is_witness = 1';
+    if (roleFilter === 'avalista') sql += ' AND c.is_avalista = 1';
 
-    sql += ' ORDER BY name ASC';
+    sql += ' ORDER BY c.name ASC';
     const [rows] = await pool.execute(sql, params);
     res.json(rows.map(mapClient));
   } catch (error) {
@@ -1383,12 +1397,14 @@ async function upsertAnimalOwners(conn, animalId, owners) {
   await conn.execute('DELETE FROM animal_owners WHERE animal_id = ?', [animalId]);
   if (!owners?.length) return;
   for (const owner of owners) {
+    const clientId = Number(owner.clientId);
+    if (!clientId) continue;
     await conn.execute(
       `INSERT INTO animal_owners (animal_id, client_id, share_pct, is_primary)
        VALUES (?, ?, ?, ?)`,
       [
         animalId,
-        Number(owner.clientId),
+        clientId,
         owner.sharePct ?? 100,
         owner.isPrimary ? 1 : 0,
       ]
@@ -1669,6 +1685,7 @@ app.put('/api/users/:id', auth(['root', 'admin']), async (req, res) => {
 const contractSelect = `SELECT c.*,
     a.name AS animal_name, a.chip_no AS animal_chip, a.color AS animal_color,
     a.birth_date AS animal_birth_date, a.sex AS animal_sex,
+    a.notes AS animal_notes,
     s.name AS seller_name, s.document AS seller_document, s.document_type AS seller_document_type,
     s.email AS seller_email, s.phone AS seller_phone, s.whatsapp AS seller_whatsapp,
     s.address AS seller_address, s.address_number AS seller_address_number,
@@ -1838,7 +1855,7 @@ app.post('/api/contracts', auth(['root', 'admin', 'user']), async (req, res) => 
         commissionSellerPct != null && commissionSellerPct !== '' ? Number(commissionSellerPct) : null,
         witness1Id ? Number(witness1Id) : null,
         witness2Id ? Number(witness2Id) : null,
-        viaLabel || 'VIA - VENDEDOR / CONTRATO',
+        viaLabel || 'VIA DAS PARTES — VENDEDOR E COMPRADOR',
         total, paymentMethod, n, firstDueDate,
         notes || null, req.user.id,
       ]

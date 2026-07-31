@@ -132,7 +132,10 @@ export function printContractPdf(contract: Contract) {
     contract.template_title || 'NOTA DE LEILÃO E CONTRATO COM RESERVA DE DOMÍNIO';
   const lot = contract.lot_label || '—';
   const share = contract.share_pct != null ? Number(contract.share_pct).toFixed(2) : '100,00';
-  const qty = contract.quantity != null ? Number(contract.quantity).toFixed(2) : '1,00';
+  const qtyNum = Number(contract.quantity ?? 1);
+  const qty = Number.isInteger(qtyNum)
+    ? String(qtyNum)
+    : String(qtyNum).replace('.', ',');
   const unit = contract.total_amount / (Number(contract.quantity) || 1);
 
   const animalMeta = [
@@ -142,6 +145,19 @@ export function printContractPdf(contract: Contract) {
   ]
     .filter(Boolean)
     .join(' · ');
+
+  const observationsText = [contract.animal_notes, contract.notes]
+    .map((t) => (t || '').trim())
+    .filter(Boolean)
+    .filter((t, i, arr) => arr.indexOf(t) === i)
+    .join('\n\n');
+
+  const observationsBlock = observationsText
+    ? `<div class="section">
+      <div class="section-h">Observações</div>
+      <div class="obs">${esc(observationsText).replace(/\n/g, '<br/>')}</div>
+    </div>`
+    : '';
 
   const auctionLine = contract.auction_name
     ? `${contract.auction_name}${contract.auction_date ? ` — ${fmtDate(contract.auction_date)}` : ''}`
@@ -321,11 +337,15 @@ export function printContractPdf(contract: Contract) {
     : '';
 
   const signatureBlock = `
-    <div class="signs">
-      <div class="sign"><div class="line"></div>VENDEDOR<br/><strong>${esc(contract.seller_name)}</strong></div>
-      <div class="sign"><div class="line"></div>COMPRADOR<br/><strong>${esc(contract.buyer_name)}</strong></div>
-      <div class="sign"><div class="line"></div>TESTEMUNHA 1<br/><strong>${esc(contract.witness1_name || '________________')}</strong></div>
-      <div class="sign"><div class="line"></div>TESTEMUNHA 2<br/><strong>${esc(contract.witness2_name || '________________')}</strong></div>
+    <div class="page signs-page">
+      <p class="signs-title">ASSINATURAS</p>
+      <p class="signs-meta">CONTRATO Nº ${esc(String(number))} — LOTE ${esc(lot)} — ${esc(contract.animal_name || '')}</p>
+      <div class="signs">
+        <div class="sign"><div class="line"></div>VENDEDOR<br/><strong>${esc(contract.seller_name || '________________')}</strong></div>
+        <div class="sign"><div class="line"></div>COMPRADOR<br/><strong>${esc(contract.buyer_name || '________________')}</strong></div>
+        <div class="sign"><div class="line"></div>TESTEMUNHA 1<br/><strong>${esc(contract.witness1_name || '________________')}</strong></div>
+        <div class="sign"><div class="line"></div>TESTEMUNHA 2<br/><strong>${esc(contract.witness2_name || '________________')}</strong></div>
+      </div>
     </div>`;
 
   const versoBody = (contract.template_body || '')
@@ -364,7 +384,7 @@ export function printContractPdf(contract: Contract) {
       padding: 8px; text-align: center; flex-shrink: 0;
     }
     .idbox .lote { font-size: 18pt; font-weight: 800; margin: 0; }
-    .idbox .via { font-size: 7.5pt; margin: 4px 0; }
+    .idbox .via { font-size: 7.5pt; margin: 4px 0; line-height: 1.35; font-weight: 700; }
     .idbox .num { font-size: 9pt; font-weight: 700; }
     .idbox .emi { font-size: 7.5pt; color: #555; margin-top: 4px; }
     .section { border: 1px solid #bbb; margin-top: 8px; }
@@ -381,6 +401,10 @@ export function printContractPdf(contract: Contract) {
     .fin { display: flex; flex-wrap: wrap; gap: 12px 20px; padding: 6px; font-size: 9pt; }
     .fin strong { font-size: 10pt; }
     .pay-summary { padding: 6px; font-size: 8.5pt; border-top: 1px solid #ddd; }
+    .obs {
+      padding: 8px 10px; font-size: 8.5pt; line-height: 1.45;
+      text-align: justify; white-space: pre-wrap;
+    }
     .schedule {
       display: grid; grid-template-columns: 1fr 1fr 1fr 1fr;
       gap: 2px 8px; padding: 6px; font-size: 7.5pt;
@@ -393,6 +417,17 @@ export function printContractPdf(contract: Contract) {
       display: grid; grid-template-columns: 1fr 1fr; gap: 18px 24px;
       margin-top: 28px;
     }
+    .signs-page { padding-top: 18mm; }
+    .signs-title {
+      font-size: 12pt; font-weight: 800; text-align: center;
+      margin: 0 0 4px; letter-spacing: 0.06em;
+    }
+    .signs-meta {
+      text-align: center; font-size: 8.5pt; font-weight: 700;
+      margin: 0 0 36px;
+    }
+    .signs-page .signs { margin-top: 12mm; gap: 28px 32px; }
+    .signs-page .sign .line { margin: 36px 0 6px; }
     .sign { text-align: center; font-size: 8pt; }
     .sign .line { border-top: 1px dashed #333; margin: 28px 0 4px; }
     .muted { color: #555; font-size: 8pt; padding: 0 6px 6px; }
@@ -444,7 +479,7 @@ export function printContractPdf(contract: Contract) {
       </div>
       <div class="idbox">
         <p class="lote">LOTE ${esc(lot)}</p>
-        <p class="via">${esc(contract.via_label || 'VIA - VENDEDOR / CONTRATO')}</p>
+        <p class="via">VIA DAS PARTES<br/>VENDEDOR E COMPRADOR</p>
         <p class="num">${esc(number)}</p>
         <p class="emi">Emissão: ${esc(emit)}</p>
       </div>
@@ -520,6 +555,8 @@ export function printContractPdf(contract: Contract) {
       ${schedule}
     </div>
 
+    ${observationsBlock}
+
     <p class="legal">
       COM AS ASSINATURAS, AS PARTES FICAM DE ACORDO COM AS DISPOSIÇÕES GERAIS QUE SE ENCONTRAM NO VERSO,
       FAZENDO PARTE INTEGRAL DO PRESENTE INSTRUMENTO.
@@ -543,8 +580,9 @@ export function printContractPdf(contract: Contract) {
       AS PARTES DECLARAM TER LIDO E ACEITO AS DISPOSIÇÕES GERAIS DESTE VERSO,
       QUE INTEGRAM O CONTRATO Nº ${esc(String(number))}.
     </p>
-    ${signatureBlock}
   </div>
+
+  ${signatureBlock}
 
   ${promissory}
 </body>
