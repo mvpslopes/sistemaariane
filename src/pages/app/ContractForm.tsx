@@ -664,7 +664,7 @@ export default function ContractForm({
           <span className="text-sm text-brand-dark-brown">
             Incluir comissão no contrato
             <span className="mt-0.5 block text-xs text-brand-olive">
-              Aparece na composição financeira do PDF. Desmarque se a venda não tiver comissão.
+              Gera promissória(s) de comissão no final do PDF: comissão de venda o vendedor assina; de compra o comprador assina. Beneficiária: Ariane Andrade Inteligência Agropecuária Ltda. O PDF também traz sempre a promissória do comprador em favor do vendedor pelo valor da aquisição.
             </span>
           </span>
         </label>

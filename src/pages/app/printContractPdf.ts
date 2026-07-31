@@ -20,6 +20,28 @@ function fmtDate(d: string | null | undefined) {
   }
 }
 
+const MONTHS_PT = [
+  'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+];
+
+/** Ex.: 10 de novembro de 2026 */
+function fmtDateLong(d: string | null | undefined) {
+  if (!d) return '____ de ______________ de ______';
+  try {
+    const dt = new Date(d.includes('T') ? d : d + 'T12:00:00');
+    return `${dt.getDate()} de ${MONTHS_PT[dt.getMonth()]} de ${dt.getFullYear()}`;
+  } catch {
+    return d;
+  }
+}
+
+const ASSESSORIA = {
+  name: 'ARIANE ANDRADE INTELIGÊNCIA AGROPECUÁRIA LTDA.',
+  cnpj: '43.507.435/0001-30',
+  cityUf: 'Belo Horizonte/MG',
+};
+
 function moneyInWords(value: number): string {
   const unidades = [
     '', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove',
@@ -163,69 +185,140 @@ export function printContractPdf(contract: Contract) {
     contract.charges && contract.charges.length > 0
       ? contract.charges[contract.charges.length - 1].due_date
       : contract.first_due_date;
-  const placeCity = [contract.seller_city, contract.seller_state].filter(Boolean).join(' / ') || 'Brasil';
-  const promissory = `
-  <div class="page np">
-    <p class="np-title">NOTA PROMISSÓRIA</p>
-    <p class="np-sub">Vinculada ao Contrato / Nota nº ${esc(String(number))} — Lote ${esc(lot)} — ${esc(contract.animal_name || '')}</p>
-    <div class="np-box">
-      <div class="np-row">
-        <div><span class="k">Nº</span> <strong>${esc(String(number))}-NP</strong></div>
-        <div><span class="k">Vencimento</span> <strong>${esc(fmtDate(dueLast))}</strong></div>
-        <div><span class="k">Valor</span> <strong>${esc(money(contract.total_amount))}</strong></div>
-      </div>
-      <p class="np-text">
-        No dia <strong>${esc(fmtDate(dueLast))}</strong>, pagarei(emos) por esta única via de
-        <strong>NOTA PROMISSÓRIA</strong> a <strong>${esc(contract.seller_name || '________________')}</strong>,
-        CPF/CNPJ <strong>${esc(contract.seller_document || '________________')}</strong>,
-        ou à sua ordem, a quantia de
-        <strong>${esc(money(contract.total_amount))}</strong>
-        (<em>${esc(moneyInWords(Number(contract.total_amount)))}</em>),
-        referente à compra do animal <strong>${esc(contract.animal_name || '')}</strong>
-        ${contract.animal_category ? `(${esc(contract.animal_category)})` : ''}
-        ${contract.share_pct != null ? `, cotas de ${esc(String(contract.share_pct))}%` : ''},
-        conforme contrato nº <strong>${esc(String(number))}</strong>,
-        em <strong>${esc(String(contract.installments))}</strong> parcela(s)
-        (${esc(String(contract.payment_method).toUpperCase())}),
-        primeira com vencimento em <strong>${esc(fmtDate(contract.first_due_date))}</strong>.
+  const issueDate =
+    contract.created_at?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const npYear = new Date(issueDate + 'T12:00:00').getFullYear();
+  const npSerial = `${npYear}.${String(number).replace(/\D/g, '').padStart(10, '0')}`;
+
+  const animalRef = `sobre o contrato nº <strong>${esc(String(number))}</strong> (animal <strong>${esc(
+    contract.animal_name || ''
+  )}</strong>${lot && lot !== '—' ? `, lote ${esc(lot)}` : ''})`;
+
+  const buildPromissory = (opts: {
+    amount: number;
+    due: string | null | undefined;
+    beneficiaryName: string | null | undefined;
+    beneficiaryDocLabel: string;
+    beneficiaryDoc: string | null | undefined;
+    referenceHtml: string;
+    placeOfPayment: string;
+    emitterName: string | null | undefined;
+    emitterDocument: string | null | undefined;
+    emitterRole: string;
+    serialSuffix: string;
+  }) => {
+    if (!(opts.amount > 0)) return '';
+
+    return `
+  <section class="np-card">
+    <img class="np-logo" src="${logoUrl}" alt="Ariane Andrade" />
+    <div class="np-sheet">
+      <p class="np-title">NOTA PROMISSÓRIA</p>
+      <p class="np-num">${esc(npSerial)}${esc(opts.serialSuffix)}</p>
+      <p class="np-body">
+        No dia <strong>${esc(fmtDateLong(opts.due || issueDate))}</strong> pagarei (emos) por esta nota promissória a
+        <strong>${esc(opts.beneficiaryName || '________________')}</strong>,
+        ${esc(opts.beneficiaryDocLabel)}: <strong>${esc(opts.beneficiaryDoc || '________________')}</strong>,
+        ou a sua ordem a quantia de
+        <strong>${esc(money(opts.amount))}</strong>
+        (<strong>${esc(moneyInWords(opts.amount))}</strong>)
+        em moeda corrente desse país, referente ${opts.referenceHtml}.
       </p>
-      <p class="np-text">
-        Pagável em ${esc(placeCity)}. Em caso de não pagamento no vencimento, o emitente fica sujeito aos encargos
-        legais, correção e demais medidas cabíveis, sem prejuízo das cláusulas do contrato vinculado.
-      </p>
-      <table class="fields" style="margin-top:10px">
-        <tr>
-          <td class="k">Emitente (Comprador)</td>
-          <td colspan="3"><strong>${esc(contract.buyer_name)}</strong></td>
-        </tr>
-        <tr>
-          <td class="k">CPF/CNPJ</td>
-          <td>${esc(contract.buyer_document || '—')}</td>
-          <td class="k">Telefone</td>
-          <td>${esc(contract.buyer_phone || contract.buyer_whatsapp || '—')}</td>
-        </tr>
-        <tr>
-          <td class="k">Endereço</td>
-          <td colspan="3">${esc(contract.buyer_address || '—')}</td>
-        </tr>
-        <tr>
-          <td class="k">Cidade/UF</td>
-          <td colspan="3">${esc([contract.buyer_city, contract.buyer_state].filter(Boolean).join(' / ') || '—')}</td>
-        </tr>
-        <tr>
-          <td class="k">Beneficiário (Vendedor)</td>
-          <td colspan="3"><strong>${esc(contract.seller_name)}</strong> — ${esc(contract.seller_document || '—')}</td>
-        </tr>
-      </table>
-      <p class="np-place">${esc(placeCity)}, ${esc(fmtDate(contract.created_at?.slice(0, 10) || new Date().toISOString().slice(0, 10)))}.</p>
-      <div class="np-signs">
-        <div class="sign"><div class="line"></div>EMITENTE / COMPRADOR<br/><strong>${esc(contract.buyer_name)}</strong></div>
-        <div class="sign"><div class="line"></div>BENEFICIÁRIO / VENDEDOR<br/><strong>${esc(contract.seller_name)}</strong></div>
-        <div class="sign"><div class="line"></div>TESTEMUNHA 1<br/><strong>${esc(contract.witness1_name || '________________')}</strong></div>
-        <div class="sign"><div class="line"></div>TESTEMUNHA 2<br/><strong>${esc(contract.witness2_name || '________________')}</strong></div>
+      <p class="np-local">Local de pagamento: <strong>${esc(opts.placeOfPayment)}</strong></p>
+      <p class="np-issue">${esc(fmtDateLong(issueDate))} – ${esc(ASSESSORIA.cityUf)}</p>
+      <div class="np-sign">
+        <div class="np-sign-line"></div>
+        <p class="np-sign-name">${esc((opts.emitterName || '________________').toUpperCase())}</p>
+        <p class="np-sign-doc">CPF/CNPJ: ${esc(opts.emitterDocument || '________________')}</p>
+        <p class="np-sign-role">${esc(opts.emitterRole)}</p>
       </div>
     </div>
-  </div>`;
+  </section>`;
+  };
+
+  const buildCommissionPromissory = (opts: {
+    kind: 'venda' | 'compra';
+    pct: number;
+    emitterName: string | null | undefined;
+    emitterDocument: string | null | undefined;
+    serialSuffix: string;
+  }) => {
+    const kindLabel = opts.kind === 'venda' ? 'comissão de venda' : 'comissão de compra';
+    const roleLabel = opts.kind === 'venda' ? 'VENDEDOR' : 'COMPRADOR';
+
+    return buildPromissory({
+      amount: (Number(contract.total_amount) * Number(opts.pct)) / 100,
+      due: contract.first_due_date || dueLast,
+      beneficiaryName: ASSESSORIA.name,
+      beneficiaryDocLabel: 'CNPJ',
+      beneficiaryDoc: ASSESSORIA.cnpj,
+      referenceHtml: `à <strong>${esc(kindLabel)} de ${esc(String(opts.pct))}%</strong> ${animalRef}`,
+      placeOfPayment: ASSESSORIA.cityUf,
+      emitterName: opts.emitterName,
+      emitterDocument: opts.emitterDocument,
+      emitterRole: `${roleLabel} — emitente da ${kindLabel}`,
+      serialSuffix: opts.serialSuffix,
+    });
+  };
+
+  const sellerPlace = [contract.seller_city, contract.seller_state].filter(Boolean).join('/');
+
+  // Nota do comprador em favor do vendedor, em garantia do valor do animal (cláusula 2.4 do verso).
+  const salePromissory = buildPromissory({
+    amount: Number(contract.total_amount),
+    due: dueLast || contract.first_due_date,
+    beneficiaryName: contract.seller_name,
+    beneficiaryDocLabel: 'CPF/CNPJ',
+    beneficiaryDoc: contract.seller_document,
+    referenceHtml: `ao <strong>valor total da aquisição</strong> ${animalRef}`,
+    placeOfPayment: sellerPlace || ASSESSORIA.cityUf,
+    emitterName: contract.buyer_name,
+    emitterDocument: contract.buyer_document,
+    emitterRole: 'COMPRADOR — emitente em favor do vendedor',
+    serialSuffix: '-G',
+  });
+
+  const sellerPct = Number(contract.commission_seller_pct);
+  const buyerPct = Number(contract.commission_buyer_pct);
+  let promissoryCards = [
+    sellerPct > 0
+      ? buildCommissionPromissory({
+          kind: 'venda',
+          pct: sellerPct,
+          emitterName: contract.seller_name,
+          emitterDocument: contract.seller_document,
+          serialSuffix: '-V',
+        })
+      : '',
+    buyerPct > 0
+      ? buildCommissionPromissory({
+          kind: 'compra',
+          pct: buyerPct,
+          emitterName: contract.buyer_name,
+          emitterDocument: contract.buyer_document,
+          serialSuffix: '-C',
+        })
+      : '',
+  ].filter(Boolean);
+
+  // Se marcou comissão total sem discriminar compra/venda, gera uma promissória
+  // de venda (vendedor) com o % total — evita PDF sem NP quando só o total foi preenchido.
+  if (!promissoryCards.length && Number(contract.commission_total_pct) > 0) {
+    promissoryCards = [
+      buildCommissionPromissory({
+        kind: 'venda',
+        pct: Number(contract.commission_total_pct),
+        emitterName: contract.seller_name,
+        emitterDocument: contract.seller_document,
+        serialSuffix: '-V',
+      }),
+    ].filter(Boolean);
+  }
+
+  const allPromissoryCards = [salePromissory, ...promissoryCards].filter(Boolean);
+  const promissory = allPromissoryCards.length
+    ? `<div class="page np-page">${allPromissoryCards.join('\n')}</div>`
+    : '';
 
   const signatureBlock = `
     <div class="signs">
@@ -256,6 +349,7 @@ export function printContractPdf(contract: Contract) {
       margin: 0; padding: 0;
       font-family: Arial, Helvetica, sans-serif;
       color: #222; font-size: 9.5pt; line-height: 1.35;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
     }
     .page { page-break-after: always; }
     .page:last-child { page-break-after: auto; }
@@ -306,16 +400,33 @@ export function printContractPdf(contract: Contract) {
     .verso-meta { text-align: center; font-size: 8.5pt; font-weight: 700; margin-bottom: 12px; }
     .verso-body p { margin: 0 0 8px; text-align: justify; font-size: 8.5pt; line-height: 1.4; white-space: pre-wrap; }
     .verso-body { margin-bottom: 8px; }
-    .np-title { font-size: 14pt; font-weight: 800; text-align: center; margin: 8px 0 4px; letter-spacing: 0.04em; }
-    .np-sub { text-align: center; font-size: 8.5pt; margin: 0 0 12px; color: #444; }
-    .np-box { border: 1px solid #999; padding: 12px; }
-    .np-row { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 10px; font-size: 9pt; }
-    .np-row .k { color: #555; font-size: 8pt; display: block; }
-    .np-text { font-size: 9pt; text-align: justify; margin: 0 0 8px; line-height: 1.45; }
-    .np-place { margin: 16px 0 8px; font-size: 9pt; }
-    .np-signs {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 18px 24px; margin-top: 24px;
+    .np-page { display: block; }
+    .np-card { break-inside: avoid; page-break-inside: avoid; margin-bottom: 10mm; }
+    .np-card:last-child { margin-bottom: 0; }
+    .np-logo { display: block; height: 34px; width: auto; margin: 0 auto 8px; }
+    .np-sheet {
+      border: 1px solid #222; background: #f2f0ec;
+      padding: 14px 18px 18px;
     }
+    .np-title {
+      font-size: 14pt; font-weight: 800; text-align: center;
+      margin: 0 0 4px; letter-spacing: 0.06em;
+    }
+    .np-num { text-align: center; font-size: 10.5pt; font-weight: 700; margin: 0 0 14px; }
+    .np-body {
+      font-size: 10pt; text-align: justify; line-height: 1.5;
+      margin: 0 0 12px;
+    }
+    .np-local { font-size: 9.5pt; margin: 0 0 10px; }
+    .np-issue { text-align: center; font-size: 10pt; font-weight: 700; margin: 0 0 6px; }
+    .np-sign { width: 100%; max-width: 110mm; margin: 18px auto 0; text-align: center; }
+    .np-sign-line { border-bottom: 1px solid #222; height: 22px; }
+    .np-sign-name {
+      margin: 6px 0 2px; font-size: 10pt; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 0.02em;
+    }
+    .np-sign-doc { margin: 0; font-size: 9pt; }
+    .np-sign-role { margin: 4px 0 0; font-size: 7.5pt; color: #444; text-transform: uppercase; letter-spacing: 0.04em; }
   </style>
 </head>
 <body>
@@ -468,10 +579,17 @@ export function printContractPdf(contract: Contract) {
     }
   };
 
-  const img = doc.querySelector('img');
-  if (img && !(img as HTMLImageElement).complete) {
-    img.addEventListener('load', () => setTimeout(runPrint, 150), { once: true });
-    img.addEventListener('error', () => setTimeout(runPrint, 150), { once: true });
+  const images = Array.from(doc.images).filter((el) => !el.complete);
+  if (images.length) {
+    let remaining = images.length;
+    const done = () => {
+      remaining -= 1;
+      if (remaining <= 0) setTimeout(runPrint, 150);
+    };
+    images.forEach((el) => {
+      el.addEventListener('load', done, { once: true });
+      el.addEventListener('error', done, { once: true });
+    });
   } else {
     setTimeout(runPrint, 150);
   }
