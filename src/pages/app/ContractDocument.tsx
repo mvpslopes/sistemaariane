@@ -16,6 +16,46 @@ interface ContractDocumentProps {
   onClose?: () => void;
 }
 
+/** Bloco do verso (cláusulas) — usado na pré-visualização e ao abrir o contrato. */
+export function ContractVerso({ contract }: { contract: Contract }) {
+  const body = (contract.template_body || '').trim();
+  if (!body && !contract.template_title) {
+    return (
+      <div className="rounded-xl border border-dashed border-brand-beige bg-brand-off-white/40 p-4">
+        <h3 className="text-sm font-semibold text-brand-dark-brown">Verso do contrato</h3>
+        <p className="mt-1 text-sm text-brand-olive">Nenhum texto de verso vinculado a este contrato.</p>
+      </div>
+    );
+  }
+
+  const paragraphs = body
+    ? body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean)
+    : [];
+
+  return (
+    <div className="rounded-xl border border-brand-beige bg-white p-4 sm:p-5">
+      <p className="text-xs font-medium uppercase tracking-wide text-brand-olive">Verso do contrato</p>
+      <h3 className="mt-1 text-base font-semibold text-brand-dark-brown">
+        {contract.template_title || 'Disposições gerais'}
+      </h3>
+      {contract.template_name && (
+        <p className="mt-0.5 text-xs text-brand-olive">Modelo: {contract.template_name}</p>
+      )}
+      <div className="mt-4 space-y-3 text-sm leading-relaxed text-brand-dark-brown">
+        {paragraphs.length > 0 ? (
+          paragraphs.map((p, i) => (
+            <p key={i} className="whitespace-pre-wrap text-justify">
+              {p}
+            </p>
+          ))
+        ) : (
+          <p className="whitespace-pre-wrap text-justify">{body}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ContractDocument({
   contract,
   showActions = false,
@@ -132,6 +172,8 @@ export default function ContractDocument({
             <p className="whitespace-pre-wrap text-brand-olive">{contract.notes}</p>
           </div>
         )}
+
+        <ContractVerso contract={contract} />
 
         <div>
           <h2 className="mb-2 font-semibold">Aceites digitais</h2>

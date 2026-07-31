@@ -32,7 +32,7 @@ const pageMeta: Record<string, { title: string; subtitle: string }> = {
   '/app': { title: 'Dashboard', subtitle: 'Visão geral do plantel e cadastros' },
   '/app/pessoas': {
     title: 'Pessoas',
-    subtitle: 'Compradores, vendedores, assessores e testemunhas em um só cadastro',
+    subtitle: 'Compradores, vendedores, assessores, testemunhas e avalistas em um só cadastro',
   },
   '/app/animais': { title: 'Animais', subtitle: 'Plantel e documentação básica' },
   '/app/leiloes': {

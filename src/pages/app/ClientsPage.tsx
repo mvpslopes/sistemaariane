@@ -161,7 +161,8 @@ export default function ClientsPage() {
                           {c.is_seller && <RoleChip label="Vendedor" />}
                           {c.is_assessor && <RoleChip label="Assessor" />}
                           {c.is_witness && <RoleChip label="Testemunha" />}
-                          {!c.is_buyer && !c.is_seller && !c.is_assessor && !c.is_witness && (
+                          {c.is_avalista && <RoleChip label="Avalista" />}
+                          {!c.is_buyer && !c.is_seller && !c.is_assessor && !c.is_witness && !c.is_avalista && (
                             <span className="text-[10px] text-brand-olive/60">Sem papel definido</span>
                           )}
                         </div>
@@ -215,8 +216,8 @@ export default function ClientsPage() {
         open={modalOpen}
         onClose={closeModal}
         title={editingId ? 'Editar pessoa' : 'Nova pessoa'}
-        subtitle="Uma pessoa pode ser comprador, vendedor, assessor e/ou testemunha ao mesmo tempo"
-        size="xl"
+        subtitle="Uma pessoa pode ser comprador, vendedor, assessor, testemunha e/ou avalista ao mesmo tempo"
+        size="2xl"
       >
         <ClientForm clientId={editingId} onClose={closeModal} onSaved={() => load(q)} />
       </Modal>

@@ -1,34 +1,88 @@
 import { useEffect, useState } from 'react';
 import {
   createClient,
-  getClient,
-  updateClient,
+  createClientBankAccount,
+  createClientContact,
+  createClientDocument,
+  createClientProperty,
   deleteClient,
+  deleteClientBankAccount,
+  deleteClientContact,
+  deleteClientDocument,
+  deleteClientProperty,
+  getClient,
+  getClientBankAccounts,
+  getClientContacts,
+  getClientDocuments,
+  getClientProperties,
+  mediaUrl,
+  updateClient,
+  uploadPersonDocument,
   type Client,
+  type ClientBankAccount,
+  type ClientContact,
+  type ClientDocument,
+  type ClientProperty,
+  type PersonDocType,
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
+import { formatCepInput, lookupCep } from '../../services/cepService';
+import { formatCepInput, lookupCep } from '../../services/cepService';
 
-type PartyRole = 'buyer' | 'seller' | 'assessor' | 'witness';
+type PartyRole = 'buyer' | 'seller' | 'assessor' | 'witness' | 'avalista';
+type TabId = 'dados' | 'documentos' | 'propriedades' | 'contas' | 'contatos' | 'observacoes';
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: 'dados', label: 'Dados' },
+  { id: 'documentos', label: 'Documentos' },
+  { id: 'propriedades', label: 'Propriedades' },
+  { id: 'contas', label: 'Contas' },
+  { id: 'contatos', label: 'Contatos' },
+  { id: 'observacoes', label: 'Observações' },
+];
+
+const DOC_LABELS: Record<PersonDocType, string> = {
+  rg: 'RG',
+  identidade: 'Identidade',
+  cnh: 'CNH',
+  comprovante_residencia: 'Comprovante de residência',
+  selfie: 'Selfie',
+  outro: 'Outro',
+};
 
 function emptyForm(defaultPartyRole?: PartyRole): Partial<Client> {
   return {
     name: '',
     document_type: 'CPF',
     document: '',
+    rg: '',
+    rg_issuer: '',
+    birth_date: '',
+    nickname: '',
+    marital_status: '',
+    profession: '',
+    mother_name: '',
+    father_name: '',
     email: '',
     phone: '',
     whatsapp: '',
     city: '',
     state: '',
     address: '',
+    address_number: '',
+    zip_code: '',
+    country: 'Brasil',
     notes: '',
+    relationship_notes: '',
+    problems_notes: '',
     active: true,
     is_seller: defaultPartyRole === 'seller',
     is_buyer: defaultPartyRole === 'buyer' || !defaultPartyRole,
     is_assessor: defaultPartyRole === 'assessor',
     is_witness: defaultPartyRole === 'witness',
+    is_avalista: defaultPartyRole === 'avalista',
   };
 }
 
@@ -40,43 +94,146 @@ interface ClientFormProps {
 }
 
 export default function ClientForm({ clientId, defaultPartyRole, onClose, onSaved }: ClientFormProps) {
-  const isNew = !clientId;
   const { canWrite } = useAuth();
   const { success, error: toastError } = useToast();
+  const [currentId, setCurrentId] = useState<string | null>(clientId);
+  const isNew = !currentId;
+  const [tab, setTab] = useState<TabId>('dados');
   const [form, setForm] = useState<Partial<Client>>(() => emptyForm(defaultPartyRole));
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
 
+  const [docs, setDocs] = useState<ClientDocument[]>([]);
+  const [props, setProps] = useState<ClientProperty[]>([]);
+  const [banks, setBanks] = useState<ClientBankAccount[]>([]);
+  const [contacts, setContacts] = useState<ClientContact[]>([]);
+  const [nestedLoading, setNestedLoading] = useState(false);
+
+  const [docType, setDocType] = useState<PersonDocType>('rg');
+  const [uploading, setUploading] = useState(false);
+
+  const [propForm, setPropForm] = useState({
+    name: '', cnpj: '', state_registration: '', zip_code: '', state: '', city: '', address: '',
+    phone: '', property_type: 'Haras', is_primary: false, manager_name: '', manager_phone: '', manager_email: '', notes: '',
+  });
+  const [bankForm, setBankForm] = useState({
+    account_type: 'corrente' as ClientBankAccount['account_type'],
+    bank_name: '', agency: '', account_number: '', holder_name: '', holder_document: '', is_primary: true, notes: '',
+  });
+  const [contactForm, setContactForm] = useState({
+    name: '', role_label: '', phone: '', email: '', notes: '',
+  });
+  const [cepLoading, setCepLoading] = useState(false);
+  const [propCepLoading, setPropCepLoading] = useState(false);
+
+  const applyPersonCep = async (raw: string) => {
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length !== 8 || !canWrite) return;
+    setCepLoading(true);
+    try {
+      const data = await lookupCep(digits);
+      if (!data) return;
+      setForm((f) => ({
+        ...f,
+        zip_code: data.zip_code,
+        address: data.address || f.address,
+        city: data.city || f.city,
+        state: data.state || f.state,
+        country: f.country || 'Brasil',
+      }));
+    } catch (e: any) {
+      toastError(e.message || 'Não foi possível buscar o CEP');
+    } finally {
+      setCepLoading(false);
+    }
+  };
+
+  const applyPropCep = async (raw: string) => {
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length !== 8 || !canWrite) return;
+    setPropCepLoading(true);
+    try {
+      const data = await lookupCep(digits);
+      if (!data) return;
+      setPropForm((f) => ({
+        ...f,
+        zip_code: data.zip_code,
+        address: data.address || f.address,
+        city: data.city || f.city,
+        state: data.state || f.state,
+      }));
+    } catch (e: any) {
+      toastError(e.message || 'Não foi possível buscar o CEP');
+    } finally {
+      setPropCepLoading(false);
+    }
+  };
+
   useEffect(() => {
-    if (isNew) {
+    setCurrentId(clientId);
+  }, [clientId]);
+
+  useEffect(() => {
+    if (!currentId) {
       setForm(emptyForm(defaultPartyRole));
       setLoading(false);
+      setDocs([]);
+      setProps([]);
+      setBanks([]);
+      setContacts([]);
       return;
     }
     setLoading(true);
-    getClient(clientId!)
+    getClient(currentId)
       .then(setForm)
       .catch((e) => toastError(e.message || 'Erro ao carregar cliente'))
       .finally(() => setLoading(false));
-  }, [clientId, isNew, toastError]);
+  }, [currentId, defaultPartyRole, toastError]);
+
+  const loadNested = async (id: string) => {
+    setNestedLoading(true);
+    try {
+      const [d, p, b, c] = await Promise.all([
+        getClientDocuments(id),
+        getClientProperties(id),
+        getClientBankAccounts(id),
+        getClientContacts(id),
+      ]);
+      setDocs(d);
+      setProps(p);
+      setBanks(b);
+      setContacts(c);
+    } catch (e: any) {
+      toastError(e.message || 'Erro ao carregar detalhes');
+    } finally {
+      setNestedLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (currentId && tab !== 'dados' && tab !== 'observacoes') {
+      loadNested(currentId);
+    }
+  }, [currentId, tab]);
 
   const set = (key: keyof Client, value: unknown) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const onSubmitDados = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (!canWrite) return;
     setSaving(true);
     try {
       if (isNew) {
-        await createClient(form);
-        success('Pessoa cadastrada com sucesso');
+        const res = await createClient(form);
+        success('Pessoa cadastrada — agora você pode anexar documentos e demais dados');
+        setCurrentId(res.id);
+        onSaved();
       } else {
-        await updateClient(clientId!, form);
-        success('Pessoa atualizada com sucesso');
+        await updateClient(currentId!, form);
+        success('Dados atualizados');
+        onSaved();
       }
-      onSaved();
-      onClose();
     } catch (err: any) {
       toastError(err.message || 'Erro ao salvar cliente');
     } finally {
@@ -84,8 +241,22 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
     }
   };
 
+  const onSaveObservacoes = async () => {
+    if (!canWrite || !currentId) return;
+    setSaving(true);
+    try {
+      await updateClient(currentId, form);
+      success('Observações salvas');
+      onSaved();
+    } catch (err: any) {
+      toastError(err.message || 'Erro ao salvar');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const onDelete = async () => {
-    if (!canWrite || isNew) return;
+    if (!canWrite || !currentId) return;
     if (
       !confirm(
         'Excluir este cliente definitivamente?\n\nEle será removido dos proprietários dos animais vinculados. Esta ação não pode ser desfeita.'
@@ -94,7 +265,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
       return;
     }
     try {
-      await deleteClient(clientId!);
+      await deleteClient(currentId);
       success('Pessoa excluída');
       onSaved();
       onClose();
@@ -103,93 +274,531 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
     }
   };
 
+  const onUploadDoc = async (file: File | null) => {
+    if (!file || !currentId || !canWrite) return;
+    setUploading(true);
+    try {
+      const up = await uploadPersonDocument(file);
+      await createClientDocument(currentId, {
+        docType,
+        fileUrl: up.url,
+        fileName: up.fileName || file.name,
+      });
+      success('Documento anexado');
+      await loadNested(currentId);
+    } catch (e: any) {
+      toastError(e.message || 'Erro no upload');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const selectTab = (id: TabId) => {
+    setTab(id);
+  };
+
   if (loading) return <Loading message="Carregando cliente..." />;
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Nome *" className="sm:col-span-2">
-          <input required disabled={!canWrite} value={form.name || ''} onChange={(e) => set('name', e.target.value)} className={inputClass} />
-        </Field>
-        <Field label="Tipo documento">
-          <select disabled={!canWrite} value={form.document_type || 'CPF'} onChange={(e) => set('document_type', e.target.value)} className={inputClass}>
-            <option value="CPF">CPF</option>
-            <option value="CNPJ">CNPJ</option>
-          </select>
-        </Field>
-        <Field label="Documento">
-          <input disabled={!canWrite} value={form.document || ''} onChange={(e) => set('document', e.target.value)} className={inputClass} />
-        </Field>
-        <Field label="E-mail">
-          <input type="email" disabled={!canWrite} value={form.email || ''} onChange={(e) => set('email', e.target.value)} className={inputClass} />
-        </Field>
-        <Field label="Telefone">
-          <input disabled={!canWrite} value={form.phone || ''} onChange={(e) => set('phone', e.target.value)} className={inputClass} />
-        </Field>
-        <Field label="WhatsApp">
-          <input disabled={!canWrite} value={form.whatsapp || ''} onChange={(e) => set('whatsapp', e.target.value)} className={inputClass} />
-        </Field>
-        <Field label="Cidade">
-          <input disabled={!canWrite} value={form.city || ''} onChange={(e) => set('city', e.target.value)} className={inputClass} />
-        </Field>
-        <Field label="UF">
-          <input disabled={!canWrite} maxLength={2} value={form.state || ''} onChange={(e) => set('state', e.target.value.toUpperCase())} className={inputClass} />
-        </Field>
-        <Field label="Endereço" className="sm:col-span-2">
-          <input disabled={!canWrite} value={form.address || ''} onChange={(e) => set('address', e.target.value)} className={inputClass} />
-        </Field>
-        <Field label="Observações" className="sm:col-span-2">
-          <textarea disabled={!canWrite} rows={3} value={form.notes || ''} onChange={(e) => set('notes', e.target.value)} className={inputClass} />
-        </Field>
-        {canWrite && (
-          <div className="space-y-2 sm:col-span-2">
-            <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">
-              Papéis (pode marcar mais de um)
-            </span>
-            <div className="flex flex-wrap gap-4 text-sm text-brand-dark-brown/80">
-              <label className="inline-flex items-center gap-2">
-                <input type="checkbox" checked={!!form.is_buyer} onChange={(e) => set('is_buyer', e.target.checked)} />
-                Comprador
-              </label>
-              <label className="inline-flex items-center gap-2">
-                <input type="checkbox" checked={!!form.is_seller} onChange={(e) => set('is_seller', e.target.checked)} />
-                Vendedor
-              </label>
-              <label className="inline-flex items-center gap-2">
-                <input type="checkbox" checked={!!form.is_assessor} onChange={(e) => set('is_assessor', e.target.checked)} />
-                Assessor
-              </label>
-              <label className="inline-flex items-center gap-2">
-                <input type="checkbox" checked={!!form.is_witness} onChange={(e) => set('is_witness', e.target.checked)} />
-                Testemunha
-              </label>
-            </div>
-          </div>
-        )}
-        {!isNew && canWrite && (
-          <label className="flex items-center gap-2 text-sm text-brand-dark-brown/80 sm:col-span-2">
-            <input type="checkbox" checked={form.active !== false} onChange={(e) => set('active', e.target.checked)} />
-            Pessoa ativa
-          </label>
-        )}
+    <div className="space-y-4">
+      <div className="flex gap-1 overflow-x-auto border-b border-brand-beige pb-2">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => selectTab(t.id)}
+            className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
+              tab === t.id
+                ? 'bg-brand-brown text-white'
+                : 'bg-brand-off-white text-brand-olive hover:bg-brand-beige/60'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <div className="flex flex-wrap gap-2 border-t border-brand-beige pt-4">
-        {canWrite && (
-          <button type="submit" disabled={saving} className="rounded-xl bg-brand-brown px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-60">
-            {saving ? 'Salvando...' : 'Salvar'}
-          </button>
-        )}
-        {!isNew && canWrite && (
-          <button type="button" onClick={onDelete} className="rounded-xl border border-red-200 px-5 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50">
-            Excluir
-          </button>
-        )}
-        <button type="button" onClick={onClose} className="rounded-xl border border-brand-beige px-5 py-2.5 text-sm text-brand-dark-brown hover:bg-brand-off-white">
-          Cancelar
-        </button>
-      </div>
-    </form>
+      {tab === 'dados' && (
+        <form onSubmit={onSubmitDados} className="space-y-4">
+          <Section title="Identificação">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="Nome *" className="sm:col-span-2">
+                <input required disabled={!canWrite} value={form.name || ''} onChange={(e) => set('name', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="Apelido">
+                <input disabled={!canWrite} value={form.nickname || ''} onChange={(e) => set('nickname', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="Data de nascimento">
+                <input type="date" disabled={!canWrite} value={form.birth_date || ''} onChange={(e) => set('birth_date', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="Tipo documento">
+                <select disabled={!canWrite} value={form.document_type || 'CPF'} onChange={(e) => set('document_type', e.target.value)} className={inputClass}>
+                  <option value="CPF">CPF</option>
+                  <option value="CNPJ">CNPJ</option>
+                </select>
+              </Field>
+              <Field label="CPF / CNPJ">
+                <input disabled={!canWrite} value={form.document || ''} onChange={(e) => set('document', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="RG">
+                <input disabled={!canWrite} value={form.rg || ''} onChange={(e) => set('rg', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="Órgão emissor">
+                <input disabled={!canWrite} placeholder="SSP/MG" value={form.rg_issuer || ''} onChange={(e) => set('rg_issuer', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="Estado civil">
+                <select disabled={!canWrite} value={form.marital_status || ''} onChange={(e) => set('marital_status', e.target.value)} className={inputClass}>
+                  <option value="">—</option>
+                  <option value="solteiro">Solteiro(a)</option>
+                  <option value="casado">Casado(a)</option>
+                  <option value="uniao_estavel">União estável</option>
+                  <option value="divorciado">Divorciado(a)</option>
+                  <option value="viuvo">Viúvo(a)</option>
+                </select>
+              </Field>
+              <Field label="Profissão">
+                <input disabled={!canWrite} value={form.profession || ''} onChange={(e) => set('profession', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="Nome da mãe" className="sm:col-span-2">
+                <input disabled={!canWrite} value={form.mother_name || ''} onChange={(e) => set('mother_name', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="Nome do pai" className="sm:col-span-2">
+                <input disabled={!canWrite} value={form.father_name || ''} onChange={(e) => set('father_name', e.target.value)} className={inputClass} />
+              </Field>
+            </div>
+          </Section>
+
+          <Section title="Contato e endereço">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="E-mail">
+                <input type="email" disabled={!canWrite} value={form.email || ''} onChange={(e) => set('email', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="Telefone">
+                <input disabled={!canWrite} value={form.phone || ''} onChange={(e) => set('phone', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="WhatsApp">
+                <input disabled={!canWrite} value={form.whatsapp || ''} onChange={(e) => set('whatsapp', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="CEP">
+                <div className="relative">
+                  <input
+                    disabled={!canWrite || cepLoading}
+                    value={form.zip_code || ''}
+                    onChange={(e) => {
+                      const formatted = formatCepInput(e.target.value);
+                      set('zip_code', formatted);
+                      if (formatted.replace(/\D/g, '').length === 8) applyPersonCep(formatted);
+                    }}
+                    onBlur={(e) => applyPersonCep(e.target.value)}
+                    className={inputClass}
+                    placeholder="00000-000"
+                    inputMode="numeric"
+                  />
+                  {cepLoading && (
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-brand-olive">Buscando...</span>
+                  )}
+                </div>
+                <span className="mt-1 block text-xs text-brand-olive">Ao digitar o CEP, rua, cidade e UF são preenchidos automaticamente.</span>
+              </Field>
+              <Field label="Cidade">
+                <input disabled={!canWrite} value={form.city || ''} onChange={(e) => set('city', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="UF">
+                <input disabled={!canWrite} maxLength={2} value={form.state || ''} onChange={(e) => set('state', e.target.value.toUpperCase())} className={inputClass} />
+              </Field>
+              <Field label="País">
+                <input disabled={!canWrite} value={form.country || 'Brasil'} onChange={(e) => set('country', e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="Endereço (logradouro)">
+                <input disabled={!canWrite} value={form.address || ''} onChange={(e) => set('address', e.target.value)} className={inputClass} placeholder="Rua, avenida..." />
+              </Field>
+              <Field label="Número">
+                <input disabled={!canWrite} value={form.address_number || ''} onChange={(e) => set('address_number', e.target.value)} className={inputClass} placeholder="Nº" />
+              </Field>
+            </div>
+          </Section>
+
+          {canWrite && (
+            <Section title="Papéis">
+              <div className="flex flex-wrap gap-4 text-sm text-brand-dark-brown/80">
+                <label className="inline-flex items-center gap-2">
+                  <input type="checkbox" checked={!!form.is_buyer} onChange={(e) => set('is_buyer', e.target.checked)} />
+                  Comprador
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input type="checkbox" checked={!!form.is_seller} onChange={(e) => set('is_seller', e.target.checked)} />
+                  Vendedor
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input type="checkbox" checked={!!form.is_assessor} onChange={(e) => set('is_assessor', e.target.checked)} />
+                  Assessor
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input type="checkbox" checked={!!form.is_witness} onChange={(e) => set('is_witness', e.target.checked)} />
+                  Testemunha
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input type="checkbox" checked={!!form.is_avalista} onChange={(e) => set('is_avalista', e.target.checked)} />
+                  Avalista
+                </label>
+              </div>
+              {!isNew && (
+                <label className="mt-3 flex items-center gap-2 text-sm text-brand-dark-brown/80">
+                  <input type="checkbox" checked={form.active !== false} onChange={(e) => set('active', e.target.checked)} />
+                  Pessoa ativa
+                </label>
+              )}
+            </Section>
+          )}
+
+          <FooterActions
+            canWrite={canWrite}
+            saving={saving}
+            isNew={isNew}
+            onDelete={onDelete}
+            onClose={onClose}
+            submitLabel={isNew ? 'Salvar e continuar' : 'Salvar dados'}
+          />
+        </form>
+      )}
+
+      {tab === 'documentos' && (
+        <div className="space-y-4">
+          {!currentId && <NeedSaveBanner />}
+          {canWrite && currentId && (
+            <Section title="Anexar documento">
+              <div className="flex flex-wrap items-end gap-3">
+                <Field label="Tipo">
+                  <select value={docType} onChange={(e) => setDocType(e.target.value as PersonDocType)} className={inputClass}>
+                    {Object.entries(DOC_LABELS).map(([k, v]) => (
+                      <option key={k} value={k}>{v}</option>
+                    ))}
+                  </select>
+                </Field>
+                <label className="inline-flex cursor-pointer items-center rounded-xl bg-brand-brown px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-olive">
+                  {uploading ? 'Enviando...' : 'Escolher arquivo'}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                    className="hidden"
+                    disabled={uploading}
+                    onChange={(e) => onUploadDoc(e.target.files?.[0] || null)}
+                  />
+                </label>
+                <p className="text-xs text-brand-olive">JPG, PNG, WEBP, GIF ou PDF — máx. 8 MB</p>
+              </div>
+            </Section>
+          )}
+          {currentId && nestedLoading ? (
+            <Loading message="Carregando documentos..." />
+          ) : (
+            <div className="space-y-2">
+              {docs.length === 0 && (
+                <p className="py-6 text-center text-sm text-brand-olive">
+                  {currentId ? 'Nenhum documento anexado' : 'Após salvar, você poderá anexar RG, CNH, comprovante, selfie e outros.'}
+                </p>
+              )}
+              {docs.map((d) => (
+                <div key={d.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-brand-beige bg-white px-3 py-2.5 text-sm">
+                  <div>
+                    <p className="font-medium text-brand-dark-brown">{DOC_LABELS[d.doc_type] || d.doc_type}</p>
+                    <a href={mediaUrl(d.file_url) || '#'} target="_blank" rel="noreferrer" className="text-xs text-brand-olive underline">
+                      {d.file_name || 'Abrir arquivo'}
+                    </a>
+                  </div>
+                  {canWrite && currentId && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await deleteClientDocument(currentId, d.id);
+                        success('Documento removido');
+                        loadNested(currentId);
+                      }}
+                      className="text-xs text-red-600 hover:underline"
+                    >
+                      Remover
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-2 border-t border-brand-beige pt-4">
+            <button type="button" onClick={onClose} className="rounded-xl border border-brand-beige px-5 py-2.5 text-sm">Fechar</button>
+          </div>
+        </div>
+      )}
+
+      {tab === 'propriedades' && (
+        <div className="space-y-4">
+          {!currentId && <NeedSaveBanner />}
+          {canWrite && currentId && (
+            <Section title="Nova propriedade / haras">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Nome *" className="sm:col-span-2">
+                  <input value={propForm.name} onChange={(e) => setPropForm((f) => ({ ...f, name: e.target.value }))} className={inputClass} />
+                </Field>
+                <Field label="CNPJ"><input value={propForm.cnpj} onChange={(e) => setPropForm((f) => ({ ...f, cnpj: e.target.value }))} className={inputClass} /></Field>
+                <Field label="Inscrição estadual"><input value={propForm.state_registration} onChange={(e) => setPropForm((f) => ({ ...f, state_registration: e.target.value }))} className={inputClass} /></Field>
+                <Field label="CEP">
+                  <div className="relative">
+                    <input
+                      value={propForm.zip_code}
+                      onChange={(e) => {
+                        const formatted = formatCepInput(e.target.value);
+                        setPropForm((f) => ({ ...f, zip_code: formatted }));
+                        if (formatted.replace(/\D/g, '').length === 8) applyPropCep(formatted);
+                      }}
+                      onBlur={(e) => applyPropCep(e.target.value)}
+                      disabled={propCepLoading}
+                      className={inputClass}
+                      placeholder="00000-000"
+                      inputMode="numeric"
+                    />
+                    {propCepLoading && (
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-brand-olive">Buscando...</span>
+                    )}
+                  </div>
+                </Field>
+                <Field label="UF"><input maxLength={2} value={propForm.state} onChange={(e) => setPropForm((f) => ({ ...f, state: e.target.value.toUpperCase() }))} className={inputClass} /></Field>
+                <Field label="Cidade"><input value={propForm.city} onChange={(e) => setPropForm((f) => ({ ...f, city: e.target.value }))} className={inputClass} /></Field>
+                <Field label="Telefone"><input value={propForm.phone} onChange={(e) => setPropForm((f) => ({ ...f, phone: e.target.value }))} className={inputClass} /></Field>
+                <Field label="Endereço" className="sm:col-span-2"><input value={propForm.address} onChange={(e) => setPropForm((f) => ({ ...f, address: e.target.value }))} className={inputClass} /></Field>
+                <Field label="Tipo"><input value={propForm.property_type} onChange={(e) => setPropForm((f) => ({ ...f, property_type: e.target.value }))} className={inputClass} /></Field>
+                <Field label="Gerente"><input value={propForm.manager_name} onChange={(e) => setPropForm((f) => ({ ...f, manager_name: e.target.value }))} className={inputClass} /></Field>
+                <label className="flex items-center gap-2 text-sm sm:col-span-2">
+                  <input type="checkbox" checked={propForm.is_primary} onChange={(e) => setPropForm((f) => ({ ...f, is_primary: e.target.checked }))} />
+                  Propriedade principal
+                </label>
+              </div>
+              <button
+                type="button"
+                className="mt-3 rounded-xl bg-brand-brown px-4 py-2 text-sm font-medium text-white"
+                onClick={async () => {
+                  if (!propForm.name.trim()) return toastError('Informe o nome');
+                  await createClientProperty(currentId, propForm);
+                  success('Propriedade adicionada');
+                  setPropForm({
+                    name: '', cnpj: '', state_registration: '', zip_code: '', state: '', city: '', address: '',
+                    phone: '', property_type: 'Haras', is_primary: false, manager_name: '', manager_phone: '', manager_email: '', notes: '',
+                  });
+                  loadNested(currentId);
+                }}
+              >
+                Adicionar propriedade
+              </button>
+            </Section>
+          )}
+          {currentId && nestedLoading ? <Loading message="..." /> : (
+            <div className="space-y-2">
+              {props.length === 0 && (
+                <p className="py-6 text-center text-sm text-brand-olive">
+                  {currentId ? 'Nenhuma propriedade' : 'Após salvar, cadastre haras e fazendas vinculadas.'}
+                </p>
+              )}
+              {props.map((p) => (
+                <div key={p.id} className="rounded-xl border border-brand-beige bg-white px-3 py-2.5 text-sm">
+                  <div className="flex justify-between gap-2">
+                    <div>
+                      <p className="font-medium">{p.name}{p.is_primary ? ' · principal' : ''}</p>
+                      <p className="text-xs text-brand-olive">{[p.city, p.state].filter(Boolean).join(' / ') || '—'}</p>
+                    </div>
+                    {canWrite && currentId && (
+                      <button type="button" className="text-xs text-red-600" onClick={async () => { await deleteClientProperty(currentId, p.id); loadNested(currentId); }}>Remover</button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'contas' && (
+        <div className="space-y-4">
+          {!currentId && <NeedSaveBanner />}
+          {canWrite && currentId && (
+            <Section title="Nova conta bancária">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Tipo">
+                  <select value={bankForm.account_type} onChange={(e) => setBankForm((f) => ({ ...f, account_type: e.target.value as ClientBankAccount['account_type'] }))} className={inputClass}>
+                    <option value="corrente">Corrente</option>
+                    <option value="poupanca">Poupança</option>
+                    <option value="pagamento">Pagamento</option>
+                    <option value="outro">Outro</option>
+                  </select>
+                </Field>
+                <Field label="Banco *"><input value={bankForm.bank_name} onChange={(e) => setBankForm((f) => ({ ...f, bank_name: e.target.value }))} className={inputClass} /></Field>
+                <Field label="Agência"><input value={bankForm.agency} onChange={(e) => setBankForm((f) => ({ ...f, agency: e.target.value }))} className={inputClass} /></Field>
+                <Field label="Conta"><input value={bankForm.account_number} onChange={(e) => setBankForm((f) => ({ ...f, account_number: e.target.value }))} className={inputClass} /></Field>
+                <Field label="Titular"><input value={bankForm.holder_name} onChange={(e) => setBankForm((f) => ({ ...f, holder_name: e.target.value }))} className={inputClass} /></Field>
+                <Field label="CPF/CNPJ titular"><input value={bankForm.holder_document} onChange={(e) => setBankForm((f) => ({ ...f, holder_document: e.target.value }))} className={inputClass} /></Field>
+                <label className="flex items-center gap-2 text-sm sm:col-span-2">
+                  <input type="checkbox" checked={bankForm.is_primary} onChange={(e) => setBankForm((f) => ({ ...f, is_primary: e.target.checked }))} />
+                  Conta principal (repasses)
+                </label>
+              </div>
+              <button
+                type="button"
+                className="mt-3 rounded-xl bg-brand-brown px-4 py-2 text-sm font-medium text-white"
+                onClick={async () => {
+                  if (!bankForm.bank_name.trim()) return toastError('Informe o banco');
+                  await createClientBankAccount(currentId, bankForm);
+                  success('Conta adicionada');
+                  setBankForm({ account_type: 'corrente', bank_name: '', agency: '', account_number: '', holder_name: '', holder_document: '', is_primary: true, notes: '' });
+                  loadNested(currentId);
+                }}
+              >
+                Adicionar conta
+              </button>
+            </Section>
+          )}
+          {currentId && nestedLoading ? <Loading message="..." /> : (
+            <div className="space-y-2">
+              {banks.length === 0 && (
+                <p className="py-6 text-center text-sm text-brand-olive">
+                  {currentId ? 'Nenhuma conta' : 'Após salvar, cadastre contas para repasses.'}
+                </p>
+              )}
+              {banks.map((b) => (
+                <div key={b.id} className="flex justify-between rounded-xl border border-brand-beige bg-white px-3 py-2.5 text-sm">
+                  <div>
+                    <p className="font-medium">{b.bank_name}{b.is_primary ? ' · principal' : ''}</p>
+                    <p className="text-xs text-brand-olive">Ag {b.agency || '—'} · Cc {b.account_number || '—'} · {b.holder_name || '—'}</p>
+                  </div>
+                  {canWrite && currentId && (
+                    <button type="button" className="text-xs text-red-600" onClick={async () => { await deleteClientBankAccount(currentId, b.id); loadNested(currentId); }}>Remover</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'contatos' && (
+        <div className="space-y-4">
+          {!currentId && <NeedSaveBanner />}
+          {canWrite && currentId && (
+            <Section title="Novo contato">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Nome *"><input value={contactForm.name} onChange={(e) => setContactForm((f) => ({ ...f, name: e.target.value }))} className={inputClass} /></Field>
+                <Field label="Relação / cargo"><input value={contactForm.role_label} onChange={(e) => setContactForm((f) => ({ ...f, role_label: e.target.value }))} className={inputClass} /></Field>
+                <Field label="Telefone"><input value={contactForm.phone} onChange={(e) => setContactForm((f) => ({ ...f, phone: e.target.value }))} className={inputClass} /></Field>
+                <Field label="E-mail"><input value={contactForm.email} onChange={(e) => setContactForm((f) => ({ ...f, email: e.target.value }))} className={inputClass} /></Field>
+              </div>
+              <button
+                type="button"
+                className="mt-3 rounded-xl bg-brand-brown px-4 py-2 text-sm font-medium text-white"
+                onClick={async () => {
+                  if (!contactForm.name.trim()) return toastError('Informe o nome');
+                  await createClientContact(currentId, contactForm);
+                  success('Contato adicionado');
+                  setContactForm({ name: '', role_label: '', phone: '', email: '', notes: '' });
+                  loadNested(currentId);
+                }}
+              >
+                Adicionar contato
+              </button>
+            </Section>
+          )}
+          {currentId && nestedLoading ? <Loading message="..." /> : (
+            <div className="space-y-2">
+              {contacts.length === 0 && (
+                <p className="py-6 text-center text-sm text-brand-olive">
+                  {currentId ? 'Nenhum contato extra' : 'Após salvar, adicione contatos adicionais.'}
+                </p>
+              )}
+              {contacts.map((c) => (
+                <div key={c.id} className="flex justify-between rounded-xl border border-brand-beige bg-white px-3 py-2.5 text-sm">
+                  <div>
+                    <p className="font-medium">{c.name}</p>
+                    <p className="text-xs text-brand-olive">{[c.role_label, c.phone, c.email].filter(Boolean).join(' · ') || '—'}</p>
+                  </div>
+                  {canWrite && currentId && (
+                    <button type="button" className="text-xs text-red-600" onClick={async () => { await deleteClientContact(currentId, c.id); loadNested(currentId); }}>Remover</button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'observacoes' && (
+        <div className="space-y-4">
+          {!currentId && (
+            <p className="rounded-xl border border-brand-beige bg-brand-off-white/80 px-3 py-2 text-sm text-brand-olive">
+              Você pode preencher as observações agora; elas serão gravadas ao salvar na aba Dados.
+            </p>
+          )}
+          <Field label="Histórico / relacionamento">
+            <textarea
+              disabled={!canWrite}
+              rows={4}
+              value={form.relationship_notes || ''}
+              onChange={(e) => set('relationship_notes', e.target.value)}
+              className={inputClass}
+              placeholder="Histórico comercial, preferências, combinações..."
+            />
+          </Field>
+          <Field label="Problemas / alertas">
+            <textarea
+              disabled={!canWrite}
+              rows={3}
+              value={form.problems_notes || ''}
+              onChange={(e) => set('problems_notes', e.target.value)}
+              className={inputClass}
+              placeholder="Pendências, restrições, observações sensíveis..."
+            />
+          </Field>
+          <Field label="Observações gerais">
+            <textarea
+              disabled={!canWrite}
+              rows={3}
+              value={form.notes || ''}
+              onChange={(e) => set('notes', e.target.value)}
+              className={inputClass}
+            />
+          </Field>
+          <div className="flex flex-wrap gap-2 border-t border-brand-beige pt-4">
+            {canWrite && currentId && (
+              <button type="button" disabled={saving} onClick={onSaveObservacoes} className="rounded-xl bg-brand-brown px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60">
+                {saving ? 'Salvando...' : 'Salvar observações'}
+              </button>
+            )}
+            {canWrite && !currentId && (
+              <button
+                type="button"
+                disabled={saving || !form.name?.trim()}
+                onClick={() => onSubmitDados()}
+                className="rounded-xl bg-brand-brown px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60"
+              >
+                {saving ? 'Salvando...' : 'Salvar pessoa (com observações)'}
+              </button>
+            )}
+            <button type="button" onClick={onClose} className="rounded-xl border border-brand-beige px-5 py-2.5 text-sm">Cancelar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NeedSaveBanner() {
+  return (
+    <p className="rounded-xl border border-brand-beige bg-brand-off-white/80 px-3 py-2 text-sm text-brand-olive">
+      Navegue à vontade. Para anexar arquivos ou cadastrar itens nesta aba, salve a pessoa na aba <strong>Dados</strong> primeiro.
+    </p>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-2xl border border-brand-beige/80 bg-brand-off-white/40 p-4">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-brand-olive">{title}</h3>
+      {children}
+    </section>
   );
 }
 
@@ -199,6 +808,30 @@ function Field({ label, children, className = '' }: { label: string; children: R
       <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">{label}</span>
       {children}
     </label>
+  );
+}
+
+function FooterActions({
+  canWrite, saving, isNew, onDelete, onClose, submitLabel,
+}: {
+  canWrite: boolean; saving: boolean; isNew: boolean; onDelete: () => void; onClose: () => void; submitLabel: string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2 border-t border-brand-beige pt-4">
+      {canWrite && (
+        <button type="submit" disabled={saving} className="rounded-xl bg-brand-brown px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-60">
+          {saving ? 'Salvando...' : submitLabel}
+        </button>
+      )}
+      {!isNew && canWrite && (
+        <button type="button" onClick={onDelete} className="rounded-xl border border-red-200 px-5 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50">
+          Excluir
+        </button>
+      )}
+      <button type="button" onClick={onClose} className="rounded-xl border border-brand-beige px-5 py-2.5 text-sm text-brand-dark-brown hover:bg-brand-off-white">
+        Cancelar
+      </button>
+    </div>
   );
 }
 

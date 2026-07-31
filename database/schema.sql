@@ -22,18 +22,32 @@ CREATE TABLE clients (
   name            VARCHAR(200) NOT NULL,
   document_type   ENUM('CPF','CNPJ') NOT NULL DEFAULT 'CPF',
   document        VARCHAR(20) NULL,
+  rg              VARCHAR(40) NULL,
+  rg_issuer       VARCHAR(80) NULL,
+  birth_date      DATE NULL,
+  nickname        VARCHAR(120) NULL,
+  marital_status  VARCHAR(40) NULL,
+  profession      VARCHAR(120) NULL,
+  mother_name     VARCHAR(200) NULL,
+  father_name     VARCHAR(200) NULL,
   email           VARCHAR(150) NULL,
   phone           VARCHAR(30) NULL,
   whatsapp        VARCHAR(30) NULL,
   city            VARCHAR(100) NULL,
   state           CHAR(2) NULL,
   address         VARCHAR(255) NULL,
+  address_number  VARCHAR(20) NULL,
+  zip_code        VARCHAR(12) NULL,
+  country         VARCHAR(60) NULL DEFAULT 'Brasil',
   notes           TEXT NULL,
+  relationship_notes TEXT NULL,
+  problems_notes  TEXT NULL,
   active          TINYINT(1) NOT NULL DEFAULT 1,
   is_seller       TINYINT(1) NOT NULL DEFAULT 0,
   is_buyer        TINYINT(1) NOT NULL DEFAULT 1,
   is_assessor     TINYINT(1) NOT NULL DEFAULT 0,
   is_witness      TINYINT(1) NOT NULL DEFAULT 0,
+  is_avalista     TINYINT(1) NOT NULL DEFAULT 0,
   created_by      BIGINT UNSIGNED NULL,
   created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -65,12 +79,79 @@ ALTER TABLE clients
   ADD CONSTRAINT fk_clients_created_by
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
 
+CREATE TABLE client_documents (
+  id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  client_id     BIGINT UNSIGNED NOT NULL,
+  doc_type      ENUM('rg','identidade','cnh','comprovante_residencia','selfie','outro') NOT NULL DEFAULT 'outro',
+  file_url      VARCHAR(500) NOT NULL,
+  file_name     VARCHAR(255) NULL,
+  notes         VARCHAR(255) NULL,
+  uploaded_by   BIGINT UNSIGNED NULL,
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_cdoc_client (client_id),
+  CONSTRAINT fk_cdoc_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+  CONSTRAINT fk_cdoc_user FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE client_properties (
+  id                BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  client_id         BIGINT UNSIGNED NOT NULL,
+  name              VARCHAR(200) NOT NULL,
+  cnpj              VARCHAR(20) NULL,
+  state_registration VARCHAR(40) NULL,
+  zip_code          VARCHAR(12) NULL,
+  state             CHAR(2) NULL,
+  city              VARCHAR(100) NULL,
+  address           VARCHAR(255) NULL,
+  phone             VARCHAR(30) NULL,
+  property_type     VARCHAR(80) NULL,
+  is_primary        TINYINT(1) NOT NULL DEFAULT 0,
+  manager_name      VARCHAR(150) NULL,
+  manager_phone     VARCHAR(30) NULL,
+  manager_email     VARCHAR(150) NULL,
+  notes             TEXT NULL,
+  created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_cprop_client (client_id),
+  CONSTRAINT fk_cprop_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE client_bank_accounts (
+  id                BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  client_id         BIGINT UNSIGNED NOT NULL,
+  account_type      ENUM('corrente','poupanca','pagamento','outro') NOT NULL DEFAULT 'corrente',
+  bank_name         VARCHAR(120) NOT NULL,
+  agency            VARCHAR(30) NULL,
+  account_number    VARCHAR(40) NULL,
+  holder_name       VARCHAR(200) NULL,
+  holder_document   VARCHAR(20) NULL,
+  is_primary        TINYINT(1) NOT NULL DEFAULT 0,
+  notes             VARCHAR(255) NULL,
+  created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_cbank_client (client_id),
+  CONSTRAINT fk_cbank_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE client_contacts (
+  id            BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  client_id     BIGINT UNSIGNED NOT NULL,
+  name          VARCHAR(150) NOT NULL,
+  role_label    VARCHAR(80) NULL,
+  phone         VARCHAR(30) NULL,
+  email         VARCHAR(150) NULL,
+  notes         VARCHAR(255) NULL,
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ccont_client (client_id),
+  CONSTRAINT fk_ccont_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE animals (
   id                BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   name              VARCHAR(150) NOT NULL,
   registration_no   VARCHAR(80) NULL,
   chip_no           VARCHAR(50) NULL,
-  sex               ENUM('M','F') NULL,
+  sex               ENUM('M','F','C') NULL,
   breed             VARCHAR(80) NULL,
   association       ENUM('ABCCMM','ABQM','OUTRA','NENHUMA') NOT NULL DEFAULT 'NENHUMA',
   birth_date        DATE NULL,
@@ -112,10 +193,21 @@ CREATE TABLE animal_genealogy (
   CONSTRAINT fk_gen_dam FOREIGN KEY (dam_id) REFERENCES animals(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE catalogs (
+  id         BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  kind       ENUM('breed','sale_type','animal_category','share_quota') NOT NULL,
+  name       VARCHAR(120) NOT NULL,
+  code       VARCHAR(40) NULL,
+  active     TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_catalog_kind_name (kind, name),
+  INDEX idx_catalog_kind (kind)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE contracts (
   id              BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   animal_id       BIGINT UNSIGNED NOT NULL,
-  sale_type       ENUM('inteiro','fracao','condominio') NOT NULL DEFAULT 'inteiro',
+  sale_type       VARCHAR(40) NOT NULL DEFAULT 'inteiro',
   share_pct       DECIMAL(5,2) NULL,
   seller_id       BIGINT UNSIGNED NOT NULL,
   buyer_id        BIGINT UNSIGNED NOT NULL,
@@ -123,6 +215,8 @@ CREATE TABLE contracts (
   auction_id      BIGINT UNSIGNED NULL,
   lot_id          BIGINT UNSIGNED NULL,
   template_id     BIGINT UNSIGNED NULL,
+  verso_title     VARCHAR(255) NULL,
+  verso_body      MEDIUMTEXT NULL,
   contract_number VARCHAR(40) NULL,
   lot_label       VARCHAR(40) NULL,
   animal_category VARCHAR(80) NULL,

@@ -59,22 +59,90 @@ export interface Client {
   name: string;
   document_type: 'CPF' | 'CNPJ';
   document: string | null;
+  rg?: string | null;
+  rg_issuer?: string | null;
+  birth_date?: string | null;
+  nickname?: string | null;
+  marital_status?: string | null;
+  profession?: string | null;
+  mother_name?: string | null;
+  father_name?: string | null;
   email: string | null;
   phone: string | null;
   whatsapp: string | null;
   city: string | null;
   state: string | null;
   address: string | null;
+  address_number?: string | null;
+  zip_code?: string | null;
+  country?: string | null;
   notes: string | null;
+  relationship_notes?: string | null;
+  problems_notes?: string | null;
   active: boolean;
   is_seller?: boolean;
   is_buyer?: boolean;
   is_assessor?: boolean;
   is_witness?: boolean;
+  is_avalista?: boolean;
   created_at?: string;
 }
 
-export type SaleType = 'inteiro' | 'fracao' | 'condominio';
+export type PersonDocType = 'rg' | 'identidade' | 'cnh' | 'comprovante_residencia' | 'selfie' | 'outro';
+
+export interface ClientDocument {
+  id: string;
+  client_id: string;
+  doc_type: PersonDocType;
+  file_url: string;
+  file_name: string | null;
+  notes: string | null;
+  created_at?: string;
+}
+
+export interface ClientProperty {
+  id: string;
+  client_id: string;
+  name: string;
+  cnpj: string | null;
+  state_registration: string | null;
+  zip_code: string | null;
+  state: string | null;
+  city: string | null;
+  address: string | null;
+  phone: string | null;
+  property_type: string | null;
+  is_primary: boolean;
+  manager_name: string | null;
+  manager_phone: string | null;
+  manager_email: string | null;
+  notes: string | null;
+}
+
+export interface ClientBankAccount {
+  id: string;
+  client_id: string;
+  account_type: 'corrente' | 'poupanca' | 'pagamento' | 'outro';
+  bank_name: string;
+  agency: string | null;
+  account_number: string | null;
+  holder_name: string | null;
+  holder_document: string | null;
+  is_primary: boolean;
+  notes: string | null;
+}
+
+export interface ClientContact {
+  id: string;
+  client_id: string;
+  name: string;
+  role_label: string | null;
+  phone: string | null;
+  email: string | null;
+  notes: string | null;
+}
+
+export type SaleType = string;
 export type PaymentMethod = 'pix' | 'boleto' | 'transferencia' | 'outro';
 export type ContractStatus = 'rascunho' | 'aguardando_assinatura' | 'ativo' | 'concluido' | 'cancelado';
 export type ChargeStatus = 'pendente' | 'pago' | 'atrasado' | 'cancelado';
@@ -250,7 +318,7 @@ export interface Animal {
   name: string;
   registration_no: string | null;
   chip_no: string | null;
-  sex: 'M' | 'F' | null;
+  sex: 'M' | 'F' | 'C' | null;
   breed: string | null;
   association: 'ABCCMM' | 'ABQM' | 'OUTRA' | 'NENHUMA';
   birth_date: string | null;
@@ -286,6 +354,7 @@ export interface DashboardStats {
   sellers: number;
   assessors: number;
   witnesses: number;
+  avalistas: number;
   animals: number;
   activeAnimals: number;
   contracts: number;
@@ -326,7 +395,7 @@ export async function getDashboard() {
   return request<DashboardStats>('/dashboard');
 }
 
-export async function getClients(q?: string, role?: 'seller' | 'buyer' | 'assessor' | 'witness') {
+export async function getClients(q?: string, role?: 'seller' | 'buyer' | 'assessor' | 'witness' | 'avalista') {
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (role) params.set('role', role);
@@ -359,6 +428,90 @@ export async function deleteClient(id: string) {
 /** @deprecated use deleteClient */
 export async function deactivateClient(id: string) {
   return deleteClient(id);
+}
+
+export async function getClientDocuments(clientId: string) {
+  return request<ClientDocument[]>(`/clients/${clientId}/documents`);
+}
+
+export async function createClientDocument(
+  clientId: string,
+  data: { docType: PersonDocType; fileUrl: string; fileName?: string; notes?: string }
+) {
+  return request<{ success: boolean; id: string }>(`/clients/${clientId}/documents`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteClientDocument(clientId: string, docId: string) {
+  return request<{ success: boolean }>(`/clients/${clientId}/documents/${docId}`, { method: 'DELETE' });
+}
+
+export async function getClientProperties(clientId: string) {
+  return request<ClientProperty[]>(`/clients/${clientId}/properties`);
+}
+
+export async function createClientProperty(clientId: string, data: Record<string, unknown>) {
+  return request<{ success: boolean; id: string }>(`/clients/${clientId}/properties`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateClientProperty(clientId: string, propId: string, data: Record<string, unknown>) {
+  return request<{ success: boolean }>(`/clients/${clientId}/properties/${propId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteClientProperty(clientId: string, propId: string) {
+  return request<{ success: boolean }>(`/clients/${clientId}/properties/${propId}`, { method: 'DELETE' });
+}
+
+export async function getClientBankAccounts(clientId: string) {
+  return request<ClientBankAccount[]>(`/clients/${clientId}/bank-accounts`);
+}
+
+export async function createClientBankAccount(clientId: string, data: Record<string, unknown>) {
+  return request<{ success: boolean; id: string }>(`/clients/${clientId}/bank-accounts`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateClientBankAccount(clientId: string, accId: string, data: Record<string, unknown>) {
+  return request<{ success: boolean }>(`/clients/${clientId}/bank-accounts/${accId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteClientBankAccount(clientId: string, accId: string) {
+  return request<{ success: boolean }>(`/clients/${clientId}/bank-accounts/${accId}`, { method: 'DELETE' });
+}
+
+export async function getClientContacts(clientId: string) {
+  return request<ClientContact[]>(`/clients/${clientId}/contacts`);
+}
+
+export async function createClientContact(clientId: string, data: Record<string, unknown>) {
+  return request<{ success: boolean; id: string }>(`/clients/${clientId}/contacts`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateClientContact(clientId: string, contactId: string, data: Record<string, unknown>) {
+  return request<{ success: boolean }>(`/clients/${clientId}/contacts/${contactId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteClientContact(clientId: string, contactId: string) {
+  return request<{ success: boolean }>(`/clients/${clientId}/contacts/${contactId}`, { method: 'DELETE' });
 }
 
 export async function getAnimals(q?: string) {
@@ -417,7 +570,11 @@ export async function uploadAvatar(file: File) {
   return uploadMedia(file, 'avatar');
 }
 
-async function uploadMedia(file: File, kind: 'animal' | 'avatar') {
+export async function uploadPersonDocument(file: File) {
+  return uploadMedia(file, 'person-doc');
+}
+
+async function uploadMedia(file: File, kind: 'animal' | 'avatar' | 'person-doc') {
   const token = getToken();
   const form = new FormData();
   form.append('file', file);
@@ -431,9 +588,9 @@ async function uploadMedia(file: File, kind: 'animal' | 'avatar') {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error || 'Erro ao enviar foto');
+    throw new Error(data.error || 'Erro ao enviar arquivo');
   }
-  return data as { success: boolean; url: string };
+  return data as { success: boolean; url: string; fileName?: string };
 }
 
 export async function getUsers() {
@@ -474,7 +631,7 @@ export async function createContract(data: Record<string, unknown>) {
 }
 
 export async function updateContract(id: string, data: Record<string, unknown>) {
-  return request<{ success: boolean }>(`/contracts/${id}`, {
+  return request<{ success: boolean; chargesRecalculated?: boolean }>(`/contracts/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
@@ -504,6 +661,29 @@ export async function updateCharge(id: string, data: { status: ChargeStatus; not
     method: 'PUT',
     body: JSON.stringify(data),
   });
+}
+
+export interface CatalogItem {
+  id: string;
+  kind: 'breed' | 'sale_type' | 'animal_category' | 'share_quota';
+  name: string;
+  code: string | null;
+  active?: boolean;
+}
+
+export async function getCatalogs(kind: CatalogItem['kind']) {
+  return request<CatalogItem[]>(`/catalogs?kind=${encodeURIComponent(kind)}`);
+}
+
+export async function createCatalogItem(data: {
+  kind: CatalogItem['kind'];
+  name: string;
+  code?: string | null;
+}) {
+  return request<{ success: boolean; id: string; kind: string; name: string; code: string | null }>(
+    '/catalogs',
+    { method: 'POST', body: JSON.stringify(data) }
+  );
 }
 
 export async function getAuctions() {

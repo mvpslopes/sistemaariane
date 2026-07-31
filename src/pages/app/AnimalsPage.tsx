@@ -171,7 +171,7 @@ export default function AnimalsPage() {
                   <td className="hidden px-4 py-3 text-brand-brown md:table-cell">{a.registration_no || '—'}</td>
                   <td className="hidden px-4 py-3 text-brand-brown lg:table-cell">{a.chip_no || '—'}</td>
                   <td className="px-4 py-3 text-brand-brown">
-                    {a.sex === 'M' ? 'Macho' : a.sex === 'F' ? 'Fêmea' : '—'}
+                    {a.sex === 'M' ? 'Macho' : a.sex === 'F' ? 'Fêmea' : a.sex === 'C' ? 'Castrado' : '—'}
                   </td>
                   <td className="hidden px-4 py-3 text-brand-brown xl:table-cell">{(a.owners as string) || '—'}</td>
                   <td className="px-4 py-3">

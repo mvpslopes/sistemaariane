@@ -2,23 +2,26 @@ import { useEffect, useState } from 'react';
 import {
   deleteAnimal,
   createAnimal,
+  createCatalogItem,
   getAnimal,
+  getCatalogs,
   getClients,
   mediaUrl,
   updateAnimal,
   uploadAnimalPhoto,
+  type CatalogItem,
   type Client,
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
-import { Camera, Trash2 } from 'lucide-react';
+import { Camera, Plus, Trash2 } from 'lucide-react';
 
 interface FormState {
   name: string;
   registration_no: string;
   chip_no: string;
-  sex: '' | 'M' | 'F';
+  sex: '' | 'M' | 'F' | 'C';
   breed: string;
   association: 'ABCCMM' | 'ABQM' | 'OUTRA' | 'NENHUMA';
   birth_date: string;
@@ -66,15 +69,26 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
   const { success, error: toastError } = useToast();
   const [form, setForm] = useState<FormState>(empty);
   const [clients, setClients] = useState<Client[]>([]);
+  const [breeds, setBreeds] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [addingBreed, setAddingBreed] = useState(false);
+  const [newBreed, setNewBreed] = useState('');
+
+  const loadBreeds = async () => {
+    try {
+      setBreeds(await getCatalogs('breed'));
+    } catch {
+      /* catálogo opcional se migration ainda não rodou */
+    }
+  };
 
   useEffect(() => {
     const boot = async () => {
       setLoading(true);
       try {
-        const clientList = await getClients();
+        const [clientList] = await Promise.all([getClients(), loadBreeds()]);
         setClients(clientList.filter((c) => c.active));
         if (!isNew) {
           const animal = await getAnimal(animalId!);
@@ -83,7 +97,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
             name: animal.name || '',
             registration_no: animal.registration_no || '',
             chip_no: animal.chip_no || '',
-            sex: animal.sex || '',
+            sex: (animal.sex as FormState['sex']) || '',
             breed: animal.breed || '',
             association: animal.association || 'NENHUMA',
             birth_date: animal.birth_date || '',
@@ -258,11 +272,68 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
             <option value="">—</option>
             <option value="M">Macho</option>
             <option value="F">Fêmea</option>
+            <option value="C">Castrado</option>
           </select>
         </Field>
-        <Field label="Raça / linhagem">
-          <input disabled={!canWrite} value={form.breed} onChange={(e) => set('breed', e.target.value)} className={inputClass} placeholder="Mangalarga, QM..." />
-        </Field>
+        <div className="space-y-1.5">
+          <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Raça / linhagem</span>
+          <div className="flex gap-2">
+            <select
+              disabled={!canWrite}
+              value={form.breed}
+              onChange={(e) => set('breed', e.target.value)}
+              className={inputClass}
+            >
+              <option value="">— Selecionar ou cadastrar —</option>
+              {breeds.map((b) => (
+                <option key={b.id} value={b.name}>{b.name}</option>
+              ))}
+              {form.breed && !breeds.some((b) => b.name === form.breed) && (
+                <option value={form.breed}>{form.breed}</option>
+              )}
+            </select>
+            {canWrite && (
+              <button
+                type="button"
+                title="Cadastrar raça"
+                onClick={() => setAddingBreed((v) => !v)}
+                className="inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-brand-beige bg-white text-brand-brown hover:bg-brand-beige/40"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          {addingBreed && canWrite && (
+            <div className="flex gap-2 pt-1">
+              <input
+                value={newBreed}
+                onChange={(e) => setNewBreed(e.target.value)}
+                placeholder="Nova raça"
+                className={inputClass}
+              />
+              <button
+                type="button"
+                className="shrink-0 rounded-xl bg-brand-brown px-3 py-2 text-sm font-medium text-white"
+                onClick={async () => {
+                  const name = newBreed.trim();
+                  if (!name) return toastError('Informe o nome da raça');
+                  try {
+                    await createCatalogItem({ kind: 'breed', name });
+                    success('Raça cadastrada');
+                    setNewBreed('');
+                    setAddingBreed(false);
+                    await loadBreeds();
+                    set('breed', name);
+                  } catch (err: any) {
+                    toastError(err.message || 'Erro ao cadastrar raça');
+                  }
+                }}
+              >
+                Salvar
+              </button>
+            </div>
+          )}
+        </div>
         <Field label="Associação">
           <select disabled={!canWrite} value={form.association} onChange={(e) => set('association', e.target.value as FormState['association'])} className={inputClass}>
             <option value="NENHUMA">Nenhuma</option>

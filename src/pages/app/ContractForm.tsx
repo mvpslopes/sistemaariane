@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  createCatalogItem,
   createContract,
   getAnimals,
+  getCatalogs,
   getClients,
+  getContract,
   getContractTemplates,
+  updateContract,
   type Animal,
+  type CatalogItem,
   type Client,
   type ContractTemplate,
   type PaymentMethod,
@@ -14,6 +19,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
+import { Plus } from 'lucide-react';
 
 interface PayoutRuleInput {
   key: string;
@@ -24,6 +30,7 @@ interface PayoutRuleInput {
 }
 
 interface ContractFormProps {
+  contractId?: string | null;
   animalId?: string | null;
   sellerId?: string | null;
   auctionId?: string | null;
@@ -55,6 +62,7 @@ const newRule = (partial?: Partial<PayoutRuleInput>): PayoutRuleInput => ({
 });
 
 export default function ContractForm({
+  contractId = null,
   animalId,
   sellerId,
   auctionId,
@@ -64,6 +72,7 @@ export default function ContractForm({
   onClose,
   onSaved,
 }: ContractFormProps) {
+  const isEdit = !!contractId;
   const { canWrite } = useAuth();
   const { success, error: toastError } = useToast();
   const [loading, setLoading] = useState(true);
@@ -75,6 +84,16 @@ export default function ContractForm({
   const [witnesses, setWitnesses] = useState<Client[]>([]);
   const [allClients, setAllClients] = useState<Client[]>([]);
   const [templates, setTemplates] = useState<ContractTemplate[]>([]);
+  const [saleTypes, setSaleTypes] = useState<CatalogItem[]>([]);
+  const [categories, setCategories] = useState<CatalogItem[]>([]);
+  const [quotas, setQuotas] = useState<CatalogItem[]>([]);
+  const [addingSaleType, setAddingSaleType] = useState(false);
+  const [newSaleTypeName, setNewSaleTypeName] = useState('');
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [newCategory, setNewCategory] = useState('');
+  const [addingQuota, setAddingQuota] = useState(false);
+  const [newQuota, setNewQuota] = useState('');
+  const [hasCommission, setHasCommission] = useState(!contractId);
   const [form, setForm] = useState({
     animalId: animalId || '',
     saleType: 'inteiro' as SaleType,
@@ -83,6 +102,8 @@ export default function ContractForm({
     buyerId: '',
     assessorId: '',
     templateId: '',
+    versoTitle: '',
+    versoBody: '',
     lotLabel: lotLabel || '',
     animalCategory: '',
     quantity: '1',
@@ -102,6 +123,42 @@ export default function ContractForm({
     newRule({ beneficiaryRole: 'seller', pct: '90', label: 'Vendedor' }),
   ]);
 
+  const loadSaleTypes = async () => {
+    const defaults: CatalogItem[] = [
+      { id: '1', kind: 'sale_type', name: 'Animal inteiro', code: 'inteiro' },
+      { id: '2', kind: 'sale_type', name: 'Fração', code: 'fracao' },
+      { id: '3', kind: 'sale_type', name: 'Condomínio', code: 'condominio' },
+    ];
+    try {
+      const list = await getCatalogs('sale_type');
+      setSaleTypes(list.length ? list : defaults);
+    } catch {
+      setSaleTypes(defaults);
+    }
+  };
+
+  const loadCategories = async () => {
+    try {
+      setCategories(await getCatalogs('animal_category'));
+    } catch {
+      /* opcional */
+    }
+  };
+
+  const loadQuotas = async () => {
+    const defaults: CatalogItem[] = [
+      { id: 'q1', kind: 'share_quota', name: '100%', code: '100' },
+      { id: 'q2', kind: 'share_quota', name: '50%', code: '50' },
+      { id: 'q3', kind: 'share_quota', name: '25%', code: '25' },
+    ];
+    try {
+      const list = await getCatalogs('share_quota');
+      setQuotas(list.length ? list : defaults);
+    } catch {
+      setQuotas(defaults);
+    }
+  };
+
   useEffect(() => {
     Promise.all([
       getAnimals(),
@@ -111,17 +168,89 @@ export default function ContractForm({
       getClients(undefined, 'witness'),
       getClients(),
       getContractTemplates({ active: true }),
+      loadSaleTypes(),
+      loadCategories(),
+      loadQuotas(),
+      contractId ? getContract(contractId) : Promise.resolve(null),
     ])
-      .then(([a, s, b, ass, wit, all, tpls]) => {
-        setAnimals(a.filter((x) => x.status === 'ativo'));
+      .then(([a, s, b, ass, wit, all, tpls, , , , contract]) => {
+        const activeAnimals = a.filter((x) => x.status === 'ativo');
+        if (contract?.animal_id) {
+          const current = a.find((x) => x.id === contract.animal_id);
+          setAnimals(
+            current && !activeAnimals.some((x) => x.id === current.id)
+              ? [...activeAnimals, current]
+              : activeAnimals.length
+                ? activeAnimals
+                : a
+          );
+        } else {
+          setAnimals(activeAnimals);
+        }
         setSellers(s.filter((c) => c.active));
         setBuyers(b.filter((c) => c.active));
         setAssessors(ass.filter((c) => c.active));
         setWitnesses(wit.filter((c) => c.active));
         setAllClients(all.filter((c) => c.active));
         setTemplates(tpls);
-        const def = tpls.find((t) => t.is_default) || tpls[0];
-        if (def) setForm((f) => ({ ...f, templateId: def.id }));
+
+        if (contract) {
+          const withCommission = contract.commission_total_pct != null;
+          setHasCommission(withCommission);
+          setForm({
+            animalId: contract.animal_id,
+            saleType: contract.sale_type,
+            sharePct: contract.share_pct ?? 100,
+            sellerId: contract.seller_id,
+            buyerId: contract.buyer_id,
+            assessorId: contract.assessor_id || '',
+            templateId: contract.template_id || '',
+            versoTitle: contract.template_title || '',
+            versoBody: contract.template_body || '',
+            lotLabel: contract.lot_label || '',
+            animalCategory: contract.animal_category || '',
+            quantity: String(contract.quantity ?? 1),
+            commissionTotalPct: withCommission && contract.commission_total_pct != null
+              ? String(contract.commission_total_pct)
+              : '17',
+            commissionBuyerPct: withCommission && contract.commission_buyer_pct != null
+              ? String(contract.commission_buyer_pct)
+              : '8.5',
+            commissionSellerPct: withCommission && contract.commission_seller_pct != null
+              ? String(contract.commission_seller_pct)
+              : '8.5',
+            witness1Id: contract.witness1_id || '',
+            witness2Id: contract.witness2_id || '',
+            totalAmount: String(contract.total_amount),
+            paymentMethod: contract.payment_method,
+            installments: contract.installments,
+            firstDueDate: contract.first_due_date,
+            notes: contract.notes || '',
+          });
+          if (contract.payoutRules?.length) {
+            setRules(
+              contract.payoutRules.map((r) =>
+                newRule({
+                  beneficiaryRole: r.beneficiary_role,
+                  beneficiaryClientId: r.beneficiary_client_id || '',
+                  label: r.label || '',
+                  pct: String(r.pct),
+                })
+              )
+            );
+          }
+        } else {
+          const def = tpls.find((t) => t.is_default) || tpls[0];
+          if (def) {
+            setForm((f) => ({
+              ...f,
+              templateId: def.id,
+              versoTitle: def.title || '',
+              versoBody: def.body_text || '',
+            }));
+          }
+        }
+
         if (s.filter((c) => c.active).length === 0) {
           getClients().then((list) => setSellers(list.filter((c) => c.active)));
         }
@@ -131,7 +260,7 @@ export default function ContractForm({
       })
       .catch((e) => toastError(e.message || 'Erro ao carregar dados'))
       .finally(() => setLoading(false));
-  }, [toastError]);
+  }, [toastError, contractId]);
 
   useEffect(() => {
     if (!form.sellerId) return;
@@ -155,58 +284,82 @@ export default function ContractForm({
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canWrite) return;
-    if (rules.length > 0 && pctSum > 100.01) {
+    if (!isEdit && rules.length > 0 && pctSum > 100.01) {
       toastError('A soma dos % de repasse não pode passar de 100%');
       return;
     }
     setSaving(true);
     try {
-      const payoutRules = rules
-        .filter((r) => Number(r.pct) > 0)
-        .map((r) => ({
-          beneficiaryRole: r.beneficiaryRole,
-          beneficiaryClientId:
-            r.beneficiaryRole === 'assessoria'
-              ? r.beneficiaryClientId || null
-              : r.beneficiaryClientId || null,
-          label: r.label || roleLabel[r.beneficiaryRole],
-          pct: Number(r.pct),
-        }));
-
-      const res = await createContract({
-        animalId: form.animalId,
+      const payload = {
         saleType: form.saleType,
-        sharePct: form.saleType === 'inteiro' ? 100 : Number(form.sharePct),
+        sharePct: Number(form.sharePct) || 100,
         sellerId: form.sellerId,
         buyerId: form.buyerId,
         assessorId: form.assessorId || null,
-        auctionId: auctionId || null,
-        lotId: lotId || null,
         templateId: form.templateId || null,
+        versoTitle: form.versoTitle || null,
+        versoBody: form.versoBody || null,
         lotLabel: form.lotLabel || null,
         animalCategory: form.animalCategory || null,
         quantity: Number(form.quantity) || 1,
-        commissionTotalPct: form.commissionTotalPct !== '' ? Number(form.commissionTotalPct) : null,
-        commissionBuyerPct: form.commissionBuyerPct !== '' ? Number(form.commissionBuyerPct) : null,
-        commissionSellerPct: form.commissionSellerPct !== '' ? Number(form.commissionSellerPct) : null,
+        commissionTotalPct: hasCommission && form.commissionTotalPct !== ''
+          ? Number(form.commissionTotalPct)
+          : null,
+        commissionBuyerPct: hasCommission && form.commissionBuyerPct !== ''
+          ? Number(form.commissionBuyerPct)
+          : null,
+        commissionSellerPct: hasCommission && form.commissionSellerPct !== ''
+          ? Number(form.commissionSellerPct)
+          : null,
         witness1Id: form.witness1Id || null,
         witness2Id: form.witness2Id || null,
         totalAmount: Number(form.totalAmount),
         paymentMethod: form.paymentMethod,
-        installments: Number(form.installments),
         firstDueDate: form.firstDueDate,
         notes: form.notes || null,
-        payoutRules,
-      });
-      success(
-        lotId
-          ? 'Arremate registrado: contrato, cobranças e repasses gerados'
-          : 'Contrato, cobranças e repasses gerados'
-      );
-      onSaved(res.id);
-      onClose();
+      };
+
+      if (isEdit && contractId) {
+        const res = await updateContract(contractId, {
+          ...payload,
+          installments: Number(form.installments),
+          recalcCharges: true,
+        });
+        success(
+          res.chargesRecalculated
+            ? 'Contrato atualizado e parcelas recalculadas'
+            : 'Contrato atualizado'
+        );
+        onSaved(contractId);
+        onClose();
+      } else {
+        const payoutRules = rules
+          .filter((r) => Number(r.pct) > 0)
+          .map((r) => ({
+            beneficiaryRole: r.beneficiaryRole,
+            beneficiaryClientId: r.beneficiaryClientId || null,
+            label: r.label || roleLabel[r.beneficiaryRole],
+            pct: Number(r.pct),
+          }));
+
+        const res = await createContract({
+          animalId: form.animalId,
+          auctionId: auctionId || null,
+          lotId: lotId || null,
+          installments: Number(form.installments),
+          payoutRules,
+          ...payload,
+        });
+        success(
+          lotId
+            ? 'Arremate registrado: contrato, cobranças e repasses gerados'
+            : 'Contrato, cobranças e repasses gerados'
+        );
+        onSaved(res.id);
+        onClose();
+      }
     } catch (err: any) {
-      toastError(err.message || 'Erro ao criar contrato');
+      toastError(err.message || (isEdit ? 'Erro ao atualizar contrato' : 'Erro ao criar contrato'));
     } finally {
       setSaving(false);
     }
@@ -216,37 +369,24 @@ export default function ContractForm({
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
-      {lotId && (
+      {lotId && !isEdit && (
         <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           Registrando arremate do lote — gera contrato, cobranças e repasses parcelados.
+        </p>
+      )}
+      {isEdit && (
+        <p className="rounded-xl border border-brand-beige bg-brand-off-white/80 px-3 py-2 text-sm text-brand-olive">
+          Ao alterar valor, parcelas, vencimento, comprador ou forma de pagamento, as cobranças e repasses
+          pendentes são recalculados automaticamente. Não é possível recalcular se já houver parcela paga.
         </p>
       )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block space-y-1.5 sm:col-span-2">
-          <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Modelo do verso *</span>
-          <select
-            required
-            disabled={!canWrite}
-            value={form.templateId}
-            onChange={(e) => set('templateId', e.target.value)}
-            className={inputClass}
-          >
-            <option value="">— Selecionar modelo —</option>
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}{t.is_default ? ' (padrão)' : ''}
-              </option>
-            ))}
-          </select>
-          <span className="text-xs text-brand-olive">A frente é preenchida automaticamente; o verso usa este texto.</span>
-        </label>
-
-        <label className="block space-y-1.5 sm:col-span-2">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Animal *</span>
           <select
             required
-            disabled={!!animalId || !canWrite}
+            disabled={isEdit || !!animalId || !canWrite}
             value={form.animalId}
             onChange={(e) => set('animalId', e.target.value)}
             className={inputClass}
@@ -258,36 +398,130 @@ export default function ContractForm({
           </select>
         </label>
 
-        <label className="block space-y-1.5">
+        <div className="space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Tipo de venda *</span>
-          <select
-            disabled={!canWrite}
-            value={form.saleType}
-            onChange={(e) => set('saleType', e.target.value as SaleType)}
-            className={inputClass}
-          >
-            <option value="inteiro">Animal inteiro</option>
-            <option value="fracao">Fração</option>
-            <option value="condominio">Condomínio</option>
-          </select>
-        </label>
-
-        {form.saleType !== 'inteiro' && (
-          <label className="block space-y-1.5">
-            <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Percentual (%) *</span>
-            <input
-              type="number"
-              min={1}
-              max={100}
-              step={0.01}
+          <div className="flex gap-2">
+            <select
               required
               disabled={!canWrite}
-              value={form.sharePct}
+              value={form.saleType}
+              onChange={(e) => set('saleType', e.target.value as SaleType)}
+              className={inputClass}
+            >
+              {saleTypes.map((st) => (
+                <option key={st.id} value={st.code || st.name}>{st.name}</option>
+              ))}
+              {form.saleType && !saleTypes.some((st) => (st.code || st.name) === form.saleType) && (
+                <option value={form.saleType}>{form.saleType}</option>
+              )}
+            </select>
+            {canWrite && (
+              <button
+                type="button"
+                title="Cadastrar tipo de venda"
+                onClick={() => setAddingSaleType((v) => !v)}
+                className="inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-brand-beige bg-white text-brand-brown hover:bg-brand-beige/40"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          {addingSaleType && canWrite && (
+            <div className="flex gap-2 pt-1">
+              <input
+                value={newSaleTypeName}
+                onChange={(e) => setNewSaleTypeName(e.target.value)}
+                placeholder="Novo tipo de venda"
+                className={inputClass}
+              />
+              <button
+                type="button"
+                className="shrink-0 rounded-xl bg-brand-brown px-3 py-2 text-sm font-medium text-white"
+                onClick={async () => {
+                  const name = newSaleTypeName.trim();
+                  if (!name) return toastError('Informe o nome do tipo de venda');
+                  try {
+                    const created = await createCatalogItem({ kind: 'sale_type', name });
+                    success('Tipo de venda cadastrado');
+                    setNewSaleTypeName('');
+                    setAddingSaleType(false);
+                    await loadSaleTypes();
+                    if (created.code) set('saleType', created.code);
+                  } catch (err: any) {
+                    toastError(err.message || 'Erro ao cadastrar tipo de venda');
+                  }
+                }}
+              >
+                Salvar
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Cotas % *</span>
+          <div className="flex gap-2">
+            <select
+              required
+              disabled={!canWrite}
+              value={String(form.sharePct)}
               onChange={(e) => set('sharePct', Number(e.target.value))}
               className={inputClass}
-            />
-          </label>
-        )}
+            >
+              {quotas.map((q) => (
+                <option key={q.id} value={q.code || q.name}>{q.name}</option>
+              ))}
+              {!quotas.some((q) => Number(q.code) === Number(form.sharePct)) && (
+                <option value={form.sharePct}>{form.sharePct}%</option>
+              )}
+            </select>
+            {canWrite && (
+              <button
+                type="button"
+                title="Cadastrar cota"
+                onClick={() => setAddingQuota((v) => !v)}
+                className="inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-brand-beige bg-white text-brand-brown hover:bg-brand-beige/40"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          {addingQuota && canWrite && (
+            <div className="flex gap-2 pt-1">
+              <input
+                value={newQuota}
+                onChange={(e) => setNewQuota(e.target.value)}
+                placeholder="Ex.: 33,33"
+                className={inputClass}
+              />
+              <button
+                type="button"
+                className="shrink-0 rounded-xl bg-brand-brown px-3 py-2 text-sm font-medium text-white"
+                onClick={async () => {
+                  const raw = newQuota.trim().replace(',', '.');
+                  const pct = Number(raw);
+                  if (!(pct > 0 && pct <= 100)) return toastError('Informe um percentual entre 0 e 100');
+                  try {
+                    await createCatalogItem({
+                      kind: 'share_quota',
+                      name: `${String(pct).replace('.', ',')}%`,
+                      code: String(pct),
+                    });
+                    success('Cota cadastrada');
+                    setNewQuota('');
+                    setAddingQuota(false);
+                    await loadQuotas();
+                    set('sharePct', pct);
+                  } catch (err: any) {
+                    toastError(err.message || 'Erro ao cadastrar cota');
+                  }
+                }}
+              >
+                Salvar
+              </button>
+            </div>
+          )}
+        </div>
 
         <label className="block space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Vendedor *</span>
@@ -329,26 +563,113 @@ export default function ContractForm({
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Nº do lote</span>
           <input disabled={!canWrite} value={form.lotLabel} onChange={(e) => set('lotLabel', e.target.value)} className={inputClass} placeholder="06" />
         </label>
-        <label className="block space-y-1.5">
+        <div className="space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Categoria</span>
-          <input disabled={!canWrite} value={form.animalCategory} onChange={(e) => set('animalCategory', e.target.value)} className={inputClass} placeholder="POTRA, POTRO..." />
-        </label>
+          <div className="flex gap-2">
+            <select
+              disabled={!canWrite}
+              value={form.animalCategory}
+              onChange={(e) => set('animalCategory', e.target.value)}
+              className={inputClass}
+            >
+              <option value="">— Selecionar ou cadastrar —</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.name}>{c.name}</option>
+              ))}
+              {form.animalCategory && !categories.some((c) => c.name === form.animalCategory) && (
+                <option value={form.animalCategory}>{form.animalCategory}</option>
+              )}
+            </select>
+            {canWrite && (
+              <button
+                type="button"
+                title="Cadastrar categoria"
+                onClick={() => setAddingCategory((v) => !v)}
+                className="inline-flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-xl border border-brand-beige bg-white text-brand-brown hover:bg-brand-beige/40"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          {addingCategory && canWrite && (
+            <div className="flex gap-2 pt-1">
+              <input
+                value={newCategory}
+                onChange={(e) => setNewCategory(e.target.value)}
+                placeholder="Ex.: POTRA"
+                className={inputClass}
+              />
+              <button
+                type="button"
+                className="shrink-0 rounded-xl bg-brand-brown px-3 py-2 text-sm font-medium text-white"
+                onClick={async () => {
+                  const name = newCategory.trim().toUpperCase();
+                  if (!name) return toastError('Informe a categoria');
+                  try {
+                    await createCatalogItem({ kind: 'animal_category', name, code: name });
+                    success('Categoria cadastrada');
+                    setNewCategory('');
+                    setAddingCategory(false);
+                    await loadCategories();
+                    set('animalCategory', name);
+                  } catch (err: any) {
+                    toastError(err.message || 'Erro ao cadastrar categoria');
+                  }
+                }}
+              >
+                Salvar
+              </button>
+            </div>
+          )}
+        </div>
         <label className="block space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Quantidade</span>
           <input type="number" min={0.01} step={0.01} disabled={!canWrite} value={form.quantity} onChange={(e) => set('quantity', e.target.value)} className={inputClass} />
         </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Comissão total %</span>
-          <input type="number" min={0} step={0.01} disabled={!canWrite} value={form.commissionTotalPct} onChange={(e) => set('commissionTotalPct', e.target.value)} className={inputClass} />
+
+        <label className="flex items-center gap-3 sm:col-span-2 rounded-xl border border-brand-beige bg-brand-off-white/50 px-3 py-3">
+          <input
+            type="checkbox"
+            disabled={!canWrite}
+            checked={hasCommission}
+            onChange={(e) => {
+              const on = e.target.checked;
+              setHasCommission(on);
+              if (on) {
+                setForm((f) => ({
+                  ...f,
+                  commissionTotalPct: f.commissionTotalPct || '17',
+                  commissionBuyerPct: f.commissionBuyerPct || '8.5',
+                  commissionSellerPct: f.commissionSellerPct || '8.5',
+                }));
+              }
+            }}
+            className="h-4 w-4 rounded border-brand-beige text-brand-brown focus:ring-brand-beige"
+          />
+          <span className="text-sm text-brand-dark-brown">
+            Incluir comissão no contrato
+            <span className="mt-0.5 block text-xs text-brand-olive">
+              Aparece na composição financeira do PDF. Desmarque se a venda não tiver comissão.
+            </span>
+          </span>
         </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Comissão comprador %</span>
-          <input type="number" min={0} step={0.01} disabled={!canWrite} value={form.commissionBuyerPct} onChange={(e) => set('commissionBuyerPct', e.target.value)} className={inputClass} />
-        </label>
-        <label className="block space-y-1.5">
-          <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Comissão vendedor %</span>
-          <input type="number" min={0} step={0.01} disabled={!canWrite} value={form.commissionSellerPct} onChange={(e) => set('commissionSellerPct', e.target.value)} className={inputClass} />
-        </label>
+
+        {hasCommission && (
+          <>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Comissão total %</span>
+              <input type="number" min={0} step={0.01} disabled={!canWrite} value={form.commissionTotalPct} onChange={(e) => set('commissionTotalPct', e.target.value)} className={inputClass} />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Comissão comprador %</span>
+              <input type="number" min={0} step={0.01} disabled={!canWrite} value={form.commissionBuyerPct} onChange={(e) => set('commissionBuyerPct', e.target.value)} className={inputClass} />
+            </label>
+            <label className="block space-y-1.5">
+              <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Comissão vendedor %</span>
+              <input type="number" min={0} step={0.01} disabled={!canWrite} value={form.commissionSellerPct} onChange={(e) => set('commissionSellerPct', e.target.value)} className={inputClass} />
+            </label>
+          </>
+        )}
 
         <label className="block space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Testemunha 1</span>
@@ -430,6 +751,67 @@ export default function ContractForm({
         </label>
       </div>
 
+      <div className="rounded-2xl border border-brand-beige bg-brand-off-white/50 p-4 space-y-4">
+        <div>
+          <h3 className="text-sm font-semibold text-brand-dark-brown">Verso do contrato</h3>
+          <p className="text-xs text-brand-olive">
+            Preenchido após os dados da frente. Ajustes aqui valem só para este contrato.
+          </p>
+        </div>
+        <label className="block space-y-1.5">
+          <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Modelo do verso *</span>
+          <select
+            required
+            disabled={!canWrite}
+            value={form.templateId}
+            onChange={(e) => {
+              const id = e.target.value;
+              const tpl = templates.find((t) => t.id === id);
+              if (tpl) {
+                setForm((f) => ({
+                  ...f,
+                  templateId: id,
+                  versoTitle: tpl.title || '',
+                  versoBody: tpl.body_text || '',
+                }));
+              } else {
+                set('templateId', id);
+              }
+            }}
+            className={inputClass}
+          >
+            <option value="">— Selecionar modelo —</option>
+            {templates.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}{t.is_default ? ' (padrão)' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Título do verso</span>
+          <input
+            disabled={!canWrite}
+            value={form.versoTitle}
+            onChange={(e) => set('versoTitle', e.target.value)}
+            className={inputClass}
+            placeholder="NOTA DE LEILÃO E CONTRATO COM RESERVA DE DOMÍNIO"
+          />
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Texto do verso (cláusulas)</span>
+          <textarea
+            disabled={!canWrite}
+            rows={10}
+            value={form.versoBody}
+            onChange={(e) => set('versoBody', e.target.value)}
+            className={`${inputClass} font-mono text-xs leading-relaxed`}
+            placeholder="Cole ou edite aqui as cláusulas do verso deste contrato..."
+          />
+        </label>
+      </div>
+
+      {!isEdit && (
       <div className="rounded-2xl border border-brand-beige bg-brand-off-white/60 p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -544,11 +926,18 @@ export default function ContractForm({
           ))}
         </div>
       </div>
+      )}
 
       <div className="flex flex-wrap gap-2 border-t border-brand-beige pt-4">
         {canWrite && (
           <button type="submit" disabled={saving} className="rounded-xl bg-brand-brown px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-60">
-            {saving ? 'Gerando...' : lotId ? 'Confirmar arremate' : 'Gerar contrato, cobranças e repasses'}
+            {saving
+              ? (isEdit ? 'Salvando...' : 'Gerando...')
+              : isEdit
+                ? 'Salvar alterações'
+                : lotId
+                  ? 'Confirmar arremate'
+                  : 'Gerar contrato, cobranças e repasses'}
           </button>
         )}
         <button type="button" onClick={onClose} className="rounded-xl border border-brand-beige px-5 py-2.5 text-sm">

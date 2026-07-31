@@ -14,8 +14,10 @@ dotenv.config();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const animalsUploadsDir = path.join(__dirname, 'uploads', 'animals');
 const avatarsUploadsDir = path.join(__dirname, 'uploads', 'avatars');
+const personsUploadsDir = path.join(__dirname, 'uploads', 'persons');
 fs.mkdirSync(animalsUploadsDir, { recursive: true });
 fs.mkdirSync(avatarsUploadsDir, { recursive: true });
+fs.mkdirSync(personsUploadsDir, { recursive: true });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -25,23 +27,34 @@ app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+function uploadKind(req) {
+  return String(req.query.kind || req.body?.kind || 'animal').toLowerCase();
+}
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, _file, cb) => {
-      const kind = String(req.query.kind || req.body?.kind || 'animal').toLowerCase();
-      cb(null, kind === 'avatar' ? avatarsUploadsDir : animalsUploadsDir);
+      const kind = uploadKind(req);
+      if (kind === 'avatar') return cb(null, avatarsUploadsDir);
+      if (kind === 'person-doc') return cb(null, personsUploadsDir);
+      return cb(null, animalsUploadsDir);
     },
     filename: (req, file, cb) => {
-      const kind = String(req.query.kind || 'animal').toLowerCase();
-      const prefix = kind === 'avatar' ? 'avatar' : 'animal';
+      const kind = uploadKind(req);
+      const prefix = kind === 'avatar' ? 'avatar' : kind === 'person-doc' ? 'person' : 'animal';
       const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
       cb(null, `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`);
     },
   }),
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const ok = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.mimetype);
-    cb(ok ? null : new Error('Formato inválido. Use JPG, PNG, WEBP ou GIF'), ok);
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const kind = uploadKind(req);
+    const images = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+    const ok =
+      kind === 'person-doc'
+        ? [...images, 'application/pdf'].includes(file.mimetype)
+        : images.includes(file.mimetype);
+    cb(ok ? null : new Error(kind === 'person-doc' ? 'Use JPG, PNG, WEBP, GIF ou PDF' : 'Formato inválido. Use JPG, PNG, WEBP ou GIF'), ok);
   },
 });
 
@@ -266,10 +279,11 @@ app.post('/api/upload', auth(), (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'Nenhum arquivo enviado' });
     }
-    const subdir = kind === 'avatar' ? 'avatars' : 'animals';
+    const subdir = kind === 'avatar' ? 'avatars' : kind === 'person-doc' ? 'persons' : 'animals';
     res.json({
       success: true,
       url: `/uploads/${subdir}/${req.file.filename}`,
+      fileName: req.file.originalname,
     });
   });
 });
@@ -328,6 +342,7 @@ app.get('/api/dashboard', auth(), async (req, res) => {
         sellers: 0,
         assessors: 0,
         witnesses: 0,
+        avalistas: 0,
         animals: animals.total,
         activeAnimals: activeAnimals.total,
         contracts: contracts.total,
@@ -352,6 +367,9 @@ app.get('/api/dashboard', auth(), async (req, res) => {
     );
     const [[witnesses]] = await pool.execute(
       'SELECT COUNT(*) AS total FROM clients WHERE active = 1 AND is_witness = 1'
+    );
+    const [[avalistas]] = await pool.execute(
+      'SELECT COUNT(*) AS total FROM clients WHERE active = 1 AND is_avalista = 1'
     );
     const [[animals]] = await pool.execute('SELECT COUNT(*) AS total FROM animals');
     const [[activeAnimals]] = await pool.execute(
@@ -382,6 +400,7 @@ app.get('/api/dashboard', auth(), async (req, res) => {
       sellers: sellers.total,
       assessors: assessors.total,
       witnesses: witnesses.total,
+      avalistas: avalistas.total,
       animals: animals.total,
       activeAnimals: activeAnimals.total,
       contracts: contracts.total,
@@ -407,19 +426,56 @@ function mapClient(r) {
     is_buyer: Boolean(r.is_buyer ?? 1),
     is_assessor: Boolean(r.is_assessor),
     is_witness: Boolean(r.is_witness),
+    is_avalista: Boolean(r.is_avalista),
+    rg: r.rg ?? null,
+    rg_issuer: r.rg_issuer ?? null,
+    birth_date: r.birth_date ?? null,
+    nickname: r.nickname ?? null,
+    marital_status: r.marital_status ?? null,
+    profession: r.profession ?? null,
+    mother_name: r.mother_name ?? null,
+    father_name: r.father_name ?? null,
+    zip_code: r.zip_code ?? null,
+    address_number: r.address_number ?? null,
+    country: r.country ?? 'Brasil',
+    relationship_notes: r.relationship_notes ?? null,
+    problems_notes: r.problems_notes ?? null,
+  };
+}
+
+function clientExtraFields(body) {
+  return {
+    rg: body.rg || null,
+    rg_issuer: body.rg_issuer || null,
+    birth_date: body.birth_date || null,
+    nickname: body.nickname || null,
+    marital_status: body.marital_status || null,
+    profession: body.profession || null,
+    mother_name: body.mother_name || null,
+    father_name: body.father_name || null,
+    zip_code: body.zip_code || null,
+    address_number: body.address_number || null,
+    country: body.country || 'Brasil',
+    relationship_notes: body.relationship_notes || null,
+    problems_notes: body.problems_notes || null,
   };
 }
 
 async function generateCharges(conn, contractId, buyerId, total, n, firstDue, method) {
   n = Math.max(1, Math.min(40, n));
   const base = Math.floor((total / n) * 100) / 100;
+  // Repasses dependem das cobranças — remove antes para evitar falha de FK
+  await conn.execute('DELETE FROM payouts WHERE contract_id = ?', [contractId]);
   await conn.execute('DELETE FROM charges WHERE contract_id = ?', [contractId]);
   let sum = 0;
-  const due = new Date(firstDue + 'T12:00:00');
+  const due = new Date(`${String(firstDue).slice(0, 10)}T12:00:00`);
   for (let i = 1; i <= n; i++) {
     const amount = i === n ? Math.round((total - sum) * 100) / 100 : base;
     sum += amount;
-    const dueStr = due.toISOString().slice(0, 10);
+    const y = due.getFullYear();
+    const m = String(due.getMonth() + 1).padStart(2, '0');
+    const d = String(due.getDate()).padStart(2, '0');
+    const dueStr = `${y}-${m}-${d}`;
     await conn.execute(
       `INSERT INTO charges (contract_id, client_id, installment_no, amount, due_date, payment_method, status)
        VALUES (?, ?, ?, ?, ?, ?, 'pendente')`,
@@ -520,7 +576,7 @@ function mapContract(r) {
     seller_email: r.seller_email || null,
     seller_phone: r.seller_phone || null,
     seller_whatsapp: r.seller_whatsapp || null,
-    seller_address: r.seller_address || null,
+    seller_address: [r.seller_address, r.seller_address_number].filter(Boolean).join(', nº ') || null,
     seller_city: r.seller_city || null,
     seller_state: r.seller_state || null,
     buyer_id: String(r.buyer_id),
@@ -530,7 +586,7 @@ function mapContract(r) {
     buyer_email: r.buyer_email || null,
     buyer_phone: r.buyer_phone || null,
     buyer_whatsapp: r.buyer_whatsapp || null,
-    buyer_address: r.buyer_address || null,
+    buyer_address: [r.buyer_address, r.buyer_address_number].filter(Boolean).join(', nº ') || null,
     buyer_city: r.buyer_city || null,
     buyer_state: r.buyer_state || null,
     assessor_id: r.assessor_id ? String(r.assessor_id) : null,
@@ -654,6 +710,7 @@ app.get('/api/clients', auth(), async (req, res) => {
     if (roleFilter === 'buyer') sql += ' AND is_buyer = 1';
     if (roleFilter === 'assessor') sql += ' AND is_assessor = 1';
     if (roleFilter === 'witness') sql += ' AND is_witness = 1';
+    if (roleFilter === 'avalista') sql += ' AND is_avalista = 1';
 
     sql += ' ORDER BY name ASC';
     const [rows] = await pool.execute(sql, params);
@@ -683,31 +740,40 @@ app.post('/api/clients', auth(['root', 'admin', 'user']), async (req, res) => {
     const {
       name, document_type = 'CPF', document, email, phone, whatsapp,
       city, state, address, notes, active = true,
-      is_seller = false, is_buyer = true, is_assessor = false, is_witness = false,
+      is_seller = false, is_buyer = true, is_assessor = false, is_witness = false, is_avalista = false,
     } = req.body;
+    const extra = clientExtraFields(req.body);
 
     if (!name?.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
 
     const [result] = await pool.execute(
       `INSERT INTO clients
-       (name, document_type, document, email, phone, whatsapp, city, state, address, notes, active, is_seller, is_buyer, is_assessor, is_witness, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (name, document_type, document, rg, rg_issuer, birth_date, nickname, marital_status, profession,
+        mother_name, father_name, email, phone, whatsapp, city, state, address, address_number, zip_code, country,
+        notes, relationship_notes, problems_notes, active, is_seller, is_buyer, is_assessor, is_witness, is_avalista, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         name.trim(),
         document_type || 'CPF',
         document || null,
+        extra.rg, extra.rg_issuer, extra.birth_date, extra.nickname, extra.marital_status, extra.profession,
+        extra.mother_name, extra.father_name,
         email || null,
         phone || null,
         whatsapp || null,
         city || null,
         state || null,
         address || null,
+        extra.address_number,
+        extra.zip_code, extra.country,
         notes || null,
+        extra.relationship_notes, extra.problems_notes,
         active ? 1 : 0,
         is_seller ? 1 : 0,
         is_buyer ? 1 : 0,
         is_assessor ? 1 : 0,
         is_witness ? 1 : 0,
+        is_avalista ? 1 : 0,
         req.user.id,
       ]
     );
@@ -727,32 +793,41 @@ app.put('/api/clients/:id', auth(['root', 'admin', 'user']), async (req, res) =>
     const {
       name, document_type, document, email, phone, whatsapp,
       city, state, address, notes, active,
-      is_seller, is_buyer, is_assessor, is_witness,
+      is_seller, is_buyer, is_assessor, is_witness, is_avalista,
     } = req.body;
+    const extra = clientExtraFields(req.body);
 
     if (!name?.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
 
     await pool.execute(
       `UPDATE clients SET
-        name=?, document_type=?, document=?, email=?, phone=?, whatsapp=?,
-        city=?, state=?, address=?, notes=?, active=?, is_seller=?, is_buyer=?, is_assessor=?, is_witness=?
+        name=?, document_type=?, document=?, rg=?, rg_issuer=?, birth_date=?, nickname=?, marital_status=?, profession=?,
+        mother_name=?, father_name=?, email=?, phone=?, whatsapp=?,
+        city=?, state=?, address=?, address_number=?, zip_code=?, country=?, notes=?, relationship_notes=?, problems_notes=?,
+        active=?, is_seller=?, is_buyer=?, is_assessor=?, is_witness=?, is_avalista=?
        WHERE id=?`,
       [
         name.trim(),
         document_type || 'CPF',
         document || null,
+        extra.rg, extra.rg_issuer, extra.birth_date, extra.nickname, extra.marital_status, extra.profession,
+        extra.mother_name, extra.father_name,
         email || null,
         phone || null,
         whatsapp || null,
         city || null,
         state || null,
         address || null,
+        extra.address_number,
+        extra.zip_code, extra.country,
         notes || null,
+        extra.relationship_notes, extra.problems_notes,
         active === false ? 0 : 1,
         is_seller ? 1 : 0,
         is_buyer ? 1 : 0,
         is_assessor ? 1 : 0,
         is_witness ? 1 : 0,
+        is_avalista ? 1 : 0,
         id,
       ]
     );
@@ -786,6 +861,282 @@ app.delete('/api/clients/:id', auth(['root', 'admin', 'user']), async (req, res)
     res.status(500).json({ error: 'Erro ao excluir cliente' });
   } finally {
     conn.release();
+  }
+});
+
+const DOC_TYPES = ['rg', 'identidade', 'cnh', 'comprovante_residencia', 'selfie', 'outro'];
+
+app.get('/api/clients/:id/documents', auth(), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (req.user.role === 'cliente' && req.user.clientId !== id) {
+      return res.status(403).json({ error: 'Sem permissão' });
+    }
+    const [rows] = await pool.execute(
+      'SELECT * FROM client_documents WHERE client_id = ? ORDER BY created_at DESC',
+      [id]
+    );
+    res.json(
+      rows.map((r) => ({
+        id: String(r.id),
+        client_id: String(r.client_id),
+        doc_type: r.doc_type,
+        file_url: r.file_url,
+        file_name: r.file_name,
+        notes: r.notes,
+        created_at: r.created_at,
+      }))
+    );
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao listar documentos' });
+  }
+});
+
+app.post('/api/clients/:id/documents', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { docType = 'outro', fileUrl, fileName, notes } = req.body;
+    if (!fileUrl) return res.status(400).json({ error: 'Arquivo é obrigatório' });
+    if (!DOC_TYPES.includes(docType)) return res.status(400).json({ error: 'Tipo de documento inválido' });
+    const [result] = await pool.execute(
+      `INSERT INTO client_documents (client_id, doc_type, file_url, file_name, notes, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, docType, fileUrl, fileName || null, notes || null, req.user.id]
+    );
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao salvar documento' });
+  }
+});
+
+app.delete('/api/clients/:id/documents/:docId', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const [result] = await pool.execute(
+      'DELETE FROM client_documents WHERE id = ? AND client_id = ?',
+      [Number(req.params.docId), Number(req.params.id)]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Documento não encontrado' });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao excluir documento' });
+  }
+});
+
+app.get('/api/clients/:id/properties', auth(), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (req.user.role === 'cliente' && req.user.clientId !== id) {
+      return res.status(403).json({ error: 'Sem permissão' });
+    }
+    const [rows] = await pool.execute(
+      'SELECT * FROM client_properties WHERE client_id = ? ORDER BY is_primary DESC, name ASC',
+      [id]
+    );
+    res.json(rows.map((r) => ({ ...r, id: String(r.id), client_id: String(r.client_id), is_primary: Boolean(r.is_primary) })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao listar propriedades' });
+  }
+});
+
+app.post('/api/clients/:id/properties', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const b = req.body;
+    if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome da propriedade é obrigatório' });
+    const [result] = await pool.execute(
+      `INSERT INTO client_properties
+       (client_id, name, cnpj, state_registration, zip_code, state, city, address, phone, property_type, is_primary, manager_name, manager_phone, manager_email, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id, String(b.name).trim(), b.cnpj || null, b.state_registration || null, b.zip_code || null,
+        b.state || null, b.city || null, b.address || null, b.phone || null, b.property_type || null,
+        b.is_primary ? 1 : 0, b.manager_name || null, b.manager_phone || null, b.manager_email || null, b.notes || null,
+      ]
+    );
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao criar propriedade' });
+  }
+});
+
+app.put('/api/clients/:id/properties/:propId', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const b = req.body;
+    if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome da propriedade é obrigatório' });
+    await pool.execute(
+      `UPDATE client_properties SET
+        name=?, cnpj=?, state_registration=?, zip_code=?, state=?, city=?, address=?, phone=?, property_type=?,
+        is_primary=?, manager_name=?, manager_phone=?, manager_email=?, notes=?
+       WHERE id=? AND client_id=?`,
+      [
+        String(b.name).trim(), b.cnpj || null, b.state_registration || null, b.zip_code || null,
+        b.state || null, b.city || null, b.address || null, b.phone || null, b.property_type || null,
+        b.is_primary ? 1 : 0, b.manager_name || null, b.manager_phone || null, b.manager_email || null, b.notes || null,
+        Number(req.params.propId), Number(req.params.id),
+      ]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao atualizar propriedade' });
+  }
+});
+
+app.delete('/api/clients/:id/properties/:propId', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const [result] = await pool.execute(
+      'DELETE FROM client_properties WHERE id = ? AND client_id = ?',
+      [Number(req.params.propId), Number(req.params.id)]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Propriedade não encontrada' });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao excluir propriedade' });
+  }
+});
+
+app.get('/api/clients/:id/bank-accounts', auth(), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (req.user.role === 'cliente' && req.user.clientId !== id) {
+      return res.status(403).json({ error: 'Sem permissão' });
+    }
+    const [rows] = await pool.execute(
+      'SELECT * FROM client_bank_accounts WHERE client_id = ? ORDER BY is_primary DESC, id ASC',
+      [id]
+    );
+    res.json(rows.map((r) => ({ ...r, id: String(r.id), client_id: String(r.client_id), is_primary: Boolean(r.is_primary) })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao listar contas' });
+  }
+});
+
+app.post('/api/clients/:id/bank-accounts', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const b = req.body;
+    if (!String(b.bank_name || '').trim()) return res.status(400).json({ error: 'Banco é obrigatório' });
+    const accountType = ['corrente', 'poupanca', 'pagamento', 'outro'].includes(b.account_type)
+      ? b.account_type
+      : 'corrente';
+    const [result] = await pool.execute(
+      `INSERT INTO client_bank_accounts
+       (client_id, account_type, bank_name, agency, account_number, holder_name, holder_document, is_primary, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id, accountType, String(b.bank_name).trim(), b.agency || null, b.account_number || null,
+        b.holder_name || null, b.holder_document || null, b.is_primary ? 1 : 0, b.notes || null,
+      ]
+    );
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao criar conta' });
+  }
+});
+
+app.put('/api/clients/:id/bank-accounts/:accId', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const b = req.body;
+    if (!String(b.bank_name || '').trim()) return res.status(400).json({ error: 'Banco é obrigatório' });
+    const accountType = ['corrente', 'poupanca', 'pagamento', 'outro'].includes(b.account_type)
+      ? b.account_type
+      : 'corrente';
+    await pool.execute(
+      `UPDATE client_bank_accounts SET
+        account_type=?, bank_name=?, agency=?, account_number=?, holder_name=?, holder_document=?, is_primary=?, notes=?
+       WHERE id=? AND client_id=?`,
+      [
+        accountType, String(b.bank_name).trim(), b.agency || null, b.account_number || null,
+        b.holder_name || null, b.holder_document || null, b.is_primary ? 1 : 0, b.notes || null,
+        Number(req.params.accId), Number(req.params.id),
+      ]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao atualizar conta' });
+  }
+});
+
+app.delete('/api/clients/:id/bank-accounts/:accId', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const [result] = await pool.execute(
+      'DELETE FROM client_bank_accounts WHERE id = ? AND client_id = ?',
+      [Number(req.params.accId), Number(req.params.id)]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Conta não encontrada' });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao excluir conta' });
+  }
+});
+
+app.get('/api/clients/:id/contacts', auth(), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (req.user.role === 'cliente' && req.user.clientId !== id) {
+      return res.status(403).json({ error: 'Sem permissão' });
+    }
+    const [rows] = await pool.execute(
+      'SELECT * FROM client_contacts WHERE client_id = ? ORDER BY name ASC',
+      [id]
+    );
+    res.json(rows.map((r) => ({ ...r, id: String(r.id), client_id: String(r.client_id) })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao listar contatos' });
+  }
+});
+
+app.post('/api/clients/:id/contacts', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const b = req.body;
+    if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome do contato é obrigatório' });
+    const [result] = await pool.execute(
+      `INSERT INTO client_contacts (client_id, name, role_label, phone, email, notes)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, String(b.name).trim(), b.role_label || null, b.phone || null, b.email || null, b.notes || null]
+    );
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao criar contato' });
+  }
+});
+
+app.put('/api/clients/:id/contacts/:contactId', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const b = req.body;
+    if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome do contato é obrigatório' });
+    await pool.execute(
+      `UPDATE client_contacts SET name=?, role_label=?, phone=?, email=?, notes=?
+       WHERE id=? AND client_id=?`,
+      [
+        String(b.name).trim(), b.role_label || null, b.phone || null, b.email || null, b.notes || null,
+        Number(req.params.contactId), Number(req.params.id),
+      ]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao atualizar contato' });
+  }
+});
+
+app.delete('/api/clients/:id/contacts/:contactId', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const [result] = await pool.execute(
+      'DELETE FROM client_contacts WHERE id = ? AND client_id = ?',
+      [Number(req.params.contactId), Number(req.params.id)]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Contato não encontrado' });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao excluir contato' });
   }
 });
 
@@ -1179,14 +1530,18 @@ const contractSelect = `SELECT c.*,
     a.birth_date AS animal_birth_date, a.sex AS animal_sex,
     s.name AS seller_name, s.document AS seller_document, s.document_type AS seller_document_type,
     s.email AS seller_email, s.phone AS seller_phone, s.whatsapp AS seller_whatsapp,
-    s.address AS seller_address, s.city AS seller_city, s.state AS seller_state,
+    s.address AS seller_address, s.address_number AS seller_address_number,
+    s.city AS seller_city, s.state AS seller_state,
     b.name AS buyer_name, b.document AS buyer_document, b.document_type AS buyer_document_type,
     b.email AS buyer_email, b.phone AS buyer_phone, b.whatsapp AS buyer_whatsapp,
-    b.address AS buyer_address, b.city AS buyer_city, b.state AS buyer_state,
+    b.address AS buyer_address, b.address_number AS buyer_address_number,
+    b.city AS buyer_city, b.state AS buyer_state,
     ass.name AS assessor_name,
     w1.name AS witness1_name, w2.name AS witness2_name,
     au.name AS auction_name, au.auction_date AS auction_date,
-    t.name AS template_name, t.title AS template_title, t.body_text AS template_body
+    t.name AS template_name,
+    COALESCE(c.verso_title, t.title) AS template_title,
+    COALESCE(c.verso_body, t.body_text) AS template_body
   FROM contracts c
   INNER JOIN animals a ON a.id = c.animal_id
   INNER JOIN clients s ON s.id = c.seller_id
@@ -1288,7 +1643,7 @@ app.post('/api/contracts', auth(['root', 'admin', 'user']), async (req, res) => 
   const conn = await pool.getConnection();
   try {
     const {
-      animalId, sellerId, buyerId, assessorId, saleType = 'inteiro', sharePct,
+      animalId, sellerId, buyerId, assessorId, saleType: saleTypeRaw = 'inteiro', sharePct,
       totalAmount, paymentMethod = 'boleto', installments = 1, firstDueDate, notes,
       auctionId, lotId, payoutRules,
       templateId, lotLabel, animalCategory, quantity = 1,
@@ -1300,10 +1655,13 @@ app.post('/api/contracts', auth(['root', 'admin', 'user']), async (req, res) => 
     if (!animalId || !sellerId || !buyerId || !(total > 0) || !firstDueDate) {
       return res.status(400).json({ error: 'Animal, vendedor, comprador, valor e 1º vencimento são obrigatórios' });
     }
-    let share = sharePct;
-    if (saleType === 'inteiro') share = 100;
-    if (['fracao', 'condominio'].includes(saleType) && !(share > 0 && share <= 100)) {
-      return res.status(400).json({ error: 'Informe o percentual da fração (1–100)' });
+    const saleType = String(saleTypeRaw || '').trim();
+    if (!saleType) {
+      return res.status(400).json({ error: 'Tipo de venda é obrigatório' });
+    }
+    let share = Number(sharePct);
+    if (!(share > 0 && share <= 100)) {
+      return res.status(400).json({ error: 'Informe o percentual de cotas (1–100)' });
     }
 
     let resolvedTemplateId = templateId ? Number(templateId) : null;
@@ -1318,17 +1676,19 @@ app.post('/api/contracts', auth(['root', 'admin', 'user']), async (req, res) => 
     const [result] = await conn.execute(
       `INSERT INTO contracts
        (animal_id, sale_type, share_pct, seller_id, buyer_id, assessor_id, auction_id, lot_id,
-        template_id, lot_label, animal_category, quantity,
+        template_id, verso_title, verso_body, lot_label, animal_category, quantity,
         commission_total_pct, commission_buyer_pct, commission_seller_pct,
         witness1_id, witness2_id, via_label,
         total_amount, payment_method, installments, first_due_date, status, notes, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'aguardando_assinatura', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'aguardando_assinatura', ?, ?)`,
       [
         Number(animalId), saleType, share || null, Number(sellerId), Number(buyerId),
         assessorId ? Number(assessorId) : null,
         auctionId ? Number(auctionId) : null,
         lotId ? Number(lotId) : null,
         resolvedTemplateId,
+        req.body.versoTitle || null,
+        req.body.versoBody || null,
         lotLabel || null,
         animalCategory || null,
         quantity != null && quantity !== '' ? Number(quantity) : 1,
@@ -1367,25 +1727,172 @@ app.post('/api/contracts', auth(['root', 'admin', 'user']), async (req, res) => 
 });
 
 app.put('/api/contracts/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const id = Number(req.params.id);
-    const { status, notes } = req.body;
+    await conn.beginTransaction();
+    const [[existing]] = await conn.execute('SELECT * FROM contracts WHERE id = ? FOR UPDATE', [id]);
+    if (!existing) {
+      await conn.rollback();
+      return res.status(404).json({ error: 'Contrato não encontrado' });
+    }
+    if (existing.status === 'cancelado' || existing.status === 'concluido') {
+      await conn.rollback();
+      return res.status(400).json({ error: 'Contrato cancelado ou concluído não pode ser editado' });
+    }
+
+    const b = req.body;
     const fields = [];
     const params = [];
-    if (status) {
-      fields.push('status=?');
-      params.push(status);
+    const set = (col, val) => {
+      fields.push(`${col}=?`);
+      params.push(val);
+    };
+
+    if (b.status != null) {
+      if (!['rascunho', 'aguardando_assinatura', 'ativo', 'concluido', 'cancelado'].includes(b.status)) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'Status inválido' });
+      }
+      set('status', b.status);
     }
-    if (notes !== undefined) {
-      fields.push('notes=?');
-      params.push(notes);
+    if (b.notes !== undefined) set('notes', b.notes);
+    if (b.saleType != null) {
+      const saleType = String(b.saleType).trim();
+      if (!saleType) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'Tipo de venda é obrigatório' });
+      }
+      set('sale_type', saleType);
+      if (b.sharePct != null) set('share_pct', Number(b.sharePct));
+    } else if (b.sharePct != null) {
+      set('share_pct', Number(b.sharePct));
     }
-    if (!fields.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    if (b.sellerId != null) set('seller_id', Number(b.sellerId));
+    if (b.buyerId != null) set('buyer_id', Number(b.buyerId));
+    if (b.assessorId !== undefined) set('assessor_id', b.assessorId ? Number(b.assessorId) : null);
+    if (b.templateId !== undefined) set('template_id', b.templateId ? Number(b.templateId) : null);
+    if (b.versoTitle !== undefined) set('verso_title', b.versoTitle || null);
+    if (b.versoBody !== undefined) set('verso_body', b.versoBody || null);
+    if (b.lotLabel !== undefined) set('lot_label', b.lotLabel || null);
+    if (b.animalCategory !== undefined) set('animal_category', b.animalCategory || null);
+    if (b.quantity != null) set('quantity', Math.max(1, Number(b.quantity) || 1));
+    if (b.commissionTotalPct !== undefined) {
+      set('commission_total_pct', b.commissionTotalPct !== '' && b.commissionTotalPct != null ? Number(b.commissionTotalPct) : null);
+    }
+    if (b.commissionBuyerPct !== undefined) {
+      set('commission_buyer_pct', b.commissionBuyerPct !== '' && b.commissionBuyerPct != null ? Number(b.commissionBuyerPct) : null);
+    }
+    if (b.commissionSellerPct !== undefined) {
+      set('commission_seller_pct', b.commissionSellerPct !== '' && b.commissionSellerPct != null ? Number(b.commissionSellerPct) : null);
+    }
+    if (b.witness1Id !== undefined) set('witness1_id', b.witness1Id ? Number(b.witness1Id) : null);
+    if (b.witness2Id !== undefined) set('witness2_id', b.witness2Id ? Number(b.witness2Id) : null);
+    if (b.totalAmount != null) {
+      const total = Number(b.totalAmount);
+      if (!(total > 0)) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'Valor inválido' });
+      }
+      set('total_amount', total);
+    }
+    if (b.paymentMethod != null) {
+      if (!['pix', 'boleto', 'transferencia', 'outro'].includes(b.paymentMethod)) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'Forma de pagamento inválida' });
+      }
+      set('payment_method', b.paymentMethod);
+    }
+    if (b.firstDueDate != null) set('first_due_date', b.firstDueDate);
+    if (b.installments != null) {
+      const n = Math.max(1, Math.min(40, Number(b.installments) || 1));
+      set('installments', n);
+    }
+
+    if (!fields.length) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'Nada para atualizar' });
+    }
+
+    const nextTotal = b.totalAmount != null ? Number(b.totalAmount) : Number(existing.total_amount);
+    const nextBuyer = b.buyerId != null ? Number(b.buyerId) : Number(existing.buyer_id);
+    const nextMethod = b.paymentMethod != null ? b.paymentMethod : existing.payment_method;
+    const nextFirstDue = b.firstDueDate != null ? b.firstDueDate : existing.first_due_date;
+    const nextInstallments =
+      b.installments != null
+        ? Math.max(1, Math.min(40, Number(b.installments) || 1))
+        : Number(existing.installments);
+
+    const existingFirstDue = existing.first_due_date
+      ? String(existing.first_due_date).slice(0, 10)
+      : '';
+    const nextFirstDueNorm = String(nextFirstDue).slice(0, 10);
+
+    const [[chargeAgg]] = await conn.execute(
+      `SELECT COALESCE(SUM(amount), 0) AS total_sum, COUNT(*) AS qty
+       FROM charges WHERE contract_id = ?`,
+      [id]
+    );
+
+    const financeChanged =
+      Math.abs(nextTotal - Number(existing.total_amount)) > 0.001 ||
+      nextBuyer !== Number(existing.buyer_id) ||
+      nextMethod !== existing.payment_method ||
+      nextFirstDueNorm !== existingFirstDue ||
+      nextInstallments !== Number(existing.installments);
+
+    // Também recalcula se o formulário pediu ou se a soma das parcelas está desalinhada do valor
+    const chargesOutOfSync =
+      Math.abs(Number(chargeAgg.total_sum) - nextTotal) > 0.02 ||
+      Number(chargeAgg.qty) !== nextInstallments;
+
+    const shouldRecalc =
+      Boolean(b.recalcCharges) || financeChanged || chargesOutOfSync;
+
+    if (shouldRecalc) {
+      const [[paidOnly]] = await conn.execute(
+        `SELECT COUNT(*) AS n FROM charges WHERE contract_id = ? AND status = 'pago'`,
+        [id]
+      );
+      if (Number(paidOnly.n) > 0) {
+        await conn.rollback();
+        return res.status(400).json({
+          error: 'Não é possível recalcular parcelas: já existem cobranças pagas neste contrato',
+        });
+      }
+    }
+
     params.push(id);
-    await pool.execute(`UPDATE contracts SET ${fields.join(',')} WHERE id=?`, params);
-    res.json({ success: true });
+    await conn.execute(`UPDATE contracts SET ${fields.join(',')} WHERE id=?`, params);
+
+    if (shouldRecalc) {
+      const [ruleRows] = await conn.execute(
+        `SELECT beneficiary_role, beneficiary_client_id, label, pct
+         FROM contract_payout_rules WHERE contract_id = ? ORDER BY sort_order ASC, id ASC`,
+        [id]
+      );
+      await generateCharges(conn, id, nextBuyer, nextTotal, nextInstallments, nextFirstDueNorm, nextMethod);
+      await generatePayouts(
+        conn,
+        id,
+        ruleRows.map((r) => ({
+          beneficiaryRole: r.beneficiary_role,
+          beneficiaryClientId: r.beneficiary_client_id,
+          label: r.label,
+          pct: Number(r.pct),
+        }))
+      );
+    }
+
+    await conn.commit();
+    res.json({ success: true, chargesRecalculated: shouldRecalc });
   } catch (error) {
+    await conn.rollback();
+    console.error(error);
+    if (error.status === 400) return res.status(400).json({ error: error.message });
     res.status(500).json({ error: 'Erro ao atualizar contrato' });
+  } finally {
+    conn.release();
   }
 });
 
@@ -1893,6 +2400,81 @@ app.put('/api/contract-templates/:id', auth(['root', 'admin', 'user']), async (r
     res.status(500).json({ error: 'Erro ao atualizar modelo' });
   } finally {
     conn.release();
+  }
+});
+
+app.get('/api/catalogs', auth(), async (req, res) => {
+  try {
+    const kind = String(req.query.kind || '').trim();
+    if (!['breed', 'sale_type', 'animal_category', 'share_quota'].includes(kind)) {
+      return res.status(400).json({ error: 'Informe kind válido (breed, sale_type, animal_category, share_quota)' });
+    }
+    const [rows] = await pool.execute(
+      'SELECT * FROM catalogs WHERE kind = ? AND active = 1 ORDER BY name ASC',
+      [kind]
+    );
+    res.json(
+      rows.map((r) => ({
+        id: String(r.id),
+        kind: r.kind,
+        name: r.name,
+        code: r.code,
+        active: Boolean(r.active),
+      }))
+    );
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao listar catálogo' });
+  }
+});
+
+app.post('/api/catalogs', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const kind = String(req.body.kind || '').trim();
+    const name = String(req.body.name || '').trim();
+    let code = req.body.code != null ? String(req.body.code).trim() : null;
+    if (!['breed', 'sale_type', 'animal_category', 'share_quota'].includes(kind)) {
+      return res.status(400).json({ error: 'Tipo de catálogo inválido' });
+    }
+    if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
+    if ((kind === 'sale_type' || kind === 'animal_category' || kind === 'share_quota') && !code) {
+      if (kind === 'share_quota') {
+        const num = name.replace('%', '').replace(',', '.').trim();
+        code = String(Number(num) || name)
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^0-9.]/g, '')
+          .slice(0, 40) || '100';
+      } else {
+        code = name
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toUpperCase()
+          .replace(/[^A-Z0-9]+/g, '_')
+          .replace(/^_|_$/g, '')
+          .slice(0, 40) || 'CUSTOM';
+        if (kind === 'sale_type') {
+          code = code.toLowerCase();
+        }
+      }
+    }
+    const [result] = await pool.execute(
+      'INSERT INTO catalogs (kind, name, code, active) VALUES (?, ?, ?, 1)',
+      [kind, name, code || null]
+    );
+    res.json({
+      success: true,
+      id: String(result.insertId),
+      kind,
+      name,
+      code,
+    });
+  } catch (error) {
+    console.error(error);
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Este item já existe no catálogo' });
+    }
+    res.status(500).json({ error: 'Erro ao criar item do catálogo' });
   }
 });
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, FileText, Printer } from 'lucide-react';
+import { Plus, Search, FileText, Printer, Pencil } from 'lucide-react';
 import {
   getContract,
   getContracts,
@@ -12,7 +12,7 @@ import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 import Modal from '../../components/Modal';
 import ContractForm from './ContractForm';
-import ContractDocument from './ContractDocument';
+import ContractDocument, { ContractVerso } from './ContractDocument';
 
 const statusLabel: Record<Contract['status'], string> = {
   rascunho: 'Rascunho',
@@ -22,10 +22,13 @@ const statusLabel: Record<Contract['status'], string> = {
   cancelado: 'Cancelado',
 };
 
-const saleLabel: Record<Contract['sale_type'], string> = {
-  inteiro: 'Inteiro',
-  fracao: 'Fração',
-  condominio: 'Condomínio',
+const saleLabel = (type: string) => {
+  const map: Record<string, string> = {
+    inteiro: 'Inteiro',
+    fracao: 'Fração',
+    condominio: 'Condomínio',
+  };
+  return map[type] || type;
 };
 
 const money = (v: number) =>
@@ -42,6 +45,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
   const [formOpen, setFormOpen] = useState(!!initialAnimalId);
+  const [editId, setEditId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Contract | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -185,7 +189,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     )}
                   </td>
                   <td className="hidden px-4 py-3 text-brand-brown md:table-cell">
-                    {saleLabel[c.sale_type]}
+                    {saleLabel(c.sale_type)}
                     {c.share_pct != null && c.sale_type !== 'inteiro' ? ` (${c.share_pct}%)` : ''}
                   </td>
                   <td className="hidden px-4 py-3 text-brand-brown lg:table-cell">{c.buyer_name}</td>
@@ -196,13 +200,24 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => openDetail(c.id)}
-                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-brand-brown hover:bg-brand-beige/50"
-                    >
-                      <FileText className="h-4 w-4" /> Abrir
-                    </button>
+                    <div className="inline-flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => openDetail(c.id)}
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-brand-brown hover:bg-brand-beige/50"
+                      >
+                        <FileText className="h-4 w-4" /> Abrir
+                      </button>
+                      {canWrite && c.status !== 'cancelado' && c.status !== 'concluido' && (
+                        <button
+                          type="button"
+                          onClick={() => setEditId(c.id)}
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-brand-brown hover:bg-brand-beige/50"
+                        >
+                          <Pencil className="h-4 w-4" /> Editar
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -223,6 +238,26 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
       </Modal>
 
       <Modal
+        open={!!editId}
+        onClose={() => setEditId(null)}
+        title="Editar contrato"
+        subtitle="Atualizar dados da venda"
+        size="xl"
+      >
+        {editId && (
+          <ContractForm
+            contractId={editId}
+            onClose={() => setEditId(null)}
+            onSaved={(id) => {
+              setEditId(null);
+              load();
+              openDetail(id);
+            }}
+          />
+        )}
+      </Modal>
+
+      <Modal
         open={!!detailId}
         onClose={() => {
           setDetailId(null);
@@ -237,7 +272,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
         ) : (
           <div className="space-y-5">
             <div className="grid gap-3 text-sm sm:grid-cols-2">
-              <Info label="Tipo" value={`${saleLabel[detail.sale_type]}${detail.share_pct && detail.sale_type !== 'inteiro' ? ` · ${detail.share_pct}%` : ''}`} />
+              <Info label="Tipo" value={`${saleLabel(detail.sale_type)}${detail.share_pct && detail.sale_type !== 'inteiro' ? ` · ${detail.share_pct}%` : ''}`} />
               <Info label="Status" value={statusLabel[detail.status]} />
               <Info label="Vendedor" value={detail.seller_name || '—'} />
               <Info label="Comprador" value={detail.buyer_name || '—'} />
@@ -343,6 +378,8 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                 </ul>
               </div>
             )}
+
+            <ContractVerso contract={detail} />
 
             <div className="flex flex-wrap gap-2 border-t border-brand-beige pt-4">
               <button

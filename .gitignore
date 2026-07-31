@@ -38,4 +38,7 @@ backend/uploads/animals/*
 backend/uploads/avatars/*
 !backend/uploads/avatars/.gitkeep
 !backend/uploads/avatars/.htaccess
+backend/uploads/persons/*
+!backend/uploads/persons/.gitkeep
+!backend/uploads/persons/.htaccess
 

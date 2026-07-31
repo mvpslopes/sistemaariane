@@ -20,6 +20,51 @@ function fmtDate(d: string | null | undefined) {
   }
 }
 
+function moneyInWords(value: number): string {
+  const unidades = [
+    '', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove',
+    'dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove',
+  ];
+  const dezenas = ['', '', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 'setenta', 'oitenta', 'noventa'];
+  const centenas = ['', 'cento', 'duzentos', 'trezentos', 'quatrocentos', 'quinhentos', 'seiscentos', 'setecentos', 'oitocentos', 'novecentos'];
+
+  const underThousand = (n: number): string => {
+    if (n === 0) return '';
+    if (n === 100) return 'cem';
+    if (n < 20) return unidades[n];
+    if (n < 100) {
+      const d = Math.floor(n / 10);
+      const u = n % 10;
+      return dezenas[d] + (u ? ` e ${unidades[u]}` : '');
+    }
+    const c = Math.floor(n / 100);
+    const r = n % 100;
+    return centenas[c] + (r ? ` e ${underThousand(r)}` : '');
+  };
+
+  const int = Math.floor(Math.abs(value));
+  const cents = Math.round((Math.abs(value) - int) * 100);
+  if (int === 0 && cents === 0) return 'zero reais';
+
+  let reais = '';
+  if (int > 0) {
+    const milhoes = Math.floor(int / 1_000_000);
+    const milhares = Math.floor((int % 1_000_000) / 1000);
+    const resto = int % 1000;
+    const parts: string[] = [];
+    if (milhoes) parts.push(`${underThousand(milhoes)} milh${milhoes === 1 ? 'ão' : 'ões'}`);
+    if (milhares) parts.push(milhares === 1 ? 'mil' : `${underThousand(milhares)} mil`);
+    if (resto) parts.push(underThousand(resto));
+    reais = parts.join(' e ') + (int === 1 ? ' real' : ' reais');
+  }
+
+  const centavos =
+    cents > 0 ? underThousand(cents) + (cents === 1 ? ' centavo' : ' centavos') : '';
+
+  if (reais && centavos) return `${reais} e ${centavos}`;
+  return reais || centavos;
+}
+
 function partyBlock(
   title: string,
   p: {
@@ -101,15 +146,94 @@ export function printContractPdf(contract: Contract) {
 
   const commission =
     contract.commission_total_pct != null
-      ? `<p class="muted">Comissão leiloeira: ${contract.commission_total_pct}%` +
-        (contract.commission_buyer_pct != null
-          ? ` (comprador ${contract.commission_buyer_pct}%`
-          : '') +
-        (contract.commission_seller_pct != null
-          ? ` · vendedor ${contract.commission_seller_pct}%)`
-          : '') +
-        `</p>`
+      ? (() => {
+          const parts: string[] = [`${contract.commission_total_pct}%`];
+          if (contract.commission_buyer_pct != null || contract.commission_seller_pct != null) {
+            const detail: string[] = [];
+            if (contract.commission_buyer_pct != null) detail.push(`comprador ${contract.commission_buyer_pct}%`);
+            if (contract.commission_seller_pct != null) detail.push(`vendedor ${contract.commission_seller_pct}%`);
+            if (detail.length) parts.push(`(${detail.join(' · ')})`);
+          }
+          const amount = (Number(contract.total_amount) * Number(contract.commission_total_pct)) / 100;
+          return `<div>Comissão: <strong>${esc(parts.join(' '))}</strong> · ${esc(money(amount))}</div>`;
+        })()
       : '';
+
+  const dueLast =
+    contract.charges && contract.charges.length > 0
+      ? contract.charges[contract.charges.length - 1].due_date
+      : contract.first_due_date;
+  const placeCity = [contract.seller_city, contract.seller_state].filter(Boolean).join(' / ') || 'Brasil';
+  const promissory = `
+  <div class="page np">
+    <p class="np-title">NOTA PROMISSÓRIA</p>
+    <p class="np-sub">Vinculada ao Contrato / Nota nº ${esc(String(number))} — Lote ${esc(lot)} — ${esc(contract.animal_name || '')}</p>
+    <div class="np-box">
+      <div class="np-row">
+        <div><span class="k">Nº</span> <strong>${esc(String(number))}-NP</strong></div>
+        <div><span class="k">Vencimento</span> <strong>${esc(fmtDate(dueLast))}</strong></div>
+        <div><span class="k">Valor</span> <strong>${esc(money(contract.total_amount))}</strong></div>
+      </div>
+      <p class="np-text">
+        No dia <strong>${esc(fmtDate(dueLast))}</strong>, pagarei(emos) por esta única via de
+        <strong>NOTA PROMISSÓRIA</strong> a <strong>${esc(contract.seller_name || '________________')}</strong>,
+        CPF/CNPJ <strong>${esc(contract.seller_document || '________________')}</strong>,
+        ou à sua ordem, a quantia de
+        <strong>${esc(money(contract.total_amount))}</strong>
+        (<em>${esc(moneyInWords(Number(contract.total_amount)))}</em>),
+        referente à compra do animal <strong>${esc(contract.animal_name || '')}</strong>
+        ${contract.animal_category ? `(${esc(contract.animal_category)})` : ''}
+        ${contract.share_pct != null ? `, cotas de ${esc(String(contract.share_pct))}%` : ''},
+        conforme contrato nº <strong>${esc(String(number))}</strong>,
+        em <strong>${esc(String(contract.installments))}</strong> parcela(s)
+        (${esc(String(contract.payment_method).toUpperCase())}),
+        primeira com vencimento em <strong>${esc(fmtDate(contract.first_due_date))}</strong>.
+      </p>
+      <p class="np-text">
+        Pagável em ${esc(placeCity)}. Em caso de não pagamento no vencimento, o emitente fica sujeito aos encargos
+        legais, correção e demais medidas cabíveis, sem prejuízo das cláusulas do contrato vinculado.
+      </p>
+      <table class="fields" style="margin-top:10px">
+        <tr>
+          <td class="k">Emitente (Comprador)</td>
+          <td colspan="3"><strong>${esc(contract.buyer_name)}</strong></td>
+        </tr>
+        <tr>
+          <td class="k">CPF/CNPJ</td>
+          <td>${esc(contract.buyer_document || '—')}</td>
+          <td class="k">Telefone</td>
+          <td>${esc(contract.buyer_phone || contract.buyer_whatsapp || '—')}</td>
+        </tr>
+        <tr>
+          <td class="k">Endereço</td>
+          <td colspan="3">${esc(contract.buyer_address || '—')}</td>
+        </tr>
+        <tr>
+          <td class="k">Cidade/UF</td>
+          <td colspan="3">${esc([contract.buyer_city, contract.buyer_state].filter(Boolean).join(' / ') || '—')}</td>
+        </tr>
+        <tr>
+          <td class="k">Beneficiário (Vendedor)</td>
+          <td colspan="3"><strong>${esc(contract.seller_name)}</strong> — ${esc(contract.seller_document || '—')}</td>
+        </tr>
+      </table>
+      <p class="np-place">${esc(placeCity)}, ${esc(fmtDate(contract.created_at?.slice(0, 10) || new Date().toISOString().slice(0, 10)))}.</p>
+      <div class="np-signs">
+        <div class="sign"><div class="line"></div>EMITENTE / COMPRADOR<br/><strong>${esc(contract.buyer_name)}</strong></div>
+        <div class="sign"><div class="line"></div>BENEFICIÁRIO / VENDEDOR<br/><strong>${esc(contract.seller_name)}</strong></div>
+        <div class="sign"><div class="line"></div>TESTEMUNHA 1<br/><strong>${esc(contract.witness1_name || '________________')}</strong></div>
+        <div class="sign"><div class="line"></div>TESTEMUNHA 2<br/><strong>${esc(contract.witness2_name || '________________')}</strong></div>
+      </div>
+    </div>
+  </div>`;
+
+  const signatureBlock = `
+    <div class="signs">
+      <div class="sign"><div class="line"></div>VENDEDOR<br/><strong>${esc(contract.seller_name)}</strong></div>
+      <div class="sign"><div class="line"></div>COMPRADOR<br/><strong>${esc(contract.buyer_name)}</strong></div>
+      <div class="sign"><div class="line"></div>TESTEMUNHA 1<br/><strong>${esc(contract.witness1_name || '________________')}</strong></div>
+      <div class="sign"><div class="line"></div>TESTEMUNHA 2<br/><strong>${esc(contract.witness2_name || '________________')}</strong></div>
+    </div>`;
 
   const versoBody = (contract.template_body || '')
     .split(/\n{2,}/)
@@ -160,7 +284,7 @@ export function printContractPdf(contract: Contract) {
     table.data { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
     table.data th, table.data td { border: 1px solid #ccc; padding: 4px 6px; text-align: left; }
     table.data th { background: #eee; font-size: 8pt; }
-    .fin { display: flex; gap: 16px; padding: 6px; font-size: 9pt; }
+    .fin { display: flex; flex-wrap: wrap; gap: 12px 20px; padding: 6px; font-size: 9pt; }
     .fin strong { font-size: 10pt; }
     .pay-summary { padding: 6px; font-size: 8.5pt; border-top: 1px solid #ddd; }
     .schedule {
@@ -181,6 +305,17 @@ export function printContractPdf(contract: Contract) {
     .verso-title { font-size: 11pt; font-weight: 800; text-align: center; margin: 0 0 4px; text-transform: uppercase; }
     .verso-meta { text-align: center; font-size: 8.5pt; font-weight: 700; margin-bottom: 12px; }
     .verso-body p { margin: 0 0 8px; text-align: justify; font-size: 8.5pt; line-height: 1.4; white-space: pre-wrap; }
+    .verso-body { margin-bottom: 8px; }
+    .np-title { font-size: 14pt; font-weight: 800; text-align: center; margin: 8px 0 4px; letter-spacing: 0.04em; }
+    .np-sub { text-align: center; font-size: 8.5pt; margin: 0 0 12px; color: #444; }
+    .np-box { border: 1px solid #999; padding: 12px; }
+    .np-row { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 10px; font-size: 9pt; }
+    .np-row .k { color: #555; font-size: 8pt; display: block; }
+    .np-text { font-size: 9pt; text-align: justify; margin: 0 0 8px; line-height: 1.45; }
+    .np-place { margin: 16px 0 8px; font-size: 9pt; }
+    .np-signs {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 18px 24px; margin-top: 24px;
+    }
   </style>
 </head>
 <body>
@@ -263,9 +398,9 @@ export function printContractPdf(contract: Contract) {
       <div class="section-h">Composição Financeira do(s) Contrato(s)</div>
       <div class="fin">
         <div>Parcelas: <strong>${esc(String(contract.installments))}</strong></div>
+        ${commission}
         <div>Valor Total do Contrato: <strong>${esc(money(contract.total_amount))}</strong></div>
       </div>
-      ${commission}
     </div>
 
     <div class="section">
@@ -293,7 +428,14 @@ export function printContractPdf(contract: Contract) {
     <div class="verso-body">
       ${versoBody || '<p class="muted">Nenhum modelo de verso vinculado a este contrato.</p>'}
     </div>
+    <p class="legal" style="margin-top:16px">
+      AS PARTES DECLARAM TER LIDO E ACEITO AS DISPOSIÇÕES GERAIS DESTE VERSO,
+      QUE INTEGRAM O CONTRATO Nº ${esc(String(number))}.
+    </p>
+    ${signatureBlock}
   </div>
+
+  ${promissory}
 </body>
 </html>`;
 

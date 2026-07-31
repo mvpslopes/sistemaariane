@@ -25,6 +25,12 @@ const copies = [
   ['database/migration-testemunha.sql', 'migration-testemunha.sql'],
   ['database/migration-leiloes-repasses.sql', 'migration-leiloes-repasses.sql'],
   ['database/migration-modelos-contrato.sql', 'migration-modelos-contrato.sql'],
+  ['database/migration-pessoas-completo.sql', 'migration-pessoas-completo.sql'],
+  ['database/migration-animal-catalogos.sql', 'migration-animal-catalogos.sql'],
+  ['database/migration-categorias-cotas.sql', 'migration-categorias-cotas.sql'],
+  ['database/migration-contrato-verso.sql', 'migration-contrato-verso.sql'],
+  ['database/migration-endereco-numero.sql', 'migration-endereco-numero.sql'],
+  ['database/migration-papel-avalista.sql', 'migration-papel-avalista.sql'],
   ['database/seed-modelo-contrato-padrao.sql', 'seed-modelo-contrato-padrao.sql'],
   ['database/seed-papeis.sql', 'seed-papeis.sql'],
 ];
@@ -41,6 +47,12 @@ mkdirSync(uploadsAvatars, { recursive: true });
 writeFileSync(join(uploadsAvatars, '.gitkeep'), '');
 writeFileSync(join(uploadsAvatars, '.htaccess'), 'Options -Indexes\n');
 console.log('✓ uploads/avatars/');
+
+const uploadsPersons = join(outDir, 'uploads', 'persons');
+mkdirSync(uploadsPersons, { recursive: true });
+writeFileSync(join(uploadsPersons, '.gitkeep'), '');
+writeFileSync(join(uploadsPersons, '.htaccess'), 'Options -Indexes\n');
+console.log('✓ uploads/persons/');
 
 for (const [fromRel, toRel] of copies) {
   const from = join(root, fromRel);
@@ -73,8 +85,10 @@ writeFileSync(
    ficam nessas pastas.
 
 5. Se o banco já existir, rode também migration-avatar-usuarios.sql
-   (coluna avatar_url em users), migration-testemunha.sql e
-   migration-leiloes-repasses.sql (leilões, lotes e repasses).
+   (coluna avatar_url em users), migration-testemunha.sql,
+   migration-leiloes-repasses.sql (leilões, lotes e repasses),
+   migration-pessoas-completo.sql, migration-animal-catalogos.sql,
+   migration-categorias-cotas.sql e migration-contrato-verso.sql.
 
 6. Teste:
    - https://sistema.arianeandradeassessoria.app.br/

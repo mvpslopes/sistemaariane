@@ -128,15 +128,18 @@ export default function AppDashboard() {
   const sexSlices = useMemo(() => {
     let m = 0;
     let f = 0;
+    let c = 0;
     let u = 0;
     animals.forEach((a) => {
       if (a.sex === 'M') m += 1;
       else if (a.sex === 'F') f += 1;
+      else if (a.sex === 'C') c += 1;
       else u += 1;
     });
     return [
       { label: 'Macho', value: m, color: '#4F3E32' },
       { label: 'Fêmea', value: f, color: '#C08A3E' },
+      { label: 'Castrado', value: c, color: '#8A9A5B' },
       { label: 'Não informado', value: u, color: '#E6D8C3' },
     ].filter((s) => s.value > 0 || animals.length === 0);
   }, [animals]);
@@ -168,6 +171,7 @@ export default function AppDashboard() {
       { label: 'Vendedores', value: stats?.sellers ?? 0, color: '#4F3E32' },
       { label: 'Assessores', value: stats?.assessors ?? 0, color: '#4A6650' },
       { label: 'Testemunhas', value: stats?.witnesses ?? 0, color: '#81705F' },
+      { label: 'Avalistas', value: stats?.avalistas ?? 0, color: '#6B5B4A' },
     ];
   }, [stats, isCliente]);
 
@@ -389,7 +393,7 @@ export default function AppDashboard() {
             <p className="mt-2 text-sm text-brand-beige/70">
               {isCliente
                 ? 'Acompanhe seus animais, contratos e cobranças vinculadas.'
-                : `${s?.buyers ?? 0} compradores · ${s?.sellers ?? 0} vendedores · ${s?.assessors ?? 0} assessores · ${s?.witnesses ?? 0} testemunhas.`}
+                : `${s?.buyers ?? 0} compradores · ${s?.sellers ?? 0} vendedores · ${s?.assessors ?? 0} assessores · ${s?.witnesses ?? 0} testemunhas · ${s?.avalistas ?? 0} avalistas.`}
             </p>
           </div>
           <div className="mt-6 flex flex-wrap gap-2">
@@ -432,6 +436,7 @@ function buildRecent(
         c.is_seller ? 'Vendedor' : null,
         c.is_assessor ? 'Assessor' : null,
         c.is_witness ? 'Testemunha' : null,
+        c.is_avalista ? 'Avalista' : null,
       ].filter(Boolean);
       const to = '/app/pessoas';
       return {

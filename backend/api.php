@@ -59,6 +59,7 @@ $parts = $path === '' ? [] : explode('/', $path);
 $resource = $parts[0] ?? '';
 $id = $parts[1] ?? null;
 $action = $parts[2] ?? null;
+$subId = $parts[3] ?? null;
 $body = json_decode(file_get_contents('php://input'), true) ?? [];
 
 function base64url_encode($data) {
@@ -194,7 +195,9 @@ if ($resource === 'upload' && $method === 'POST') {
         $auth = require_auth($config['jwt_secret']);
     } else {
         $auth = require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
-        $kind = 'animal';
+        if (!in_array($kind, ['animal', 'person-doc'], true)) {
+            $kind = 'animal';
+        }
     }
 
     if (!isset($_FILES['file']) || !is_uploaded_file($_FILES['file']['tmp_name'])) {
@@ -206,8 +209,9 @@ if ($resource === 'upload' && $method === 'POST') {
         json_out(['error' => 'Falha no upload do arquivo'], 400);
     }
 
-    if (($file['size'] ?? 0) > 5 * 1024 * 1024) {
-        json_out(['error' => 'Arquivo muito grande (máx. 5 MB)'], 400);
+    $maxSize = $kind === 'person-doc' ? 8 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (($file['size'] ?? 0) > $maxSize) {
+        json_out(['error' => 'Arquivo muito grande'], 400);
     }
 
     $finfo = new finfo(FILEINFO_MIME_TYPE);
@@ -218,17 +222,20 @@ if ($resource === 'upload' && $method === 'POST') {
         'image/webp' => 'webp',
         'image/gif' => 'gif',
     ];
+    if ($kind === 'person-doc') {
+        $allowed['application/pdf'] = 'pdf';
+    }
     if (!isset($allowed[$mime])) {
-        json_out(['error' => 'Formato inválido. Use JPG, PNG, WEBP ou GIF'], 400);
+        json_out(['error' => $kind === 'person-doc' ? 'Use JPG, PNG, WEBP, GIF ou PDF' : 'Formato inválido. Use JPG, PNG, WEBP ou GIF'], 400);
     }
 
-    $subdir = $kind === 'avatar' ? 'avatars' : 'animals';
+    $subdir = $kind === 'avatar' ? 'avatars' : ($kind === 'person-doc' ? 'persons' : 'animals');
     $dir = __DIR__ . '/uploads/' . $subdir;
     if (!is_dir($dir) && !mkdir($dir, 0755, true)) {
         json_out(['error' => 'Não foi possível criar pasta de uploads'], 500);
     }
 
-    $prefix = $kind === 'avatar' ? 'avatar' : 'animal';
+    $prefix = $kind === 'avatar' ? 'avatar' : ($kind === 'person-doc' ? 'person' : 'animal');
     $filename = $prefix . '_' . date('YmdHis') . '_' . bin2hex(random_bytes(4)) . '.' . $allowed[$mime];
     $dest = $dir . '/' . $filename;
     if (!move_uploaded_file($file['tmp_name'], $dest)) {
@@ -238,6 +245,7 @@ if ($resource === 'upload' && $method === 'POST') {
     json_out([
         'success' => true,
         'url' => '/uploads/' . $subdir . '/' . $filename,
+        'fileName' => $file['name'] ?? $filename,
         'uploaded_by' => $auth['username'],
     ]);
 }
@@ -370,6 +378,7 @@ if ($resource === 'dashboard' && $method === 'GET') {
             'sellers' => 0,
             'assessors' => 0,
             'witnesses' => 0,
+            'avalistas' => 0,
             'animals' => $animals,
             'activeAnimals' => $activeAnimals,
             'contracts' => $contracts,
@@ -387,6 +396,7 @@ if ($resource === 'dashboard' && $method === 'GET') {
     $sellers = (int)$pdo->query('SELECT COUNT(*) AS t FROM clients WHERE active = 1 AND is_seller = 1')->fetch()['t'];
     $assessors = (int)$pdo->query('SELECT COUNT(*) AS t FROM clients WHERE active = 1 AND is_assessor = 1')->fetch()['t'];
     $witnesses = (int)$pdo->query('SELECT COUNT(*) AS t FROM clients WHERE active = 1 AND is_witness = 1')->fetch()['t'];
+    $avalistas = (int)$pdo->query('SELECT COUNT(*) AS t FROM clients WHERE active = 1 AND is_avalista = 1')->fetch()['t'];
     $animals = (int)$pdo->query('SELECT COUNT(*) AS t FROM animals')->fetch()['t'];
     $activeAnimals = (int)$pdo->query("SELECT COUNT(*) AS t FROM animals WHERE status = 'ativo'")->fetch()['t'];
     $contracts = (int)$pdo->query('SELECT COUNT(*) AS t FROM contracts')->fetch()['t'];
@@ -408,6 +418,7 @@ if ($resource === 'dashboard' && $method === 'GET') {
         'sellers' => $sellers,
         'assessors' => $assessors,
         'witnesses' => $witnesses,
+        'avalistas' => $avalistas,
         'animals' => $animals,
         'activeAnimals' => $activeAnimals,
         'contracts' => $contracts,
@@ -426,18 +437,32 @@ function map_client(array $r): array {
         'name' => $r['name'],
         'document_type' => $r['document_type'],
         'document' => $r['document'],
+        'rg' => $r['rg'] ?? null,
+        'rg_issuer' => $r['rg_issuer'] ?? null,
+        'birth_date' => $r['birth_date'] ?? null,
+        'nickname' => $r['nickname'] ?? null,
+        'marital_status' => $r['marital_status'] ?? null,
+        'profession' => $r['profession'] ?? null,
+        'mother_name' => $r['mother_name'] ?? null,
+        'father_name' => $r['father_name'] ?? null,
         'email' => $r['email'],
         'phone' => $r['phone'],
         'whatsapp' => $r['whatsapp'],
         'city' => $r['city'],
         'state' => $r['state'],
         'address' => $r['address'],
+        'address_number' => $r['address_number'] ?? null,
+        'zip_code' => $r['zip_code'] ?? null,
+        'country' => $r['country'] ?? 'Brasil',
         'notes' => $r['notes'],
+        'relationship_notes' => $r['relationship_notes'] ?? null,
+        'problems_notes' => $r['problems_notes'] ?? null,
         'active' => (bool)$r['active'],
         'is_seller' => (bool)($r['is_seller'] ?? 0),
         'is_buyer' => (bool)($r['is_buyer'] ?? 1),
         'is_assessor' => (bool)($r['is_assessor'] ?? 0),
         'is_witness' => (bool)($r['is_witness'] ?? 0),
+        'is_avalista' => (bool)($r['is_avalista'] ?? 0),
         'created_at' => $r['created_at'] ?? null,
     ];
 }
@@ -449,12 +474,14 @@ function client_ip(): string {
 function generate_charges(PDO $pdo, int $contractId, int $buyerId, float $total, int $n, string $firstDue, string $method): void {
     $n = max(1, min(40, $n));
     $base = floor(($total / $n) * 100) / 100;
+    // Repasses dependem das cobranças — remove antes para evitar falha de FK
+    $pdo->prepare('DELETE FROM payouts WHERE contract_id = ?')->execute([$contractId]);
     $pdo->prepare('DELETE FROM charges WHERE contract_id = ?')->execute([$contractId]);
     $ins = $pdo->prepare(
         'INSERT INTO charges (contract_id, client_id, installment_no, amount, due_date, payment_method, status)
          VALUES (?, ?, ?, ?, ?, ?, ?)'
     );
-    $due = new DateTime($firstDue);
+    $due = new DateTime(substr($firstDue, 0, 10));
     $sum = 0;
     for ($i = 1; $i <= $n; $i++) {
         $amount = $i === $n ? round($total - $sum, 2) : $base;
@@ -490,7 +517,7 @@ function map_contract_row(array $r): array {
         'seller_email' => $r['seller_email'] ?? null,
         'seller_phone' => $r['seller_phone'] ?? null,
         'seller_whatsapp' => $r['seller_whatsapp'] ?? null,
-        'seller_address' => $r['seller_address'] ?? null,
+        'seller_address' => trim(implode(', nº ', array_filter([$r['seller_address'] ?? null, $r['seller_address_number'] ?? null]))) ?: null,
         'seller_city' => $r['seller_city'] ?? null,
         'seller_state' => $r['seller_state'] ?? null,
         'buyer_id' => (string)$r['buyer_id'],
@@ -500,7 +527,7 @@ function map_contract_row(array $r): array {
         'buyer_email' => $r['buyer_email'] ?? null,
         'buyer_phone' => $r['buyer_phone'] ?? null,
         'buyer_whatsapp' => $r['buyer_whatsapp'] ?? null,
-        'buyer_address' => $r['buyer_address'] ?? null,
+        'buyer_address' => trim(implode(', nº ', array_filter([$r['buyer_address'] ?? null, $r['buyer_address_number'] ?? null]))) ?: null,
         'buyer_city' => $r['buyer_city'] ?? null,
         'buyer_state' => $r['buyer_state'] ?? null,
         'assessor_id' => $r['assessor_id'] ? (string)$r['assessor_id'] : null,
@@ -699,13 +726,216 @@ if ($resource === 'clients') {
         if ($roleFilter === 'buyer') $sql .= ' AND is_buyer = 1';
         if ($roleFilter === 'assessor') $sql .= ' AND is_assessor = 1';
         if ($roleFilter === 'witness') $sql .= ' AND is_witness = 1';
+        if ($roleFilter === 'avalista') $sql .= ' AND is_avalista = 1';
         $sql .= ' ORDER BY name ASC';
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         json_out(array_map('map_client', $stmt->fetchAll()));
     }
 
-    if ($method === 'GET' && $id) {
+    // Nested: documents / properties / bank-accounts / contacts
+    if ($id && $action === 'documents') {
+        $auth = require_auth($config['jwt_secret']);
+        $cid = (int)$id;
+        if ($auth['role'] === 'cliente' && (int)$auth['clientId'] !== $cid) {
+            json_out(['error' => 'Sem permissão'], 403);
+        }
+        if ($method === 'GET' && !$subId) {
+            $stmt = $pdo->prepare('SELECT * FROM client_documents WHERE client_id = ? ORDER BY created_at DESC');
+            $stmt->execute([$cid]);
+            json_out(array_map(function ($r) {
+                return [
+                    'id' => (string)$r['id'],
+                    'client_id' => (string)$r['client_id'],
+                    'doc_type' => $r['doc_type'],
+                    'file_url' => $r['file_url'],
+                    'file_name' => $r['file_name'],
+                    'notes' => $r['notes'],
+                    'created_at' => $r['created_at'],
+                ];
+            }, $stmt->fetchAll()));
+        }
+        if ($method === 'POST' && !$subId) {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $docType = $body['docType'] ?? 'outro';
+            $allowed = ['rg','identidade','cnh','comprovante_residencia','selfie','outro'];
+            if (!in_array($docType, $allowed, true)) json_out(['error' => 'Tipo de documento inválido'], 400);
+            if (empty($body['fileUrl'])) json_out(['error' => 'Arquivo é obrigatório'], 400);
+            $authW = require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $pdo->prepare(
+                'INSERT INTO client_documents (client_id, doc_type, file_url, file_name, notes, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $cid, $docType, $body['fileUrl'], $body['fileName'] ?? null, $body['notes'] ?? null, $authW['id'],
+            ]);
+            json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
+        }
+        if ($method === 'DELETE' && $subId) {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $stmt = $pdo->prepare('DELETE FROM client_documents WHERE id = ? AND client_id = ?');
+            $stmt->execute([(int)$subId, $cid]);
+            if ($stmt->rowCount() === 0) json_out(['error' => 'Documento não encontrado'], 404);
+            json_out(['success' => true]);
+        }
+    }
+
+    if ($id && $action === 'properties') {
+        $auth = require_auth($config['jwt_secret']);
+        $cid = (int)$id;
+        if ($auth['role'] === 'cliente' && (int)$auth['clientId'] !== $cid) {
+            json_out(['error' => 'Sem permissão'], 403);
+        }
+        if ($method === 'GET' && !$subId) {
+            $stmt = $pdo->prepare('SELECT * FROM client_properties WHERE client_id = ? ORDER BY is_primary DESC, name ASC');
+            $stmt->execute([$cid]);
+            json_out(array_map(function ($r) {
+                $r['id'] = (string)$r['id'];
+                $r['client_id'] = (string)$r['client_id'];
+                $r['is_primary'] = (bool)$r['is_primary'];
+                return $r;
+            }, $stmt->fetchAll()));
+        }
+        if ($method === 'POST' && !$subId) {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $name = trim($body['name'] ?? '');
+            if ($name === '') json_out(['error' => 'Nome da propriedade é obrigatório'], 400);
+            $pdo->prepare(
+                'INSERT INTO client_properties (client_id, name, cnpj, state_registration, zip_code, state, city, address, phone, property_type, is_primary, manager_name, manager_phone, manager_email, notes)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $cid, $name, $body['cnpj'] ?? null, $body['state_registration'] ?? null, $body['zip_code'] ?? null,
+                $body['state'] ?? null, $body['city'] ?? null, $body['address'] ?? null, $body['phone'] ?? null,
+                $body['property_type'] ?? null, !empty($body['is_primary']) ? 1 : 0,
+                $body['manager_name'] ?? null, $body['manager_phone'] ?? null, $body['manager_email'] ?? null, $body['notes'] ?? null,
+            ]);
+            json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
+        }
+        if ($method === 'PUT' && $subId) {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $name = trim($body['name'] ?? '');
+            if ($name === '') json_out(['error' => 'Nome da propriedade é obrigatório'], 400);
+            $pdo->prepare(
+                'UPDATE client_properties SET name=?, cnpj=?, state_registration=?, zip_code=?, state=?, city=?, address=?, phone=?, property_type=?, is_primary=?, manager_name=?, manager_phone=?, manager_email=?, notes=? WHERE id=? AND client_id=?'
+            )->execute([
+                $name, $body['cnpj'] ?? null, $body['state_registration'] ?? null, $body['zip_code'] ?? null,
+                $body['state'] ?? null, $body['city'] ?? null, $body['address'] ?? null, $body['phone'] ?? null,
+                $body['property_type'] ?? null, !empty($body['is_primary']) ? 1 : 0,
+                $body['manager_name'] ?? null, $body['manager_phone'] ?? null, $body['manager_email'] ?? null, $body['notes'] ?? null,
+                (int)$subId, $cid,
+            ]);
+            json_out(['success' => true]);
+        }
+        if ($method === 'DELETE' && $subId) {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $stmt = $pdo->prepare('DELETE FROM client_properties WHERE id = ? AND client_id = ?');
+            $stmt->execute([(int)$subId, $cid]);
+            if ($stmt->rowCount() === 0) json_out(['error' => 'Propriedade não encontrada'], 404);
+            json_out(['success' => true]);
+        }
+    }
+
+    if ($id && $action === 'bank-accounts') {
+        $auth = require_auth($config['jwt_secret']);
+        $cid = (int)$id;
+        if ($auth['role'] === 'cliente' && (int)$auth['clientId'] !== $cid) {
+            json_out(['error' => 'Sem permissão'], 403);
+        }
+        if ($method === 'GET' && !$subId) {
+            $stmt = $pdo->prepare('SELECT * FROM client_bank_accounts WHERE client_id = ? ORDER BY is_primary DESC, id ASC');
+            $stmt->execute([$cid]);
+            json_out(array_map(function ($r) {
+                $r['id'] = (string)$r['id'];
+                $r['client_id'] = (string)$r['client_id'];
+                $r['is_primary'] = (bool)$r['is_primary'];
+                return $r;
+            }, $stmt->fetchAll()));
+        }
+        if ($method === 'POST' && !$subId) {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $bank = trim($body['bank_name'] ?? '');
+            if ($bank === '') json_out(['error' => 'Banco é obrigatório'], 400);
+            $type = $body['account_type'] ?? 'corrente';
+            if (!in_array($type, ['corrente','poupanca','pagamento','outro'], true)) $type = 'corrente';
+            $pdo->prepare(
+                'INSERT INTO client_bank_accounts (client_id, account_type, bank_name, agency, account_number, holder_name, holder_document, is_primary, notes)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $cid, $type, $bank, $body['agency'] ?? null, $body['account_number'] ?? null,
+                $body['holder_name'] ?? null, $body['holder_document'] ?? null, !empty($body['is_primary']) ? 1 : 0, $body['notes'] ?? null,
+            ]);
+            json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
+        }
+        if ($method === 'PUT' && $subId) {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $bank = trim($body['bank_name'] ?? '');
+            if ($bank === '') json_out(['error' => 'Banco é obrigatório'], 400);
+            $type = $body['account_type'] ?? 'corrente';
+            if (!in_array($type, ['corrente','poupanca','pagamento','outro'], true)) $type = 'corrente';
+            $pdo->prepare(
+                'UPDATE client_bank_accounts SET account_type=?, bank_name=?, agency=?, account_number=?, holder_name=?, holder_document=?, is_primary=?, notes=? WHERE id=? AND client_id=?'
+            )->execute([
+                $type, $bank, $body['agency'] ?? null, $body['account_number'] ?? null,
+                $body['holder_name'] ?? null, $body['holder_document'] ?? null, !empty($body['is_primary']) ? 1 : 0, $body['notes'] ?? null,
+                (int)$subId, $cid,
+            ]);
+            json_out(['success' => true]);
+        }
+        if ($method === 'DELETE' && $subId) {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $stmt = $pdo->prepare('DELETE FROM client_bank_accounts WHERE id = ? AND client_id = ?');
+            $stmt->execute([(int)$subId, $cid]);
+            if ($stmt->rowCount() === 0) json_out(['error' => 'Conta não encontrada'], 404);
+            json_out(['success' => true]);
+        }
+    }
+
+    if ($id && $action === 'contacts') {
+        $auth = require_auth($config['jwt_secret']);
+        $cid = (int)$id;
+        if ($auth['role'] === 'cliente' && (int)$auth['clientId'] !== $cid) {
+            json_out(['error' => 'Sem permissão'], 403);
+        }
+        if ($method === 'GET' && !$subId) {
+            $stmt = $pdo->prepare('SELECT * FROM client_contacts WHERE client_id = ? ORDER BY name ASC');
+            $stmt->execute([$cid]);
+            json_out(array_map(function ($r) {
+                $r['id'] = (string)$r['id'];
+                $r['client_id'] = (string)$r['client_id'];
+                return $r;
+            }, $stmt->fetchAll()));
+        }
+        if ($method === 'POST' && !$subId) {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $name = trim($body['name'] ?? '');
+            if ($name === '') json_out(['error' => 'Nome do contato é obrigatório'], 400);
+            $pdo->prepare(
+                'INSERT INTO client_contacts (client_id, name, role_label, phone, email, notes) VALUES (?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $cid, $name, $body['role_label'] ?? null, $body['phone'] ?? null, $body['email'] ?? null, $body['notes'] ?? null,
+            ]);
+            json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
+        }
+        if ($method === 'PUT' && $subId) {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $name = trim($body['name'] ?? '');
+            if ($name === '') json_out(['error' => 'Nome do contato é obrigatório'], 400);
+            $pdo->prepare(
+                'UPDATE client_contacts SET name=?, role_label=?, phone=?, email=?, notes=? WHERE id=? AND client_id=?'
+            )->execute([
+                $name, $body['role_label'] ?? null, $body['phone'] ?? null, $body['email'] ?? null, $body['notes'] ?? null,
+                (int)$subId, $cid,
+            ]);
+            json_out(['success' => true]);
+        }
+        if ($method === 'DELETE' && $subId) {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $stmt = $pdo->prepare('DELETE FROM client_contacts WHERE id = ? AND client_id = ?');
+            $stmt->execute([(int)$subId, $cid]);
+            if ($stmt->rowCount() === 0) json_out(['error' => 'Contato não encontrado'], 404);
+            json_out(['success' => true]);
+        }
+    }
+
+    if ($method === 'GET' && $id && !$action) {
         $auth = require_auth($config['jwt_secret']);
         if ($auth['role'] === 'cliente' && (int)$auth['clientId'] !== (int)$id) {
             json_out(['error' => 'Sem permissão'], 403);
@@ -717,31 +947,45 @@ if ($resource === 'clients') {
         json_out(map_client($r));
     }
 
-    if ($method === 'POST') {
+    if ($method === 'POST' && !$id) {
         $auth = require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
         $name = trim($body['name'] ?? '');
         if ($name === '') json_out(['error' => 'Nome é obrigatório'], 400);
         try {
             $stmt = $pdo->prepare(
-                'INSERT INTO clients (name, document_type, document, email, phone, whatsapp, city, state, address, notes, active, is_seller, is_buyer, is_assessor, is_witness, created_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO clients (name, document_type, document, rg, rg_issuer, birth_date, nickname, marital_status, profession, mother_name, father_name, email, phone, whatsapp, city, state, address, address_number, zip_code, country, notes, relationship_notes, problems_notes, active, is_seller, is_buyer, is_assessor, is_witness, is_avalista, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             );
             $stmt->execute([
                 $name,
                 $body['document_type'] ?? 'CPF',
                 $body['document'] ?? null,
+                $body['rg'] ?? null,
+                $body['rg_issuer'] ?? null,
+                $body['birth_date'] ?? null,
+                $body['nickname'] ?? null,
+                $body['marital_status'] ?? null,
+                $body['profession'] ?? null,
+                $body['mother_name'] ?? null,
+                $body['father_name'] ?? null,
                 $body['email'] ?? null,
                 $body['phone'] ?? null,
                 $body['whatsapp'] ?? null,
                 $body['city'] ?? null,
                 $body['state'] ?? null,
                 $body['address'] ?? null,
+                $body['address_number'] ?? null,
+                $body['zip_code'] ?? null,
+                $body['country'] ?? 'Brasil',
                 $body['notes'] ?? null,
+                $body['relationship_notes'] ?? null,
+                $body['problems_notes'] ?? null,
                 !empty($body['active']) || !isset($body['active']) ? 1 : 0,
                 !empty($body['is_seller']) ? 1 : 0,
                 isset($body['is_buyer']) ? (!empty($body['is_buyer']) ? 1 : 0) : 1,
                 !empty($body['is_assessor']) ? 1 : 0,
                 !empty($body['is_witness']) ? 1 : 0,
+                !empty($body['is_avalista']) ? 1 : 0,
                 $auth['id'],
             ]);
             json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
@@ -751,30 +995,44 @@ if ($resource === 'clients') {
         }
     }
 
-    if ($method === 'PUT' && $id) {
+    if ($method === 'PUT' && $id && !$action) {
         require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
         $name = trim($body['name'] ?? '');
         if ($name === '') json_out(['error' => 'Nome é obrigatório'], 400);
         try {
             $stmt = $pdo->prepare(
-                'UPDATE clients SET name=?, document_type=?, document=?, email=?, phone=?, whatsapp=?, city=?, state=?, address=?, notes=?, active=?, is_seller=?, is_buyer=?, is_assessor=?, is_witness=? WHERE id=?'
+                'UPDATE clients SET name=?, document_type=?, document=?, rg=?, rg_issuer=?, birth_date=?, nickname=?, marital_status=?, profession=?, mother_name=?, father_name=?, email=?, phone=?, whatsapp=?, city=?, state=?, address=?, address_number=?, zip_code=?, country=?, notes=?, relationship_notes=?, problems_notes=?, active=?, is_seller=?, is_buyer=?, is_assessor=?, is_witness=?, is_avalista=? WHERE id=?'
             );
             $stmt->execute([
                 $name,
                 $body['document_type'] ?? 'CPF',
                 $body['document'] ?? null,
+                $body['rg'] ?? null,
+                $body['rg_issuer'] ?? null,
+                $body['birth_date'] ?? null,
+                $body['nickname'] ?? null,
+                $body['marital_status'] ?? null,
+                $body['profession'] ?? null,
+                $body['mother_name'] ?? null,
+                $body['father_name'] ?? null,
                 $body['email'] ?? null,
                 $body['phone'] ?? null,
                 $body['whatsapp'] ?? null,
                 $body['city'] ?? null,
                 $body['state'] ?? null,
                 $body['address'] ?? null,
+                $body['address_number'] ?? null,
+                $body['zip_code'] ?? null,
+                $body['country'] ?? 'Brasil',
                 $body['notes'] ?? null,
+                $body['relationship_notes'] ?? null,
+                $body['problems_notes'] ?? null,
                 isset($body['active']) && $body['active'] === false ? 0 : 1,
                 !empty($body['is_seller']) ? 1 : 0,
                 !empty($body['is_buyer']) ? 1 : 0,
                 !empty($body['is_assessor']) ? 1 : 0,
                 !empty($body['is_witness']) ? 1 : 0,
+                !empty($body['is_avalista']) ? 1 : 0,
                 (int)$id,
             ]);
             json_out(['success' => true]);
@@ -784,7 +1042,7 @@ if ($resource === 'clients') {
         }
     }
 
-    if ($method === 'DELETE' && $id) {
+    if ($method === 'DELETE' && $id && !$action) {
         require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
         $clientId = (int)$id;
         try {
@@ -1120,14 +1378,18 @@ if ($resource === 'contracts') {
         a.birth_date AS animal_birth_date, a.sex AS animal_sex,
         s.name AS seller_name, s.document AS seller_document, s.document_type AS seller_document_type,
         s.email AS seller_email, s.phone AS seller_phone, s.whatsapp AS seller_whatsapp,
-        s.address AS seller_address, s.city AS seller_city, s.state AS seller_state,
+        s.address AS seller_address, s.address_number AS seller_address_number,
+        s.city AS seller_city, s.state AS seller_state,
         b.name AS buyer_name, b.document AS buyer_document, b.document_type AS buyer_document_type,
         b.email AS buyer_email, b.phone AS buyer_phone, b.whatsapp AS buyer_whatsapp,
-        b.address AS buyer_address, b.city AS buyer_city, b.state AS buyer_state,
+        b.address AS buyer_address, b.address_number AS buyer_address_number,
+        b.city AS buyer_city, b.state AS buyer_state,
         ass.name AS assessor_name,
         w1.name AS witness1_name, w2.name AS witness2_name,
         au.name AS auction_name, au.auction_date AS auction_date,
-        t.name AS template_name, t.title AS template_title, t.body_text AS template_body
+        t.name AS template_name,
+        COALESCE(c.verso_title, t.title) AS template_title,
+        COALESCE(c.verso_body, t.body_text) AS template_body
       FROM contracts c
       INNER JOIN animals a ON a.id = c.animal_id
       INNER JOIN clients s ON s.id = c.seller_id
@@ -1239,16 +1501,17 @@ if ($resource === 'contracts') {
         if (!$animalId || !$sellerId || !$buyerId || $total <= 0 || $firstDue === '') {
             json_out(['error' => 'Animal, vendedor, comprador, valor e 1º vencimento são obrigatórios'], 400);
         }
-        if (!in_array($saleType, ['inteiro', 'fracao', 'condominio'], true)) {
-            json_out(['error' => 'Tipo de venda inválido'], 400);
+        if (trim((string)($saleType ?? '')) === '') {
+            json_out(['error' => 'Tipo de venda é obrigatório'], 400);
         }
+        $saleType = trim((string)$saleType);
         if (!in_array($methodPay, ['pix', 'boleto', 'transferencia', 'outro'], true)) {
             json_out(['error' => 'Forma de pagamento inválida'], 400);
         }
         $n = max(1, min(40, $n));
-        if ($saleType === 'inteiro') $sharePct = 100;
-        if (in_array($saleType, ['fracao', 'condominio'], true) && (!$sharePct || $sharePct <= 0 || $sharePct > 100)) {
-            json_out(['error' => 'Informe o percentual da fração (1–100)'], 400);
+        $sharePct = isset($body['sharePct']) ? (float)$body['sharePct'] : (float)($sharePct ?? 0);
+        if (!$sharePct || $sharePct <= 0 || $sharePct > 100) {
+            json_out(['error' => 'Informe o percentual de cotas (1–100)'], 400);
         }
         $auctionId = !empty($body['auctionId']) ? (int)$body['auctionId'] : null;
         $lotId = !empty($body['lotId']) ? (int)$body['lotId'] : null;
@@ -1277,16 +1540,19 @@ if ($resource === 'contracts') {
             $ins = $pdo->prepare(
                 'INSERT INTO contracts
                  (animal_id, sale_type, share_pct, seller_id, buyer_id, assessor_id, auction_id, lot_id,
-                  template_id, lot_label, animal_category, quantity,
+                  template_id, verso_title, verso_body, lot_label, animal_category, quantity,
                   commission_total_pct, commission_buyer_pct, commission_seller_pct,
                   witness1_id, witness2_id, via_label,
                   total_amount, payment_method, installments, first_due_date, status, notes, created_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             );
             $ins->execute([
                 $animalId, $saleType, $sharePct, $sellerId, $buyerId, $assessorId,
                 $auctionId, $lotId,
-                $templateId, $lotLabel, $animalCategory, $quantity,
+                $templateId,
+                $body['versoTitle'] ?? null,
+                $body['versoBody'] ?? null,
+                $lotLabel, $animalCategory, $quantity,
                 $commissionTotalPct, $commissionBuyerPct, $commissionSellerPct,
                 $witness1Id, $witness2Id, $viaLabel,
                 $total, $methodPay, $n, $firstDue, 'aguardando_assinatura',
@@ -1315,19 +1581,153 @@ if ($resource === 'contracts') {
 
     if ($method === 'PUT' && $id && !$action) {
         require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
-        $status = $body['status'] ?? null;
-        $notes = $body['notes'] ?? null;
-        if ($status && !in_array($status, ['rascunho','aguardando_assinatura','ativo','concluido','cancelado'], true)) {
-            json_out(['error' => 'Status inválido'], 400);
+        $stmt = $pdo->prepare('SELECT * FROM contracts WHERE id = ?');
+        $stmt->execute([(int)$id]);
+        $existing = $stmt->fetch();
+        if (!$existing) json_out(['error' => 'Contrato não encontrado'], 404);
+        if (in_array($existing['status'], ['cancelado', 'concluido'], true)) {
+            json_out(['error' => 'Contrato cancelado ou concluído não pode ser editado'], 400);
         }
+
         $fields = [];
         $params = [];
-        if ($status) { $fields[] = 'status=?'; $params[] = $status; }
-        if (array_key_exists('notes', $body)) { $fields[] = 'notes=?'; $params[] = $notes; }
+        $set = function ($col, $val) use (&$fields, &$params) {
+            $fields[] = "$col=?";
+            $params[] = $val;
+        };
+
+        if (array_key_exists('status', $body) && $body['status'] !== null) {
+            if (!in_array($body['status'], ['rascunho','aguardando_assinatura','ativo','concluido','cancelado'], true)) {
+                json_out(['error' => 'Status inválido'], 400);
+            }
+            $set('status', $body['status']);
+        }
+        if (array_key_exists('notes', $body)) $set('notes', $body['notes']);
+        if (array_key_exists('saleType', $body) && $body['saleType'] !== null) {
+            $saleType = trim((string)$body['saleType']);
+            if ($saleType === '') json_out(['error' => 'Tipo de venda é obrigatório'], 400);
+            $set('sale_type', $saleType);
+            if (array_key_exists('sharePct', $body)) $set('share_pct', (float)$body['sharePct']);
+        } elseif (array_key_exists('sharePct', $body)) {
+            $set('share_pct', (float)$body['sharePct']);
+        }
+        if (!empty($body['sellerId'])) $set('seller_id', (int)$body['sellerId']);
+        if (!empty($body['buyerId'])) $set('buyer_id', (int)$body['buyerId']);
+        if (array_key_exists('assessorId', $body)) {
+            $set('assessor_id', !empty($body['assessorId']) ? (int)$body['assessorId'] : null);
+        }
+        if (array_key_exists('templateId', $body)) {
+            $set('template_id', !empty($body['templateId']) ? (int)$body['templateId'] : null);
+        }
+        if (array_key_exists('versoTitle', $body)) $set('verso_title', $body['versoTitle'] ?: null);
+        if (array_key_exists('versoBody', $body)) $set('verso_body', $body['versoBody'] ?: null);
+        if (array_key_exists('lotLabel', $body)) $set('lot_label', $body['lotLabel'] ?: null);
+        if (array_key_exists('animalCategory', $body)) $set('animal_category', $body['animalCategory'] ?: null);
+        if (array_key_exists('quantity', $body) && $body['quantity'] !== null) {
+            $set('quantity', max(1, (int)$body['quantity']));
+        }
+        if (array_key_exists('commissionTotalPct', $body)) {
+            $set('commission_total_pct', $body['commissionTotalPct'] !== '' && $body['commissionTotalPct'] !== null ? (float)$body['commissionTotalPct'] : null);
+        }
+        if (array_key_exists('commissionBuyerPct', $body)) {
+            $set('commission_buyer_pct', $body['commissionBuyerPct'] !== '' && $body['commissionBuyerPct'] !== null ? (float)$body['commissionBuyerPct'] : null);
+        }
+        if (array_key_exists('commissionSellerPct', $body)) {
+            $set('commission_seller_pct', $body['commissionSellerPct'] !== '' && $body['commissionSellerPct'] !== null ? (float)$body['commissionSellerPct'] : null);
+        }
+        if (array_key_exists('witness1Id', $body)) {
+            $set('witness1_id', !empty($body['witness1Id']) ? (int)$body['witness1Id'] : null);
+        }
+        if (array_key_exists('witness2Id', $body)) {
+            $set('witness2_id', !empty($body['witness2Id']) ? (int)$body['witness2Id'] : null);
+        }
+        if (array_key_exists('totalAmount', $body) && $body['totalAmount'] !== null) {
+            $total = (float)$body['totalAmount'];
+            if ($total <= 0) json_out(['error' => 'Valor inválido'], 400);
+            $set('total_amount', $total);
+        }
+        if (!empty($body['paymentMethod'])) {
+            if (!in_array($body['paymentMethod'], ['pix', 'boleto', 'transferencia', 'outro'], true)) {
+                json_out(['error' => 'Forma de pagamento inválida'], 400);
+            }
+            $set('payment_method', $body['paymentMethod']);
+        }
+        if (!empty($body['firstDueDate'])) $set('first_due_date', $body['firstDueDate']);
+        if (array_key_exists('installments', $body) && $body['installments'] !== null) {
+            $set('installments', max(1, min(40, (int)$body['installments'])));
+        }
+
         if (!$fields) json_out(['error' => 'Nada para atualizar'], 400);
-        $params[] = (int)$id;
-        $pdo->prepare('UPDATE contracts SET ' . implode(',', $fields) . ' WHERE id=?')->execute($params);
-        json_out(['success' => true]);
+
+        $nextTotal = array_key_exists('totalAmount', $body) && $body['totalAmount'] !== null
+            ? (float)$body['totalAmount'] : (float)$existing['total_amount'];
+        $nextBuyer = !empty($body['buyerId']) ? (int)$body['buyerId'] : (int)$existing['buyer_id'];
+        $nextMethod = !empty($body['paymentMethod']) ? $body['paymentMethod'] : $existing['payment_method'];
+        $nextFirstDue = !empty($body['firstDueDate']) ? $body['firstDueDate'] : $existing['first_due_date'];
+        $nextInstallments = array_key_exists('installments', $body) && $body['installments'] !== null
+            ? max(1, min(40, (int)$body['installments']))
+            : (int)$existing['installments'];
+
+        $existingFirstDue = substr((string)$existing['first_due_date'], 0, 10);
+        $nextFirstDueNorm = substr((string)$nextFirstDue, 0, 10);
+
+        $agg = $pdo->prepare('SELECT COALESCE(SUM(amount),0) AS total_sum, COUNT(*) AS qty FROM charges WHERE contract_id = ?');
+        $agg->execute([(int)$id]);
+        $chargeAgg = $agg->fetch();
+
+        $financeChanged =
+            abs($nextTotal - (float)$existing['total_amount']) > 0.001
+            || $nextBuyer !== (int)$existing['buyer_id']
+            || $nextMethod !== $existing['payment_method']
+            || $nextFirstDueNorm !== $existingFirstDue
+            || $nextInstallments !== (int)$existing['installments'];
+
+        $chargesOutOfSync =
+            abs((float)$chargeAgg['total_sum'] - $nextTotal) > 0.02
+            || (int)$chargeAgg['qty'] !== $nextInstallments;
+
+        $shouldRecalc = !empty($body['recalcCharges']) || $financeChanged || $chargesOutOfSync;
+
+        if ($shouldRecalc) {
+            $paid = $pdo->prepare("SELECT COUNT(*) FROM charges WHERE contract_id = ? AND status = 'pago'");
+            $paid->execute([(int)$id]);
+            if ((int)$paid->fetchColumn() > 0) {
+                json_out(['error' => 'Não é possível recalcular parcelas: já existem cobranças pagas neste contrato'], 400);
+            }
+        }
+
+        try {
+            $pdo->beginTransaction();
+            $params[] = (int)$id;
+            $pdo->prepare('UPDATE contracts SET ' . implode(',', $fields) . ' WHERE id=?')->execute($params);
+
+            if ($shouldRecalc) {
+                $rulesStmt = $pdo->prepare(
+                    'SELECT beneficiary_role, beneficiary_client_id, label, pct
+                     FROM contract_payout_rules WHERE contract_id = ? ORDER BY sort_order ASC, id ASC'
+                );
+                $rulesStmt->execute([(int)$id]);
+                $ruleRows = $rulesStmt->fetchAll();
+                generate_charges($pdo, (int)$id, $nextBuyer, $nextTotal, $nextInstallments, $nextFirstDueNorm, $nextMethod);
+                generate_payouts($pdo, (int)$id, array_map(function ($r) {
+                    return [
+                        'beneficiaryRole' => $r['beneficiary_role'],
+                        'beneficiaryClientId' => $r['beneficiary_client_id'],
+                        'label' => $r['label'],
+                        'pct' => (float)$r['pct'],
+                    ];
+                }, $ruleRows));
+            }
+
+            $pdo->commit();
+            json_out(['success' => true, 'chargesRecalculated' => $shouldRecalc]);
+        } catch (InvalidArgumentException $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            json_out(['error' => $e->getMessage()], 400);
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            json_out(['error' => 'Erro ao atualizar contrato'], 500);
+        }
     }
 
     if ($method === 'POST' && $id && $action === 'sign') {
@@ -1770,6 +2170,66 @@ if ($resource === 'contract-templates') {
         } catch (PDOException $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
             json_out(['error' => 'Erro ao atualizar modelo'], 500);
+        }
+    }
+}
+
+// Catalogs (breed, sale_type)
+if ($resource === 'catalogs') {
+    if ($method === 'GET' && !$id) {
+        require_auth($config['jwt_secret']);
+        $kind = trim($_GET['kind'] ?? '');
+        if (!in_array($kind, ['breed', 'sale_type', 'animal_category', 'share_quota'], true)) {
+            json_out(['error' => 'Informe kind válido (breed, sale_type, animal_category, share_quota)'], 400);
+        }
+        $stmt = $pdo->prepare('SELECT * FROM catalogs WHERE kind = ? AND active = 1 ORDER BY name ASC');
+        $stmt->execute([$kind]);
+        json_out(array_map(function ($r) {
+            return [
+                'id' => (string)$r['id'],
+                'kind' => $r['kind'],
+                'name' => $r['name'],
+                'code' => $r['code'],
+                'active' => (bool)$r['active'],
+            ];
+        }, $stmt->fetchAll()));
+    }
+
+    if ($method === 'POST' && !$id) {
+        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $kind = trim($body['kind'] ?? '');
+        $name = trim($body['name'] ?? '');
+        $code = isset($body['code']) ? trim((string)$body['code']) : null;
+        if (!in_array($kind, ['breed', 'sale_type', 'animal_category', 'share_quota'], true)) {
+            json_out(['error' => 'Tipo de catálogo inválido'], 400);
+        }
+        if ($name === '') json_out(['error' => 'Nome é obrigatório'], 400);
+        if (in_array($kind, ['sale_type', 'animal_category', 'share_quota'], true) && (!$code || $code === '')) {
+            if ($kind === 'share_quota') {
+                $num = str_replace(['%', ','], ['', '.'], $name);
+                $code = substr(preg_replace('/[^0-9.]/', '', $num) ?: '100', 0, 40);
+            } else {
+                $slug = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $name);
+                $slug = preg_replace('/[^A-Za-z0-9]+/', '_', $slug ?? $name);
+                $slug = trim($slug, '_');
+                $code = substr($slug ?: 'CUSTOM', 0, 40);
+                if ($kind === 'sale_type') $code = strtolower($code);
+                else $code = strtoupper($code);
+            }
+        }
+        try {
+            $pdo->prepare('INSERT INTO catalogs (kind, name, code, active) VALUES (?, ?, ?, 1)')
+                ->execute([$kind, $name, $code ?: null]);
+            json_out([
+                'success' => true,
+                'id' => (string)$pdo->lastInsertId(),
+                'kind' => $kind,
+                'name' => $name,
+                'code' => $code,
+            ]);
+        } catch (PDOException $e) {
+            if ($e->getCode() == 23000) json_out(['error' => 'Este item já existe no catálogo'], 409);
+            json_out(['error' => 'Erro ao criar item do catálogo'], 500);
         }
     }
 }
