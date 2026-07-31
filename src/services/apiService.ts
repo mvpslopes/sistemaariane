@@ -16,6 +16,29 @@ function getToken(): string | null {
   return localStorage.getItem('token');
 }
 
+let handlingUnauthorized = false;
+
+/** Limpa sessão e manda para o login (exceto na própria tela de login). */
+export function handleUnauthorized() {
+  if (handlingUnauthorized) return;
+  handlingUnauthorized = true;
+  localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  const path = typeof window !== 'undefined' ? window.location.pathname : '';
+  if (path.includes('/login')) {
+    handlingUnauthorized = false;
+    return;
+  }
+  if (typeof window !== 'undefined') {
+    window.location.assign('/login?expired=1');
+  }
+}
+
+function isAuthLoginPath(path: string) {
+  const clean = path.split('?')[0].replace(/\/+$/, '');
+  return clean === '/login' || clean.endsWith('/login');
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {}
@@ -34,6 +57,9 @@ async function request<T>(
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401 && !isAuthLoginPath(path)) {
+      handleUnauthorized();
+    }
     const msg = [data.error, data.detail, data.hint].filter(Boolean).join(' — ');
     throw new Error(msg || 'Erro na requisição');
   }
@@ -594,6 +620,7 @@ async function uploadMedia(file: File, kind: 'animal' | 'avatar' | 'person-doc')
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401) handleUnauthorized();
     throw new Error(data.error || 'Erro ao enviar arquivo');
   }
   return data as { success: boolean; url: string; fileName?: string };

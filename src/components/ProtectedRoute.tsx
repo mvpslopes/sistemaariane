@@ -1,6 +1,7 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import type { Role } from '../services/apiService';
+import Loading from './Loading';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -8,10 +9,18 @@ interface ProtectedRouteProps {
 }
 
 export default function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, authChecking } = useAuth();
+
+  if (authChecking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-brand-off-white">
+        <Loading message="Validando sessão..." />
+      </div>
+    );
+  }
 
   if (!isAuthenticated || !user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login?expired=1" replace />;
   }
 
   if (roles && !roles.includes(user.role)) {

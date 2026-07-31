@@ -89,8 +89,40 @@ function verify_token(string $token, string $secret): ?array {
     return $payload;
 }
 
+function request_authorization_header(): string {
+    $candidates = [
+        $_SERVER['HTTP_AUTHORIZATION'] ?? '',
+        $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '',
+        $_SERVER['Authorization'] ?? '',
+    ];
+    foreach ($candidates as $h) {
+        if (is_string($h) && $h !== '') return $h;
+    }
+    if (function_exists('apache_request_headers')) {
+        $headers = apache_request_headers();
+        if (is_array($headers)) {
+            foreach ($headers as $k => $v) {
+                if (strcasecmp((string)$k, 'Authorization') === 0 && is_string($v) && $v !== '') {
+                    return $v;
+                }
+            }
+        }
+    }
+    if (function_exists('getallheaders')) {
+        $headers = getallheaders();
+        if (is_array($headers)) {
+            foreach ($headers as $k => $v) {
+                if (strcasecmp((string)$k, 'Authorization') === 0 && is_string($v) && $v !== '') {
+                    return $v;
+                }
+            }
+        }
+    }
+    return '';
+}
+
 function bearer_user(string $secret): ?array {
-    $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+    $header = request_authorization_header();
     if (!preg_match('/Bearer\\s+(\\S+)/', $header, $m)) return null;
     $payload = verify_token($m[1], $secret);
     if (!$payload) return null;

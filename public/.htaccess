@@ -16,6 +16,10 @@ AddType image/webp .webp
   RewriteEngine On
   RewriteBase /
 
+  # Hostinger/Apache: repassa Authorization para o PHP (JWT Bearer)
+  RewriteCond %{HTTP:Authorization} .
+  RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
   # Nunca reescrever assets estáticos / uploads
   RewriteRule ^assets/ - [L]
   RewriteRule ^uploads/ - [L]
@@ -27,6 +31,11 @@ AddType image/webp .webp
   RewriteCond %{REQUEST_FILENAME} !-f
   RewriteCond %{REQUEST_FILENAME} !-d
   RewriteRule . index.html [L]
+</IfModule>
+
+# Fallback CGI / LiteSpeed (alguns planos Hostinger)
+<IfModule mod_setenvif.c>
+  SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
 </IfModule>
 
 # Bloquear acesso direto a config

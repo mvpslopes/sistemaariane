@@ -15,6 +15,8 @@ interface AuthContextType {
   logout: () => void;
   refreshUser: (next: AuthUser) => void;
   isAuthenticated: boolean;
+  /** true enquanto valida token salvo ao abrir o sistema */
+  authChecking: boolean;
   hasRole: (...roles: Role[]) => boolean;
   canWrite: boolean;
   canManageUsers: boolean;
@@ -30,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const saved = localStorage.getItem('user');
     return saved ? JSON.parse(saved) : null;
   });
+  const [authChecking, setAuthChecking] = useState(() => !!localStorage.getItem('token'));
   const [timeRemaining, setTimeRemaining] = useState(INACTIVITY_TIMEOUT / 1000);
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -59,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       inactivityTimerRef.current = setTimeout(() => {
         logout();
-        window.location.href = '/login';
+        window.location.href = '/login?expired=1';
       }, INACTIVITY_TIMEOUT);
 
       countdownTimerRef.current = setInterval(() => {
@@ -85,6 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.setItem('token', response.token);
         localStorage.setItem('user', JSON.stringify(response.user));
         setUser(response.user);
+        setAuthChecking(false);
         return { ok: true };
       }
       return { ok: false, error: 'Usuário ou senha incorretos. Tente novamente.' };
@@ -100,8 +104,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const canWrite = hasRole('root', 'admin', 'user');
   const canManageUsers = hasRole('root', 'admin');
 
+  // Valida token ao abrir o sistema
   useEffect(() => {
-    if (!user) return;
+    const token = localStorage.getItem('token');
+    if (!token) {
+      setUser(null);
+      setAuthChecking(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAuthChecking(true);
+    api
+      .getMe()
+      .then((res) => {
+        if (cancelled) return;
+        refreshUser(res.user);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        logout();
+      })
+      .finally(() => {
+        if (!cancelled) setAuthChecking(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user || authChecking) return;
 
     resetInactivityTimer();
     const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'];
@@ -113,7 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
       if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
     };
-  }, [user]);
+  }, [user, authChecking]);
 
   return (
     <AuthContext.Provider
@@ -122,7 +156,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         logout,
         refreshUser,
-        isAuthenticated: !!user,
+        isAuthenticated: !!user && !!localStorage.getItem('token'),
+        authChecking,
         hasRole,
         canWrite,
         canManageUsers,

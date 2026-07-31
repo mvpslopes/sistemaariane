@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { useNavigate, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { LogIn, Lock, User, PawPrint, ShieldCheck, Users } from 'lucide-react';
@@ -8,9 +8,22 @@ export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login, isAuthenticated } = useAuth();
+  const { login, isAuthenticated, authChecking } = useAuth();
   const { error: toastError, success } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const expiredToastShown = useRef(false);
+
+  useEffect(() => {
+    if (searchParams.get('expired') === '1' && !expiredToastShown.current) {
+      expiredToastShown.current = true;
+      toastError('Sessão expirada. Faça login novamente.');
+    }
+  }, [searchParams, toastError]);
+
+  if (authChecking) {
+    return null;
+  }
 
   if (isAuthenticated) {
     return <Navigate to="/app" replace />;
