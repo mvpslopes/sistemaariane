@@ -4,7 +4,6 @@ import {
   getContract,
   getContracts,
   sendContractToClicksign,
-  signContract,
   updateContract,
   type Contract,
 } from '../../services/apiService';
@@ -52,10 +51,6 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const [detail, setDetail] = useState<Contract | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
-  const [signRole, setSignRole] = useState<'seller' | 'buyer' | 'assessor' | 'witness1' | 'witness2'>('buyer');
-  const [signerName, setSignerName] = useState('');
-  const [accepted, setAccepted] = useState(false);
-  const [signing, setSigning] = useState(false);
   const [sendingClicksign, setSendingClicksign] = useState(false);
   const preselectedAnimal = initialAnimalId;
 
@@ -77,8 +72,6 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const openDetail = async (id: string) => {
     setDetailId(id);
     setDetailLoading(true);
-    setAccepted(false);
-    setSignerName('');
     try {
       setDetail(await getContract(id));
     } catch (e: any) {
@@ -86,25 +79,6 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
       setDetailId(null);
     } finally {
       setDetailLoading(false);
-    }
-  };
-
-  const onSign = async () => {
-    if (!detailId) return;
-    setSigning(true);
-    try {
-      const res = await signContract(detailId, {
-        partyRole: signRole,
-        signerName,
-        accepted,
-      });
-      success(res.activated ? 'Assinatura registrada — contrato ativado' : 'Assinatura registrada');
-      await openDetail(detailId);
-      await load();
-    } catch (e: any) {
-      toastError(e.message || 'Erro ao assinar');
-    } finally {
-      setSigning(false);
     }
   };
 
@@ -165,8 +139,6 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
       (c.buyer_name || '').toLowerCase().includes(s)
     );
   });
-
-  const signed = (role: string) => detail?.signatures?.some((s) => s.party_role === role);
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -320,84 +292,33 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
               <Info label="1º vencimento" value={detail.first_due_date} />
             </div>
 
-            <div>
-              <h4 className="mb-2 text-sm font-semibold text-brand-dark-brown">Assinaturas</h4>
-              <ul className="space-y-1 text-sm text-brand-olive">
-                <li>Vendedor: {signed('seller') ? '✓ Assinado' : 'Pendente'}</li>
-                <li>Comprador: {signed('buyer') ? '✓ Assinado' : 'Pendente'}</li>
-                {detail.assessor_id && (
-                  <li>Assessor: {signed('assessor') ? '✓ Assinado' : 'Pendente'}</li>
-                )}
-                {detail.witness1_id && (
-                  <li>Testemunha 1: {signed('witness1') ? '✓ Assinado' : 'Pendente'}</li>
-                )}
-                {detail.witness2_id && (
-                  <li>Testemunha 2: {signed('witness2') ? '✓ Assinado' : 'Pendente'}</li>
-                )}
-              </ul>
-            </div>
-
-            {detail.status !== 'cancelado' && detail.status !== 'concluido' && (
+            {(detail.clicksign_envelope_id ||
+              (canWrite && detail.status !== 'cancelado' && detail.status !== 'concluido')) && (
               <div className="rounded-xl border border-brand-beige bg-brand-off-white/60 p-4 space-y-3">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-semibold text-brand-dark-brown">Aceite digital</h4>
-                    <p className="mt-0.5 text-xs text-brand-olive">
-                      Registro interno rápido, ou envio formal pela Clicksign por e-mail.
-                    </p>
-                  </div>
-                  {canWrite &&
-                    (detail.clicksign_envelope_id ? (
-                      <span className="rounded-lg border border-brand-beige bg-white px-3 py-2 text-xs text-brand-olive">
-                        Clicksign: {detail.clicksign_status || 'enviado'}
-                        {detail.clicksign_sent_at
-                          ? ` · ${new Date(detail.clicksign_sent_at).toLocaleDateString('pt-BR')}`
-                          : ''}
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={sendingClicksign}
-                        onClick={onSendClicksign}
-                        title="Envia o PDF por e-mail para vendedor, comprador e as 2 testemunhas assinarem na Clicksign"
-                        className="inline-flex items-center gap-2 rounded-xl bg-brand-brown px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-50"
-                      >
-                        <Send className="h-4 w-4" />
-                        {sendingClicksign ? 'Enviando...' : 'Enviar para assinatura'}
-                      </button>
-                    ))}
+                <div>
+                  <h4 className="text-sm font-semibold text-brand-dark-brown">Assinatura Clicksign</h4>
+                  <p className="mt-0.5 text-xs text-brand-olive">
+                    Envia o PDF por e-mail para o vendedor, o comprador e as 2 testemunhas assinarem.
+                  </p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <select
-                    value={signRole}
-                    onChange={(e) => setSignRole(e.target.value as typeof signRole)}
-                    className="rounded-xl border border-brand-beige bg-white px-3 py-2.5 text-sm"
+                {detail.clicksign_envelope_id ? (
+                  <p className="text-sm text-brand-dark-brown">
+                    Já enviado · status: <strong>{detail.clicksign_status || 'enviado'}</strong>
+                    {detail.clicksign_sent_at
+                      ? ` · ${new Date(detail.clicksign_sent_at).toLocaleString('pt-BR')}`
+                      : ''}
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={sendingClicksign}
+                    onClick={onSendClicksign}
+                    className="inline-flex items-center gap-2 rounded-xl bg-brand-brown px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-50"
                   >
-                    <option value="seller">Como vendedor</option>
-                    <option value="buyer">Como comprador</option>
-                    {detail.assessor_id && <option value="assessor">Como assessor</option>}
-                    {detail.witness1_id && <option value="witness1">Como testemunha 1</option>}
-                    {detail.witness2_id && <option value="witness2">Como testemunha 2</option>}
-                  </select>
-                  <input
-                    value={signerName}
-                    onChange={(e) => setSignerName(e.target.value)}
-                    placeholder="Nome completo para assinatura"
-                    className="rounded-xl border border-brand-beige bg-white px-3 py-2.5 text-sm"
-                  />
-                </div>
-                <label className="flex items-start gap-2 text-sm text-brand-dark-brown/80">
-                  <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} className="mt-1" />
-                  Declaro que li e aceito os termos deste contrato de venda eletronicamente.
-                </label>
-                <button
-                  type="button"
-                  disabled={signing || !accepted || !signerName.trim()}
-                  onClick={onSign}
-                  className="rounded-xl border border-brand-beige bg-white px-4 py-2 text-sm font-medium text-brand-brown hover:bg-brand-beige/40 disabled:opacity-50"
-                >
-                  {signing ? 'Registrando...' : 'Assinar digitalmente'}
-                </button>
+                    <Send className="h-4 w-4" />
+                    {sendingClicksign ? 'Enviando...' : 'Enviar para assinatura'}
+                  </button>
+                )}
               </div>
             )}
 
