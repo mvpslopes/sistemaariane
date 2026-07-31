@@ -29,7 +29,6 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 import { formatCepInput, lookupCep } from '../../services/cepService';
-import { formatCepInput, lookupCep } from '../../services/cepService';
 
 type PartyRole = 'buyer' | 'seller' | 'assessor' | 'witness' | 'avalista';
 type TabId = 'dados' | 'documentos' | 'propriedades' | 'contas' | 'contatos' | 'observacoes';
@@ -51,6 +50,40 @@ const DOC_LABELS: Record<PersonDocType, string> = {
   selfie: 'Selfie',
   outro: 'Outro',
 };
+
+/** Campos mínimos para finalizar o cadastro de pessoa. */
+function validateRequiredPerson(form: Partial<Client>): string | null {
+  const missing: string[] = [];
+  if (!form.name?.trim()) missing.push('Nome completo');
+
+  const digits = (form.document || '').replace(/\D/g, '');
+  if (!digits) {
+    missing.push('CPF/CNPJ');
+  } else if ((form.document_type || 'CPF') === 'CNPJ' ? digits.length !== 14 : digits.length !== 11) {
+    return (form.document_type || 'CPF') === 'CNPJ'
+      ? 'CNPJ inválido — informe 14 dígitos'
+      : 'CPF inválido — informe 11 dígitos';
+  }
+
+  if (!form.email?.trim()) {
+    missing.push('E-mail');
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+    return 'E-mail inválido';
+  }
+
+  if (!form.phone?.trim()) missing.push('Telefone');
+
+  const cep = (form.zip_code || '').replace(/\D/g, '');
+  if (cep.length !== 8) missing.push('CEP');
+  if (!form.address?.trim()) missing.push('Endereço (logradouro)');
+  if (!form.city?.trim()) missing.push('Cidade');
+  if (!(form.state || '').trim()) missing.push('UF');
+
+  if (missing.length) {
+    return `Preencha os campos obrigatórios: ${missing.join(', ')}`;
+  }
+  return null;
+}
 
 function emptyForm(defaultPartyRole?: PartyRole): Partial<Client> {
   return {
@@ -222,6 +255,12 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
   const onSubmitDados = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!canWrite) return;
+    const validationError = validateRequiredPerson(form);
+    if (validationError) {
+      toastError(validationError);
+      setTab('dados');
+      return;
+    }
     setSaving(true);
     try {
       if (isNew) {
@@ -243,6 +282,12 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
 
   const onSaveObservacoes = async () => {
     if (!canWrite || !currentId) return;
+    const validationError = validateRequiredPerson(form);
+    if (validationError) {
+      toastError(validationError);
+      setTab('dados');
+      return;
+    }
     setSaving(true);
     try {
       await updateClient(currentId, form);
@@ -320,10 +365,14 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
 
       {tab === 'dados' && (
         <form onSubmit={onSubmitDados} className="space-y-4">
+          <p className="rounded-xl border border-brand-beige bg-white px-3 py-2 text-sm text-brand-olive">
+            <span className="font-semibold text-brand-dark-brown">Campos obrigatórios:</span>{' '}
+            nome completo, CPF/CNPJ, e-mail, telefone, CEP e endereço (logradouro, cidade e UF).
+          </p>
           <Section title="Identificação">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Nome *" className="sm:col-span-2">
-                <input required disabled={!canWrite} value={form.name || ''} onChange={(e) => set('name', e.target.value)} className={inputClass} />
+              <Field label="Nome completo *" className="sm:col-span-2">
+                <input required disabled={!canWrite} value={form.name || ''} onChange={(e) => set('name', e.target.value)} className={inputClass} placeholder="Nome completo" />
               </Field>
               <Field label="Apelido">
                 <input disabled={!canWrite} value={form.nickname || ''} onChange={(e) => set('nickname', e.target.value)} className={inputClass} />
@@ -331,14 +380,14 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
               <Field label="Data de nascimento">
                 <input type="date" disabled={!canWrite} value={form.birth_date || ''} onChange={(e) => set('birth_date', e.target.value)} className={inputClass} />
               </Field>
-              <Field label="Tipo documento">
-                <select disabled={!canWrite} value={form.document_type || 'CPF'} onChange={(e) => set('document_type', e.target.value)} className={inputClass}>
+              <Field label="Tipo documento *">
+                <select required disabled={!canWrite} value={form.document_type || 'CPF'} onChange={(e) => set('document_type', e.target.value)} className={inputClass}>
                   <option value="CPF">CPF</option>
                   <option value="CNPJ">CNPJ</option>
                 </select>
               </Field>
-              <Field label="CPF / CNPJ">
-                <input disabled={!canWrite} value={form.document || ''} onChange={(e) => set('document', e.target.value)} className={inputClass} />
+              <Field label="CPF / CNPJ *">
+                <input required disabled={!canWrite} value={form.document || ''} onChange={(e) => set('document', e.target.value)} className={inputClass} placeholder={form.document_type === 'CNPJ' ? '00.000.000/0000-00' : '000.000.000-00'} />
               </Field>
               <Field label="RG">
                 <input disabled={!canWrite} value={form.rg || ''} onChange={(e) => set('rg', e.target.value)} className={inputClass} />
@@ -370,18 +419,19 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
 
           <Section title="Contato e endereço">
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="E-mail">
-                <input type="email" disabled={!canWrite} value={form.email || ''} onChange={(e) => set('email', e.target.value)} className={inputClass} />
+              <Field label="E-mail *">
+                <input type="email" required disabled={!canWrite} value={form.email || ''} onChange={(e) => set('email', e.target.value)} className={inputClass} />
               </Field>
-              <Field label="Telefone">
-                <input disabled={!canWrite} value={form.phone || ''} onChange={(e) => set('phone', e.target.value)} className={inputClass} />
+              <Field label="Telefone *">
+                <input required disabled={!canWrite} value={form.phone || ''} onChange={(e) => set('phone', e.target.value)} className={inputClass} />
               </Field>
               <Field label="WhatsApp">
                 <input disabled={!canWrite} value={form.whatsapp || ''} onChange={(e) => set('whatsapp', e.target.value)} className={inputClass} />
               </Field>
-              <Field label="CEP">
+              <Field label="CEP *">
                 <div className="relative">
                   <input
+                    required
                     disabled={!canWrite || cepLoading}
                     value={form.zip_code || ''}
                     onChange={(e) => {
@@ -400,17 +450,17 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
                 </div>
                 <span className="mt-1 block text-xs text-brand-olive">Ao digitar o CEP, rua, cidade e UF são preenchidos automaticamente.</span>
               </Field>
-              <Field label="Cidade">
-                <input disabled={!canWrite} value={form.city || ''} onChange={(e) => set('city', e.target.value)} className={inputClass} />
+              <Field label="Cidade *">
+                <input required disabled={!canWrite} value={form.city || ''} onChange={(e) => set('city', e.target.value)} className={inputClass} />
               </Field>
-              <Field label="UF">
-                <input disabled={!canWrite} maxLength={2} value={form.state || ''} onChange={(e) => set('state', e.target.value.toUpperCase())} className={inputClass} />
+              <Field label="UF *">
+                <input required disabled={!canWrite} maxLength={2} value={form.state || ''} onChange={(e) => set('state', e.target.value.toUpperCase())} className={inputClass} />
               </Field>
               <Field label="País">
                 <input disabled={!canWrite} value={form.country || 'Brasil'} onChange={(e) => set('country', e.target.value)} className={inputClass} />
               </Field>
-              <Field label="Endereço (logradouro)">
-                <input disabled={!canWrite} value={form.address || ''} onChange={(e) => set('address', e.target.value)} className={inputClass} placeholder="Rua, avenida..." />
+              <Field label="Endereço (logradouro) *">
+                <input required disabled={!canWrite} value={form.address || ''} onChange={(e) => set('address', e.target.value)} className={inputClass} placeholder="Rua, avenida..." />
               </Field>
               <Field label="Número">
                 <input disabled={!canWrite} value={form.address_number || ''} onChange={(e) => set('address_number', e.target.value)} className={inputClass} placeholder="Nº" />
@@ -770,7 +820,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
             {canWrite && !currentId && (
               <button
                 type="button"
-                disabled={saving || !form.name?.trim()}
+                disabled={saving}
                 onClick={() => onSubmitDados()}
                 className="rounded-xl bg-brand-brown px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60"
               >

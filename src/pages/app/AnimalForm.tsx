@@ -17,6 +17,12 @@ import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 import { Camera, Plus, Trash2 } from 'lucide-react';
 
+interface OwnerRow {
+  clientId: string;
+  sharePct: number;
+  isPrimary: boolean;
+}
+
 interface FormState {
   name: string;
   registration_no: string;
@@ -31,11 +37,12 @@ interface FormState {
   ownership_type: 'unico' | 'condominio';
   notes: string;
   photo_url: string;
-  clientId: string;
-  sharePct: number;
+  owners: OwnerRow[];
   sireName: string;
   damName: string;
 }
+
+const emptyOwner = (): OwnerRow => ({ clientId: '', sharePct: 100, isPrimary: true });
 
 const empty: FormState = {
   name: '',
@@ -51,8 +58,7 @@ const empty: FormState = {
   ownership_type: 'unico',
   notes: '',
   photo_url: '',
-  clientId: '',
-  sharePct: 100,
+  owners: [emptyOwner()],
   sireName: '',
   damName: '',
 };
@@ -92,7 +98,14 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
         setClients(clientList.filter((c) => c.active));
         if (!isNew) {
           const animal = await getAnimal(animalId!);
-          const primary = animal.owners?.[0];
+          const owners =
+            animal.owners?.length
+              ? animal.owners.map((o, i) => ({
+                  clientId: o.clientId,
+                  sharePct: o.sharePct ?? (animal.ownership_type === 'unico' ? 100 : 0),
+                  isPrimary: o.isPrimary ?? i === 0,
+                }))
+              : [emptyOwner()];
           setForm({
             name: animal.name || '',
             registration_no: animal.registration_no || '',
@@ -104,11 +117,10 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
             color: animal.color || '',
             resenha: animal.resenha || '',
             status: animal.status || 'ativo',
-            ownership_type: animal.ownership_type || 'unico',
+            ownership_type: animal.ownership_type || (owners.length > 1 ? 'condominio' : 'unico'),
             notes: animal.notes || '',
             photo_url: animal.photo_url || '',
-            clientId: primary?.clientId || '',
-            sharePct: primary?.sharePct ?? 100,
+            owners,
             sireName: animal.genealogy?.sireName || '',
             damName: animal.genealogy?.damName || '',
           });
@@ -127,6 +139,65 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
 
+  const setOwnershipType = (ownership_type: FormState['ownership_type']) => {
+    setForm((prev) => {
+      if (ownership_type === 'unico') {
+        const first = prev.owners[0] || emptyOwner();
+        return {
+          ...prev,
+          ownership_type,
+          owners: [{ ...first, sharePct: 100, isPrimary: true }],
+        };
+      }
+      return {
+        ...prev,
+        ownership_type,
+        owners: prev.owners.length
+          ? prev.owners.map((o, i) => ({ ...o, isPrimary: i === 0 ? true : o.isPrimary }))
+          : [emptyOwner()],
+      };
+    });
+  };
+
+  const updateOwner = (index: number, patch: Partial<OwnerRow>) => {
+    setForm((prev) => {
+      const owners = prev.owners.map((o, i) => (i === index ? { ...o, ...patch } : o));
+      if (patch.isPrimary) {
+        owners.forEach((o, i) => {
+          o.isPrimary = i === index;
+        });
+      }
+      return { ...prev, owners };
+    });
+  };
+
+  const addOwner = () => {
+    setForm((prev) => {
+      const owners = [
+        ...prev.owners,
+        { clientId: '', sharePct: 0, isPrimary: prev.owners.length === 0 },
+      ];
+      return {
+        ...prev,
+        ownership_type: owners.length > 1 ? 'condominio' : prev.ownership_type,
+        owners,
+      };
+    });
+  };
+
+  const removeOwner = (index: number) => {
+    setForm((prev) => {
+      let owners = prev.owners.filter((_, i) => i !== index);
+      if (!owners.length) owners = [emptyOwner()];
+      if (!owners.some((o) => o.isPrimary)) owners[0].isPrimary = true;
+      return {
+        ...prev,
+        ownership_type: owners.length > 1 ? 'condominio' : 'unico',
+        owners: owners.length === 1 ? [{ ...owners[0], sharePct: 100, isPrimary: true }] : owners,
+      };
+    });
+  };
+
   const payload = () => ({
     name: form.name,
     registration_no: form.registration_no || null,
@@ -138,12 +209,18 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
     color: form.color || null,
     resenha: form.resenha || null,
     status: form.status,
-    ownership_type: form.ownership_type,
+    ownership_type: form.owners.filter((o) => o.clientId).length > 1 ? 'condominio' : form.ownership_type,
     notes: form.notes || null,
     photo_url: form.photo_url || null,
-    owners: form.clientId
-      ? [{ clientId: form.clientId, sharePct: form.sharePct, isPrimary: true }]
-      : [],
+    owners: form.owners
+      .filter((o) => o.clientId)
+      .map((o, i) => ({
+        clientId: o.clientId,
+        sharePct: form.ownership_type === 'unico' || form.owners.filter((x) => x.clientId).length === 1
+          ? 100
+          : o.sharePct,
+        isPrimary: o.isPrimary || i === 0,
+      })),
     genealogy: {
       sireName: form.sireName || null,
       damName: form.damName || null,
@@ -173,9 +250,27 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
       setUploading(false);
     }
   };
+
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canWrite) return;
+    const filled = form.owners.filter((o) => o.clientId);
+    if (!filled.length) {
+      toastError('Informe ao menos um vendedor/proprietário');
+      return;
+    }
+    const ids = filled.map((o) => o.clientId);
+    if (new Set(ids).size !== ids.length) {
+      toastError('Não repita o mesmo vendedor');
+      return;
+    }
+    if (filled.length > 1) {
+      const total = filled.reduce((s, o) => s + Number(o.sharePct || 0), 0);
+      if (Math.abs(total - 100) > 0.05) {
+        toastError(`A soma das cotas deve ser 100% (atual: ${total.toFixed(2)}%)`);
+        return;
+      }
+    }
     setSaving(true);
     try {
       if (isNew) {
@@ -357,19 +452,92 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
           </select>
         </Field>
         <Field label="Propriedade">
-          <select disabled={!canWrite} value={form.ownership_type} onChange={(e) => set('ownership_type', e.target.value as FormState['ownership_type'])} className={inputClass}>
+          <select
+            disabled={!canWrite}
+            value={form.ownership_type}
+            onChange={(e) => setOwnershipType(e.target.value as FormState['ownership_type'])}
+            className={inputClass}
+          >
             <option value="unico">Único</option>
-            <option value="condominio">Condomínio</option>
+            <option value="condominio">Condomínio (vários vendedores)</option>
           </select>
         </Field>
-        <Field label="Proprietário principal" className="sm:col-span-2">
-          <select disabled={!canWrite} value={form.clientId} onChange={(e) => set('clientId', e.target.value)} className={inputClass}>
-            <option value="">— Selecionar cliente —</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
+        <div className="sm:col-span-2 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">
+              Vendedor(es) / proprietário(s)
+            </span>
+            {canWrite && (
+              <button
+                type="button"
+                onClick={addOwner}
+                className="inline-flex items-center gap-1 rounded-lg border border-brand-beige bg-white px-2.5 py-1 text-xs font-medium text-brand-brown hover:bg-brand-beige/40"
+              >
+                <Plus className="h-3.5 w-3.5" /> Adicionar vendedor
+              </button>
+            )}
+          </div>
+          <div className="space-y-2 rounded-xl border border-brand-beige bg-brand-off-white/40 p-3">
+            {form.owners.map((owner, index) => (
+              <div key={index} className="grid gap-2 sm:grid-cols-[1fr_100px_auto_auto] sm:items-end">
+                <label className="block space-y-1">
+                  <span className="text-[11px] uppercase text-brand-olive">Pessoa *</span>
+                  <select
+                    required
+                    disabled={!canWrite}
+                    value={owner.clientId}
+                    onChange={(e) => updateOwner(index, { clientId: e.target.value })}
+                    className={inputClass}
+                  >
+                    <option value="">— Selecionar —</option>
+                    {clients.map((c) => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block space-y-1">
+                  <span className="text-[11px] uppercase text-brand-olive">Cota %</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.01}
+                    disabled={!canWrite || form.ownership_type === 'unico' || form.owners.length === 1}
+                    value={owner.sharePct}
+                    onChange={(e) => updateOwner(index, { sharePct: Number(e.target.value) })}
+                    className={inputClass}
+                  />
+                </label>
+                <label className="flex items-center gap-2 pb-2.5 text-xs text-brand-dark-brown">
+                  <input
+                    type="radio"
+                    name="primary-owner"
+                    disabled={!canWrite}
+                    checked={owner.isPrimary}
+                    onChange={() => updateOwner(index, { isPrimary: true })}
+                  />
+                  Principal
+                </label>
+                {canWrite && form.owners.length > 1 && (
+                  <button
+                    type="button"
+                    title="Remover"
+                    onClick={() => removeOwner(index)}
+                    className="mb-0.5 inline-flex h-[42px] w-[42px] items-center justify-center rounded-xl border border-red-200 text-red-600 hover:bg-red-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             ))}
-          </select>
-        </Field>
+            {form.owners.length > 1 && (
+              <p className="text-xs text-brand-olive">
+                Soma das cotas:{' '}
+                {form.owners.reduce((s, o) => s + Number(o.sharePct || 0), 0).toFixed(2)}% (deve totalizar 100%)
+              </p>
+            )}
+          </div>
+        </div>
         <Field label="Nome do pai">
           <input disabled={!canWrite} value={form.sireName} onChange={(e) => set('sireName', e.target.value)} className={inputClass} />
         </Field>

@@ -346,6 +346,19 @@ CREATE TABLE auction_lots (
   CONSTRAINT fk_lots_contract FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE auction_lot_sellers (
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  lot_id      BIGINT UNSIGNED NOT NULL,
+  client_id   BIGINT UNSIGNED NOT NULL,
+  share_pct   DECIMAL(5,2) NOT NULL DEFAULT 100.00,
+  is_primary  TINYINT(1) NOT NULL DEFAULT 0,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_lot_seller (lot_id, client_id),
+  INDEX idx_als_lot (lot_id),
+  CONSTRAINT fk_als_lot FOREIGN KEY (lot_id) REFERENCES auction_lots(id) ON DELETE CASCADE,
+  CONSTRAINT fk_als_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE contract_payout_rules (
   id                    BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   contract_id           BIGINT UNSIGNED NOT NULL,

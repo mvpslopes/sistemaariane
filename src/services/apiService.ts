@@ -276,6 +276,12 @@ export interface AuctionLot {
   lot_number: string | null;
   seller_id: string;
   seller_name?: string | null;
+  sellers?: Array<{
+    clientId: string;
+    clientName: string;
+    sharePct: number;
+    isPrimary: boolean;
+  }>;
   min_price: number | null;
   conditions_text: string | null;
   status: LotStatus;

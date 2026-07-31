@@ -145,7 +145,7 @@ export default function AnimalsPage() {
                 <th className="hidden px-4 py-3 font-medium md:table-cell">Registro</th>
                 <th className="hidden px-4 py-3 font-medium lg:table-cell">Chip</th>
                 <th className="px-4 py-3 font-medium">Sexo</th>
-                <th className="hidden px-4 py-3 font-medium xl:table-cell">Proprietário(s)</th>
+                <th className="hidden px-4 py-3 font-medium xl:table-cell">Vendedor(es)</th>
                 <th className="px-4 py-3 font-medium">Status</th>
                 <th className="px-4 py-3 font-medium"></th>
               </tr>

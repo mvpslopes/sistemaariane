@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Gavel, Plus } from 'lucide-react';
+import { Gavel, Pencil, Plus } from 'lucide-react';
 import {
   createAuction,
   createAuctionLot,
+  getAnimal,
   getAnimals,
   getAuction,
   getAuctions,
@@ -22,6 +23,15 @@ import ContractForm from './ContractForm';
 
 const inputClass =
   'w-full rounded-xl border border-brand-beige bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-olive focus:ring-2 focus:ring-brand-beige';
+
+const emptyAuctionForm = {
+  name: '',
+  auctionDate: '',
+  location: '',
+  organizer: '',
+  status: 'agendado' as AuctionStatus,
+  notes: '',
+};
 
 const statusLabel: Record<AuctionStatus, string> = {
   rascunho: 'Rascunho',
@@ -46,6 +56,7 @@ export default function AuctionsPage() {
   const [items, setItems] = useState<Auction[]>([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Auction | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -53,18 +64,12 @@ export default function AuctionsPage() {
   const [arremateLot, setArremateLot] = useState<AuctionLot | null>(null);
   const [animals, setAnimals] = useState<Animal[]>([]);
   const [sellers, setSellers] = useState<Client[]>([]);
+  const [animalOwnerIds, setAnimalOwnerIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
-  const [auctionForm, setAuctionForm] = useState({
-    name: '',
-    auctionDate: '',
-    location: '',
-    organizer: '',
-    status: 'agendado' as AuctionStatus,
-    notes: '',
-  });
+  const [auctionForm, setAuctionForm] = useState(emptyAuctionForm);
   const [lotForm, setLotForm] = useState({
     animalId: '',
-    sellerId: '',
+    sellerIds: [] as string[],
     lotNumber: '',
     minPrice: '',
     conditionsText: '',
@@ -103,26 +108,60 @@ export default function AuctionsPage() {
     setDetail(await getAuction(detailId));
   };
 
-  const createAuctionSubmit = async (e: React.FormEvent) => {
+  const openCreateAuction = () => {
+    setEditingId(null);
+    setAuctionForm(emptyAuctionForm);
+    setFormOpen(true);
+  };
+
+  const openEditAuction = (a: Auction) => {
+    setEditingId(a.id);
+    setAuctionForm({
+      name: a.name || '',
+      auctionDate: a.auction_date || '',
+      location: a.location || '',
+      organizer: a.organizer || '',
+      status: a.status,
+      notes: a.notes || '',
+    });
+    setFormOpen(true);
+  };
+
+  const closeAuctionForm = () => {
+    setFormOpen(false);
+    setEditingId(null);
+    setAuctionForm(emptyAuctionForm);
+  };
+
+  const saveAuctionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canWrite) return;
     setSaving(true);
+    const payload = {
+      name: auctionForm.name,
+      auctionDate: auctionForm.auctionDate || null,
+      location: auctionForm.location || null,
+      organizer: auctionForm.organizer || null,
+      status: auctionForm.status,
+      notes: auctionForm.notes || null,
+    };
     try {
-      const res = await createAuction({
-        name: auctionForm.name,
-        auctionDate: auctionForm.auctionDate || null,
-        location: auctionForm.location || null,
-        organizer: auctionForm.organizer || null,
-        status: auctionForm.status,
-        notes: auctionForm.notes || null,
-      });
-      success('Leilão cadastrado');
-      setFormOpen(false);
-      setAuctionForm({ name: '', auctionDate: '', location: '', organizer: '', status: 'agendado', notes: '' });
-      await load();
-      openDetail(res.id);
+      if (editingId) {
+        const id = editingId;
+        await updateAuction(id, payload);
+        success('Leilão atualizado');
+        closeAuctionForm();
+        await load();
+        if (detailId === id) await refreshDetail();
+      } else {
+        const res = await createAuction(payload);
+        success('Leilão cadastrado');
+        closeAuctionForm();
+        await load();
+        openDetail(res.id);
+      }
     } catch (err: any) {
-      toastError(err.message || 'Erro ao criar leilão');
+      toastError(err.message || (editingId ? 'Erro ao atualizar leilão' : 'Erro ao criar leilão'));
     } finally {
       setSaving(false);
     }
@@ -135,22 +174,82 @@ export default function AuctionsPage() {
       let sellersList = s.filter((c) => c.active);
       if (!sellersList.length) sellersList = (await getClients()).filter((c) => c.active);
       setSellers(sellersList);
-      setLotForm({ animalId: '', sellerId: '', lotNumber: '', minPrice: '', conditionsText: '' });
+      setAnimalOwnerIds([]);
+      setLotForm({ animalId: '', sellerIds: [], lotNumber: '', minPrice: '', conditionsText: '' });
       setLotOpen(true);
     } catch (e: any) {
       toastError(e.message || 'Erro ao carregar dados do lote');
     }
   };
 
+  const onLotAnimalChange = async (animalId: string) => {
+    setLotForm((f) => ({ ...f, animalId, sellerIds: [] }));
+    setAnimalOwnerIds([]);
+    if (!animalId) return;
+    try {
+      const animal = await getAnimal(animalId);
+      const owners = animal.owners || [];
+      setAnimalOwnerIds(owners.map((o) => o.clientId));
+      setSellers((prev) => {
+        const extras = owners
+          .filter((o) => !prev.some((c) => c.id === o.clientId))
+          .map(
+            (o) =>
+              ({
+                id: o.clientId,
+                name: o.clientName,
+                document_type: 'CPF',
+                document: null,
+                email: null,
+                phone: null,
+                whatsapp: null,
+                city: null,
+                state: null,
+                address: null,
+                notes: null,
+                active: true,
+              }) as Client
+          );
+        return extras.length ? [...prev, ...extras] : prev;
+      });
+      if (owners.length) {
+        const ordered = [
+          ...owners.filter((o) => o.isPrimary),
+          ...owners.filter((o) => !o.isPrimary),
+        ];
+        setLotForm((f) => ({
+          ...f,
+          animalId,
+          sellerIds: ordered.map((o) => o.clientId),
+        }));
+      }
+    } catch {
+      /* vendedor permanece manual */
+    }
+  };
+
+  const toggleLotSeller = (clientId: string) => {
+    setLotForm((f) => {
+      const has = f.sellerIds.includes(clientId);
+      const sellerIds = has ? f.sellerIds.filter((id) => id !== clientId) : [...f.sellerIds, clientId];
+      return { ...f, sellerIds };
+    });
+  };
+
   const createLotSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canWrite || !detailId) return;
+    if (!lotForm.sellerIds.length) {
+      toastError('Selecione ao menos um vendedor');
+      return;
+    }
     setSaving(true);
     try {
       await createAuctionLot({
         auctionId: detailId,
         animalId: lotForm.animalId,
-        sellerId: lotForm.sellerId,
+        sellerIds: lotForm.sellerIds,
+        sellerId: lotForm.sellerIds[0],
         lotNumber: lotForm.lotNumber || null,
         minPrice: lotForm.minPrice || null,
         conditionsText: lotForm.conditionsText || null,
@@ -187,7 +286,7 @@ export default function AuctionsPage() {
         {canWrite && (
           <button
             type="button"
-            onClick={() => setFormOpen(true)}
+            onClick={openCreateAuction}
             className="inline-flex items-center gap-2 rounded-xl bg-brand-brown px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-olive"
           >
             <Plus className="h-4 w-4" /> Novo leilão
@@ -207,12 +306,13 @@ export default function AuctionsPage() {
                 <th className="hidden px-4 py-3 font-medium lg:table-cell">Local</th>
                 <th className="px-4 py-3 font-medium">Lotes</th>
                 <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-4 py-3 font-medium"></th>
               </tr>
             </thead>
             <tbody>
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-brand-olive">
+                  <td colSpan={6} className="px-4 py-10 text-center text-brand-olive">
                     Nenhum leilão cadastrado
                   </td>
                 </tr>
@@ -237,6 +337,20 @@ export default function AuctionsPage() {
                   <td className="hidden px-4 py-3 lg:table-cell">{a.location || '—'}</td>
                   <td className="px-4 py-3">{a.lots_count ?? 0}</td>
                   <td className="px-4 py-3">{statusLabel[a.status]}</td>
+                  <td className="px-4 py-3 text-right">
+                    {canWrite && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditAuction(a);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-brand-brown hover:bg-brand-beige/50"
+                      >
+                        <Pencil className="h-4 w-4" /> Editar
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -244,8 +358,13 @@ export default function AuctionsPage() {
         </div>
       )}
 
-      <Modal open={formOpen} title="Novo leilão" subtitle="Evento de oferta dos animais" onClose={() => setFormOpen(false)}>
-        <form onSubmit={createAuctionSubmit} className="space-y-4">
+      <Modal
+        open={formOpen}
+        title={editingId ? 'Editar leilão' : 'Novo leilão'}
+        subtitle="Evento de oferta dos animais"
+        onClose={closeAuctionForm}
+      >
+        <form onSubmit={saveAuctionSubmit} className="space-y-4">
           <label className="block space-y-1.5">
             <span className="text-xs font-medium uppercase text-brand-olive">Nome *</span>
             <input required className={inputClass} value={auctionForm.name} onChange={(e) => setAuctionForm((f) => ({ ...f, name: e.target.value }))} />
@@ -278,9 +397,9 @@ export default function AuctionsPage() {
           </label>
           <div className="flex gap-2 pt-2">
             <button type="submit" disabled={saving} className="rounded-xl bg-brand-brown px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60">
-              {saving ? 'Salvando...' : 'Salvar leilão'}
+              {saving ? 'Salvando...' : editingId ? 'Salvar alterações' : 'Salvar leilão'}
             </button>
-            <button type="button" onClick={() => setFormOpen(false)} className="rounded-xl border border-brand-beige px-4 py-2.5 text-sm">
+            <button type="button" onClick={closeAuctionForm} className="rounded-xl border border-brand-beige px-4 py-2.5 text-sm">
               Cancelar
             </button>
           </div>
@@ -388,22 +507,62 @@ export default function AuctionsPage() {
         <form onSubmit={createLotSubmit} className="space-y-4">
           <label className="block space-y-1.5">
             <span className="text-xs font-medium uppercase text-brand-olive">Animal *</span>
-            <select required className={inputClass} value={lotForm.animalId} onChange={(e) => setLotForm((f) => ({ ...f, animalId: e.target.value }))}>
+            <select required className={inputClass} value={lotForm.animalId} onChange={(e) => onLotAnimalChange(e.target.value)}>
               <option value="">— Selecionar —</option>
               {animals.map((a) => (
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
           </label>
-          <label className="block space-y-1.5">
-            <span className="text-xs font-medium uppercase text-brand-olive">Vendedor *</span>
-            <select required className={inputClass} value={lotForm.sellerId} onChange={(e) => setLotForm((f) => ({ ...f, sellerId: e.target.value }))}>
-              <option value="">— Selecionar —</option>
-              {sellers.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </label>
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-medium uppercase text-brand-olive">Vendedor(es) do lote *</span>
+              {lotForm.sellerIds.length > 0 && (
+                <span className="text-xs text-brand-olive">{lotForm.sellerIds.length} selecionado(s)</span>
+              )}
+            </div>
+            <div className="max-h-48 space-y-1 overflow-y-auto rounded-xl border border-brand-beige bg-white p-2">
+              {(animalOwnerIds.length
+                ? [
+                    ...sellers.filter((c) => animalOwnerIds.includes(c.id)),
+                    ...sellers.filter((c) => !animalOwnerIds.includes(c.id)),
+                  ]
+                : sellers
+              ).map((c) => {
+                const checked = lotForm.sellerIds.includes(c.id);
+                return (
+                  <label
+                    key={c.id}
+                    className={`flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-brand-off-white ${
+                      checked ? 'bg-brand-beige/40' : ''
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleLotSeller(c.id)}
+                      className="rounded border-brand-beige"
+                    />
+                    <span className="text-brand-dark-brown">
+                      {c.name}
+                      {animalOwnerIds.includes(c.id) ? (
+                        <span className="text-brand-olive"> (proprietário)</span>
+                      ) : null}
+                      {checked && lotForm.sellerIds[0] === c.id ? (
+                        <span className="text-brand-olive"> · principal</span>
+                      ) : null}
+                    </span>
+                  </label>
+                );
+              })}
+              {!sellers.length && (
+                <p className="px-2 py-3 text-center text-xs text-brand-olive">Nenhum vendedor cadastrado</p>
+              )}
+            </div>
+            <p className="text-xs text-brand-olive">
+              Marque um ou mais vendedores. O primeiro marcado fica como principal no contrato (pode trocar no arremate).
+            </p>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block space-y-1.5">
               <span className="text-xs font-medium uppercase text-brand-olive">Nº do lote</span>
@@ -440,6 +599,13 @@ export default function AuctionsPage() {
           <ContractForm
             animalId={arremateLot.animal_id}
             sellerId={arremateLot.seller_id}
+            sellerIds={
+              arremateLot.sellers?.length
+                ? arremateLot.sellers.map((s) => s.clientId)
+                : arremateLot.seller_id
+                  ? [arremateLot.seller_id]
+                  : undefined
+            }
             auctionId={arremateLot.auction_id}
             lotId={arremateLot.id}
             lotLabel={arremateLot.lot_number}

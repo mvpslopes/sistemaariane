@@ -33,6 +33,8 @@ interface ContractFormProps {
   contractId?: string | null;
   animalId?: string | null;
   sellerId?: string | null;
+  /** Quando o lote tem vários vendedores, restringe e permite escolher entre eles. */
+  sellerIds?: string[] | null;
   auctionId?: string | null;
   lotId?: string | null;
   lotLabel?: string | null;
@@ -65,6 +67,7 @@ export default function ContractForm({
   contractId = null,
   animalId,
   sellerId,
+  sellerIds,
   auctionId,
   lotId,
   lotLabel,
@@ -187,7 +190,14 @@ export default function ContractForm({
         } else {
           setAnimals(activeAnimals);
         }
-        setSellers(s.filter((c) => c.active));
+        let sellerList = s.filter((c) => c.active);
+        if (sellerIds?.length) {
+          const fromAll = all.filter((c) => c.active && sellerIds.includes(c.id));
+          const byId = new Map(sellerList.map((c) => [c.id, c]));
+          fromAll.forEach((c) => byId.set(c.id, c));
+          sellerList = Array.from(byId.values());
+        }
+        setSellers(sellerList);
         setBuyers(b.filter((c) => c.active));
         setAssessors(ass.filter((c) => c.active));
         setWitnesses(wit.filter((c) => c.active));
@@ -527,16 +537,21 @@ export default function ContractForm({
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Vendedor *</span>
           <select
             required
-            disabled={!!sellerId || !canWrite}
+            disabled={((!sellerIds || sellerIds.length <= 1) && !!sellerId) || !canWrite}
             value={form.sellerId}
             onChange={(e) => set('sellerId', e.target.value)}
             className={inputClass}
           >
             <option value="">— Selecionar —</option>
-            {sellers.map((c) => (
+            {(sellerIds?.length ? sellers.filter((c) => sellerIds.includes(c.id)) : sellers).map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
+          {sellerIds && sellerIds.length > 1 && (
+            <span className="text-xs text-brand-olive">
+              Lote com {sellerIds.length} vendedores — escolha o representante deste contrato.
+            </span>
+          )}
         </label>
 
         <label className="block space-y-1.5">

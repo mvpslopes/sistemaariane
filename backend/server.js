@@ -461,6 +461,27 @@ function clientExtraFields(body) {
   };
 }
 
+function validateRequiredClient(body) {
+  const missing = [];
+  if (!String(body.name || '').trim()) missing.push('Nome completo');
+  const digits = String(body.document || '').replace(/\D/g, '');
+  const docType = body.document_type || 'CPF';
+  if (!digits) missing.push('CPF/CNPJ');
+  else if (docType === 'CNPJ' ? digits.length !== 14 : digits.length !== 11) {
+    return docType === 'CNPJ' ? 'CNPJ inválido — informe 14 dígitos' : 'CPF inválido — informe 11 dígitos';
+  }
+  const email = String(body.email || '').trim();
+  if (!email) missing.push('E-mail');
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'E-mail inválido';
+  if (!String(body.phone || '').trim()) missing.push('Telefone');
+  if (String(body.zip_code || '').replace(/\D/g, '').length !== 8) missing.push('CEP');
+  if (!String(body.address || '').trim()) missing.push('Endereço (logradouro)');
+  if (!String(body.city || '').trim()) missing.push('Cidade');
+  if (!String(body.state || '').trim()) missing.push('UF');
+  if (missing.length) return `Preencha os campos obrigatórios: ${missing.join(', ')}`;
+  return null;
+}
+
 async function generateCharges(conn, contractId, buyerId, total, n, firstDue, method) {
   n = Math.max(1, Math.min(40, n));
   const base = Math.floor((total / n) * 100) / 100;
@@ -658,12 +679,130 @@ function mapLot(r) {
     lot_number: r.lot_number,
     seller_id: String(r.seller_id),
     seller_name: r.seller_name || null,
+    sellers: r.sellers || undefined,
     min_price: r.min_price != null ? Number(r.min_price) : null,
     conditions_text: r.conditions_text,
     status: r.status,
     contract_id: r.contract_id ? String(r.contract_id) : null,
     created_at: r.created_at || null,
   };
+}
+
+/** Normaliza sellerId | sellerIds | sellers → lista com principal. */
+function normalizeLotSellers(body) {
+  let list = [];
+  if (Array.isArray(body.sellers) && body.sellers.length) {
+    list = body.sellers
+      .map((s, i) => ({
+        clientId: Number(s.clientId ?? s.client_id ?? s),
+        sharePct: s.sharePct != null ? Number(s.sharePct) : null,
+        isPrimary: !!s.isPrimary || !!s.is_primary,
+        order: i,
+      }))
+      .filter((s) => s.clientId > 0);
+  } else if (Array.isArray(body.sellerIds) && body.sellerIds.length) {
+    list = body.sellerIds
+      .map((id, i) => ({ clientId: Number(id), sharePct: null, isPrimary: i === 0, order: i }))
+      .filter((s) => s.clientId > 0);
+  } else if (body.sellerId) {
+    list = [{ clientId: Number(body.sellerId), sharePct: 100, isPrimary: true, order: 0 }];
+  }
+
+  // unique
+  const seen = new Set();
+  list = list.filter((s) => {
+    if (seen.has(s.clientId)) return false;
+    seen.add(s.clientId);
+    return true;
+  });
+  if (!list.length) return null;
+
+  if (!list.some((s) => s.isPrimary)) list[0].isPrimary = true;
+  list.forEach((s) => {
+    if (!s.isPrimary) s.isPrimary = false;
+  });
+  // only one primary
+  let primarySeen = false;
+  list = list.map((s) => {
+    if (s.isPrimary && !primarySeen) {
+      primarySeen = true;
+      return s;
+    }
+    return { ...s, isPrimary: false };
+  });
+
+  const n = list.length;
+  const equal = Math.round((100 / n) * 100) / 100;
+  list = list.map((s, i) => ({
+    ...s,
+    sharePct:
+      s.sharePct != null && !Number.isNaN(s.sharePct)
+        ? s.sharePct
+        : i === n - 1
+          ? Math.round((100 - equal * (n - 1)) * 100) / 100
+          : equal,
+  }));
+  return list;
+}
+
+async function upsertLotSellers(conn, lotId, sellers) {
+  await conn.execute('DELETE FROM auction_lot_sellers WHERE lot_id = ?', [lotId]);
+  for (const s of sellers) {
+    await conn.execute(
+      `INSERT INTO auction_lot_sellers (lot_id, client_id, share_pct, is_primary)
+       VALUES (?, ?, ?, ?)`,
+      [lotId, s.clientId, s.sharePct, s.isPrimary ? 1 : 0]
+    );
+  }
+}
+
+async function attachLotSellers(poolOrConn, lots) {
+  if (!lots?.length) return [];
+  const ids = lots.map((l) => l.id);
+  let rows = [];
+  try {
+    const [r] = await poolOrConn.execute(
+      `SELECT als.lot_id, als.client_id, als.share_pct, als.is_primary, c.name AS client_name
+       FROM auction_lot_sellers als
+       INNER JOIN clients c ON c.id = als.client_id
+       WHERE als.lot_id IN (${ids.map(() => '?').join(',')})
+       ORDER BY als.is_primary DESC, c.name ASC`,
+      ids
+    );
+    rows = r;
+  } catch {
+    /* migration ainda não aplicada */
+  }
+  const byLot = {};
+  for (const row of rows) {
+    (byLot[row.lot_id] ||= []).push({
+      clientId: String(row.client_id),
+      clientName: row.client_name,
+      sharePct: Number(row.share_pct),
+      isPrimary: !!row.is_primary,
+    });
+  }
+  return lots.map((l) => {
+    const sellers =
+      byLot[l.id] ||
+      (l.seller_id
+        ? [
+            {
+              clientId: String(l.seller_id),
+              clientName: l.seller_name || '',
+              sharePct: 100,
+              isPrimary: true,
+            },
+          ]
+        : []);
+    const primary = sellers.find((s) => s.isPrimary) || sellers[0];
+    return mapLot({
+      ...l,
+      seller_id: primary?.clientId || l.seller_id,
+      seller_name: sellers.map((s) => s.clientName).filter(Boolean).join(', ') || l.seller_name,
+      sellers,
+    });
+  });
 }
 
 function mapPayout(r) {
@@ -744,7 +883,8 @@ app.post('/api/clients', auth(['root', 'admin', 'user']), async (req, res) => {
     } = req.body;
     const extra = clientExtraFields(req.body);
 
-    if (!name?.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
+    const validationError = validateRequiredClient(req.body);
+    if (validationError) return res.status(400).json({ error: validationError });
 
     const [result] = await pool.execute(
       `INSERT INTO clients
@@ -797,7 +937,8 @@ app.put('/api/clients/:id', auth(['root', 'admin', 'user']), async (req, res) =>
     } = req.body;
     const extra = clientExtraFields(req.body);
 
-    if (!name?.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
+    const validationError = validateRequiredClient(req.body);
+    if (validationError) return res.status(400).json({ error: validationError });
 
     await pool.execute(
       `UPDATE clients SET
@@ -2066,7 +2207,7 @@ app.get('/api/auctions/:id', auth(), async (req, res) => {
        ORDER BY l.lot_number ASC, l.id ASC`,
       [row.id]
     );
-    res.json({ ...mapAuction(row), lots: lots.map(mapLot) });
+    res.json({ ...mapAuction(row), lots: await attachLotSellers(pool, lots) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao abrir leilão' });
@@ -2160,7 +2301,7 @@ app.get('/api/auction-lots', auth(), async (req, res) => {
     }
     sql += ' ORDER BY l.lot_number ASC, l.id ASC';
     const [rows] = await pool.execute(sql, params);
-    res.json(rows.map(mapLot));
+    res.json(await attachLotSellers(pool, rows));
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao listar lotes' });
@@ -2168,34 +2309,50 @@ app.get('/api/auction-lots', auth(), async (req, res) => {
 });
 
 app.post('/api/auction-lots', auth(['root', 'admin', 'user']), async (req, res) => {
+  const conn = await pool.getConnection();
   try {
-    const { auctionId, animalId, sellerId, lotNumber, minPrice, conditionsText } = req.body;
-    if (!auctionId || !animalId || !sellerId) {
-      return res.status(400).json({ error: 'Leilão, animal e vendedor são obrigatórios' });
+    const { auctionId, animalId, lotNumber, minPrice, conditionsText } = req.body;
+    const sellers = normalizeLotSellers(req.body);
+    if (!auctionId || !animalId || !sellers?.length) {
+      return res.status(400).json({ error: 'Leilão, animal e ao menos um vendedor são obrigatórios' });
     }
-    const [result] = await pool.execute(
+    const primary = sellers.find((s) => s.isPrimary) || sellers[0];
+    await conn.beginTransaction();
+    const [result] = await conn.execute(
       `INSERT INTO auction_lots (auction_id, animal_id, lot_number, seller_id, min_price, conditions_text, status)
        VALUES (?, ?, ?, ?, ?, ?, 'disponivel')`,
       [
         Number(auctionId),
         Number(animalId),
         lotNumber || null,
-        Number(sellerId),
+        primary.clientId,
         minPrice != null && minPrice !== '' ? Number(minPrice) : null,
         conditionsText || null,
       ]
     );
-    res.json({ success: true, id: String(result.insertId) });
+    const lotId = result.insertId;
+    try {
+      await upsertLotSellers(conn, lotId, sellers);
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE') throw e;
+    }
+    await conn.commit();
+    res.json({ success: true, id: String(lotId) });
   } catch (error) {
+    await conn.rollback();
     console.error(error);
     res.status(500).json({ error: 'Erro ao criar lote' });
+  } finally {
+    conn.release();
   }
 });
 
 app.put('/api/auction-lots/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const id = Number(req.params.id);
-    const { lotNumber, minPrice, conditionsText, status, sellerId } = req.body;
+    const { lotNumber, minPrice, conditionsText, status } = req.body;
+    const sellers = normalizeLotSellers(req.body);
     const fields = [];
     const params = [];
     if (lotNumber !== undefined) {
@@ -2210,9 +2367,13 @@ app.put('/api/auction-lots/:id', auth(['root', 'admin', 'user']), async (req, re
       fields.push('conditions_text=?');
       params.push(conditionsText || null);
     }
-    if (sellerId !== undefined) {
+    if (sellers?.length) {
+      const primary = sellers.find((s) => s.isPrimary) || sellers[0];
       fields.push('seller_id=?');
-      params.push(Number(sellerId));
+      params.push(primary.clientId);
+    } else if (req.body.sellerId !== undefined) {
+      fields.push('seller_id=?');
+      params.push(Number(req.body.sellerId));
     }
     if (status !== undefined) {
       if (!['disponivel', 'arrematado', 'retirado'].includes(status)) {
@@ -2221,12 +2382,26 @@ app.put('/api/auction-lots/:id', auth(['root', 'admin', 'user']), async (req, re
       fields.push('status=?');
       params.push(status);
     }
-    if (!fields.length) return res.status(400).json({ error: 'Nada para atualizar' });
-    params.push(id);
-    await pool.execute(`UPDATE auction_lots SET ${fields.join(',')} WHERE id=?`, params);
+    if (!fields.length && !sellers?.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    await conn.beginTransaction();
+    if (fields.length) {
+      params.push(id);
+      await conn.execute(`UPDATE auction_lots SET ${fields.join(',')} WHERE id=?`, params);
+    }
+    if (sellers?.length) {
+      try {
+        await upsertLotSellers(conn, id, sellers);
+      } catch (e) {
+        if (e.code !== 'ER_NO_SUCH_TABLE') throw e;
+      }
+    }
+    await conn.commit();
     res.json({ success: true });
   } catch (error) {
+    await conn.rollback();
     res.status(500).json({ error: 'Erro ao atualizar lote' });
+  } finally {
+    conn.release();
   }
 });
 

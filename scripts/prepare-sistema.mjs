@@ -31,6 +31,7 @@ const copies = [
   ['database/migration-contrato-verso.sql', 'migration-contrato-verso.sql'],
   ['database/migration-endereco-numero.sql', 'migration-endereco-numero.sql'],
   ['database/migration-papel-avalista.sql', 'migration-papel-avalista.sql'],
+  ['database/migration-lote-vendedores.sql', 'migration-lote-vendedores.sql'],
   ['database/seed-modelo-contrato-padrao.sql', 'seed-modelo-contrato-padrao.sql'],
   ['database/seed-papeis.sql', 'seed-papeis.sql'],
 ];

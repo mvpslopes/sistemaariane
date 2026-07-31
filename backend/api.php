@@ -467,6 +467,36 @@ function map_client(array $r): array {
     ];
 }
 
+function validate_required_client(array $body): ?string {
+    $missing = [];
+    if (trim((string)($body['name'] ?? '')) === '') $missing[] = 'Nome completo';
+    $digits = preg_replace('/\D+/', '', (string)($body['document'] ?? '')) ?? '';
+    $docType = $body['document_type'] ?? 'CPF';
+    if ($digits === '') {
+        $missing[] = 'CPF/CNPJ';
+    } elseif ($docType === 'CNPJ' ? strlen($digits) !== 14 : strlen($digits) !== 11) {
+        return $docType === 'CNPJ'
+            ? 'CNPJ inválido — informe 14 dígitos'
+            : 'CPF inválido — informe 11 dígitos';
+    }
+    $email = trim((string)($body['email'] ?? ''));
+    if ($email === '') {
+        $missing[] = 'E-mail';
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return 'E-mail inválido';
+    }
+    if (trim((string)($body['phone'] ?? '')) === '') $missing[] = 'Telefone';
+    $cep = preg_replace('/\D+/', '', (string)($body['zip_code'] ?? '')) ?? '';
+    if (strlen($cep) !== 8) $missing[] = 'CEP';
+    if (trim((string)($body['address'] ?? '')) === '') $missing[] = 'Endereço (logradouro)';
+    if (trim((string)($body['city'] ?? '')) === '') $missing[] = 'Cidade';
+    if (trim((string)($body['state'] ?? '')) === '') $missing[] = 'UF';
+    if ($missing) {
+        return 'Preencha os campos obrigatórios: ' . implode(', ', $missing);
+    }
+    return null;
+}
+
 function client_ip(): string {
     return $_SERVER['HTTP_X_FORWARDED_FOR'] ?? $_SERVER['REMOTE_ADDR'] ?? '';
 }
@@ -675,12 +705,133 @@ function map_lot_row(array $r): array {
         'lot_number' => $r['lot_number'],
         'seller_id' => (string)$r['seller_id'],
         'seller_name' => $r['seller_name'] ?? null,
+        'sellers' => $r['sellers'] ?? null,
         'min_price' => $r['min_price'] !== null ? (float)$r['min_price'] : null,
         'conditions_text' => $r['conditions_text'],
         'status' => $r['status'],
         'contract_id' => $r['contract_id'] ? (string)$r['contract_id'] : null,
         'created_at' => $r['created_at'] ?? null,
     ];
+}
+
+function normalize_lot_sellers(array $body): ?array {
+    $list = [];
+    if (!empty($body['sellers']) && is_array($body['sellers'])) {
+        foreach ($body['sellers'] as $i => $s) {
+            if (!is_array($s)) {
+                $cid = (int)$s;
+                if ($cid > 0) $list[] = ['clientId' => $cid, 'sharePct' => null, 'isPrimary' => $i === 0];
+                continue;
+            }
+            $cid = (int)($s['clientId'] ?? $s['client_id'] ?? 0);
+            if ($cid <= 0) continue;
+            $list[] = [
+                'clientId' => $cid,
+                'sharePct' => isset($s['sharePct']) ? (float)$s['sharePct'] : (isset($s['share_pct']) ? (float)$s['share_pct'] : null),
+                'isPrimary' => !empty($s['isPrimary']) || !empty($s['is_primary']),
+            ];
+        }
+    } elseif (!empty($body['sellerIds']) && is_array($body['sellerIds'])) {
+        foreach ($body['sellerIds'] as $i => $id) {
+            $cid = (int)$id;
+            if ($cid > 0) $list[] = ['clientId' => $cid, 'sharePct' => null, 'isPrimary' => $i === 0];
+        }
+    } elseif (!empty($body['sellerId'])) {
+        $list[] = ['clientId' => (int)$body['sellerId'], 'sharePct' => 100.0, 'isPrimary' => true];
+    }
+
+    $seen = [];
+    $unique = [];
+    foreach ($list as $s) {
+        if (isset($seen[$s['clientId']])) continue;
+        $seen[$s['clientId']] = true;
+        $unique[] = $s;
+    }
+    if (!$unique) return null;
+
+    $hasPrimary = false;
+    foreach ($unique as &$s) {
+        if ($s['isPrimary'] && !$hasPrimary) {
+            $hasPrimary = true;
+        } else {
+            $s['isPrimary'] = false;
+        }
+    }
+    unset($s);
+    if (!$hasPrimary) $unique[0]['isPrimary'] = true;
+
+    $n = count($unique);
+    $equal = round(100 / $n, 2);
+    foreach ($unique as $i => &$s) {
+        if ($s['sharePct'] === null) {
+            $s['sharePct'] = $i === $n - 1
+                ? round(100 - $equal * ($n - 1), 2)
+                : $equal;
+        }
+    }
+    unset($s);
+    return $unique;
+}
+
+function upsert_lot_sellers(PDO $pdo, int $lotId, array $sellers): void {
+    $pdo->prepare('DELETE FROM auction_lot_sellers WHERE lot_id = ?')->execute([$lotId]);
+    $ins = $pdo->prepare(
+        'INSERT INTO auction_lot_sellers (lot_id, client_id, share_pct, is_primary) VALUES (?, ?, ?, ?)'
+    );
+    foreach ($sellers as $s) {
+        $ins->execute([$lotId, $s['clientId'], $s['sharePct'], $s['isPrimary'] ? 1 : 0]);
+    }
+}
+
+function attach_lot_sellers(PDO $pdo, array $lots): array {
+    if (!$lots) return [];
+    $ids = array_map(fn($l) => (int)$l['id'], $lots);
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $byLot = [];
+    try {
+        $stmt = $pdo->prepare(
+            "SELECT als.lot_id, als.client_id, als.share_pct, als.is_primary, c.name AS client_name
+             FROM auction_lot_sellers als
+             INNER JOIN clients c ON c.id = als.client_id
+             WHERE als.lot_id IN ($placeholders)
+             ORDER BY als.is_primary DESC, c.name ASC"
+        );
+        $stmt->execute($ids);
+        foreach ($stmt->fetchAll() as $row) {
+            $byLot[(int)$row['lot_id']][] = [
+                'clientId' => (string)$row['client_id'],
+                'clientName' => $row['client_name'],
+                'sharePct' => (float)$row['share_pct'],
+                'isPrimary' => (bool)$row['is_primary'],
+            ];
+        }
+    } catch (Throwable $e) {
+        /* migration ainda não aplicada */
+    }
+
+    $out = [];
+    foreach ($lots as $l) {
+        $sellers = $byLot[(int)$l['id']] ?? null;
+        if (!$sellers) {
+            $sellers = [[
+                'clientId' => (string)$l['seller_id'],
+                'clientName' => $l['seller_name'] ?? '',
+                'sharePct' => 100.0,
+                'isPrimary' => true,
+            ]];
+        }
+        $primary = null;
+        foreach ($sellers as $s) {
+            if (!empty($s['isPrimary'])) { $primary = $s; break; }
+        }
+        if (!$primary) $primary = $sellers[0];
+        $names = array_values(array_filter(array_map(fn($s) => $s['clientName'] ?? '', $sellers)));
+        $l['seller_id'] = $primary['clientId'];
+        $l['seller_name'] = $names ? implode(', ', $names) : ($l['seller_name'] ?? null);
+        $l['sellers'] = $sellers;
+        $out[] = map_lot_row($l);
+    }
+    return $out;
 }
 
 function map_payout_row(array $r): array {
@@ -950,7 +1101,8 @@ if ($resource === 'clients') {
     if ($method === 'POST' && !$id) {
         $auth = require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
         $name = trim($body['name'] ?? '');
-        if ($name === '') json_out(['error' => 'Nome é obrigatório'], 400);
+        $requiredError = validate_required_client($body);
+        if ($requiredError) json_out(['error' => $requiredError], 400);
         try {
             $stmt = $pdo->prepare(
                 'INSERT INTO clients (name, document_type, document, rg, rg_issuer, birth_date, nickname, marital_status, profession, mother_name, father_name, email, phone, whatsapp, city, state, address, address_number, zip_code, country, notes, relationship_notes, problems_notes, active, is_seller, is_buyer, is_assessor, is_witness, is_avalista, created_by)
@@ -998,7 +1150,8 @@ if ($resource === 'clients') {
     if ($method === 'PUT' && $id && !$action) {
         require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
         $name = trim($body['name'] ?? '');
-        if ($name === '') json_out(['error' => 'Nome é obrigatório'], 400);
+        $requiredError = validate_required_client($body);
+        if ($requiredError) json_out(['error' => $requiredError], 400);
         try {
             $stmt = $pdo->prepare(
                 'UPDATE clients SET name=?, document_type=?, document=?, rg=?, rg_issuer=?, birth_date=?, nickname=?, marital_status=?, profession=?, mother_name=?, father_name=?, email=?, phone=?, whatsapp=?, city=?, state=?, address=?, address_number=?, zip_code=?, country=?, notes=?, relationship_notes=?, problems_notes=?, active=?, is_seller=?, is_buyer=?, is_assessor=?, is_witness=?, is_avalista=? WHERE id=?'
@@ -1891,7 +2044,7 @@ if ($resource === 'auctions') {
         );
         $lots->execute([(int)$id]);
         $out = map_auction_row($r);
-        $out['lots'] = array_map('map_lot_row', $lots->fetchAll());
+        $out['lots'] = attach_lot_sellers($pdo, $lots->fetchAll());
         json_out($out);
     }
 
@@ -1962,42 +2115,72 @@ if ($resource === 'auction-lots') {
         $sql .= ' ORDER BY l.lot_number ASC, l.id ASC';
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
-        json_out(array_map('map_lot_row', $stmt->fetchAll()));
+        json_out(attach_lot_sellers($pdo, $stmt->fetchAll()));
     }
 
     if ($method === 'POST' && !$id) {
         require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
         $auctionId = (int)($body['auctionId'] ?? 0);
         $animalId = (int)($body['animalId'] ?? 0);
-        $sellerId = (int)($body['sellerId'] ?? 0);
-        if (!$auctionId || !$animalId || !$sellerId) {
-            json_out(['error' => 'Leilão, animal e vendedor são obrigatórios'], 400);
+        $sellers = normalize_lot_sellers($body);
+        if (!$auctionId || !$animalId || !$sellers) {
+            json_out(['error' => 'Leilão, animal e ao menos um vendedor são obrigatórios'], 400);
         }
-        $pdo->prepare(
-            "INSERT INTO auction_lots (auction_id, animal_id, lot_number, seller_id, min_price, conditions_text, status)
-             VALUES (?, ?, ?, ?, ?, ?, 'disponivel')"
-        )->execute([
-            $auctionId,
-            $animalId,
-            $body['lotNumber'] ?? null,
-            $sellerId,
-            isset($body['minPrice']) && $body['minPrice'] !== '' ? (float)$body['minPrice'] : null,
-            $body['conditionsText'] ?? null,
-        ]);
-        json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
+        $primary = null;
+        foreach ($sellers as $s) {
+            if (!empty($s['isPrimary'])) { $primary = $s; break; }
+        }
+        if (!$primary) $primary = $sellers[0];
+        try {
+            $pdo->beginTransaction();
+            $pdo->prepare(
+                "INSERT INTO auction_lots (auction_id, animal_id, lot_number, seller_id, min_price, conditions_text, status)
+                 VALUES (?, ?, ?, ?, ?, ?, 'disponivel')"
+            )->execute([
+                $auctionId,
+                $animalId,
+                $body['lotNumber'] ?? null,
+                $primary['clientId'],
+                isset($body['minPrice']) && $body['minPrice'] !== '' ? (float)$body['minPrice'] : null,
+                $body['conditionsText'] ?? null,
+            ]);
+            $lotId = (int)$pdo->lastInsertId();
+            try {
+                upsert_lot_sellers($pdo, $lotId, $sellers);
+            } catch (Throwable $e) {
+                /* tabela pode não existir ainda */
+            }
+            $pdo->commit();
+            json_out(['success' => true, 'id' => (string)$lotId]);
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            json_out(['error' => 'Erro ao criar lote'], 500);
+        }
     }
 
     if ($method === 'PUT' && $id) {
         require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
         $fields = [];
         $params = [];
+        $sellers = normalize_lot_sellers($body);
         if (array_key_exists('lotNumber', $body)) { $fields[] = 'lot_number=?'; $params[] = $body['lotNumber'] ?: null; }
         if (array_key_exists('minPrice', $body)) {
             $fields[] = 'min_price=?';
             $params[] = ($body['minPrice'] !== '' && $body['minPrice'] !== null) ? (float)$body['minPrice'] : null;
         }
         if (array_key_exists('conditionsText', $body)) { $fields[] = 'conditions_text=?'; $params[] = $body['conditionsText'] ?: null; }
-        if (array_key_exists('sellerId', $body)) { $fields[] = 'seller_id=?'; $params[] = (int)$body['sellerId']; }
+        if ($sellers) {
+            $primary = null;
+            foreach ($sellers as $s) {
+                if (!empty($s['isPrimary'])) { $primary = $s; break; }
+            }
+            if (!$primary) $primary = $sellers[0];
+            $fields[] = 'seller_id=?';
+            $params[] = $primary['clientId'];
+        } elseif (array_key_exists('sellerId', $body)) {
+            $fields[] = 'seller_id=?';
+            $params[] = (int)$body['sellerId'];
+        }
         if (array_key_exists('status', $body)) {
             if (!in_array($body['status'], ['disponivel','arrematado','retirado'], true)) {
                 json_out(['error' => 'Status inválido'], 400);
@@ -2005,10 +2188,26 @@ if ($resource === 'auction-lots') {
             $fields[] = 'status=?';
             $params[] = $body['status'];
         }
-        if (!$fields) json_out(['error' => 'Nada para atualizar'], 400);
-        $params[] = (int)$id;
-        $pdo->prepare('UPDATE auction_lots SET ' . implode(',', $fields) . ' WHERE id=?')->execute($params);
-        json_out(['success' => true]);
+        if (!$fields && !$sellers) json_out(['error' => 'Nada para atualizar'], 400);
+        try {
+            $pdo->beginTransaction();
+            if ($fields) {
+                $params[] = (int)$id;
+                $pdo->prepare('UPDATE auction_lots SET ' . implode(',', $fields) . ' WHERE id=?')->execute($params);
+            }
+            if ($sellers) {
+                try {
+                    upsert_lot_sellers($pdo, (int)$id, $sellers);
+                } catch (Throwable $e) {
+                    /* ignore missing table */
+                }
+            }
+            $pdo->commit();
+            json_out(['success' => true]);
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            json_out(['error' => 'Erro ao atualizar lote'], 500);
+        }
     }
 }
 
