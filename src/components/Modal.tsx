@@ -63,21 +63,21 @@ export default function Modal({ open, title, subtitle, onClose, children, size =
         aria-modal="true"
         className={`relative z-10 flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl border border-brand-beige bg-white shadow-2xl animate-scale-in sm:rounded-2xl ${sizes[size]}`}
       >
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-brand-beige px-5 py-4">
-          <div>
-            <h2 className="text-lg font-semibold text-brand-dark-brown">{title}</h2>
-            {subtitle && <p className="mt-0.5 text-sm text-brand-olive">{subtitle}</p>}
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-brand-beige px-4 py-3 sm:px-5 sm:py-4">
+          <div className="min-w-0">
+            <h2 className="truncate text-base font-semibold text-brand-dark-brown sm:text-lg">{title}</h2>
+            {subtitle && <p className="mt-0.5 truncate text-xs text-brand-olive sm:text-sm">{subtitle}</p>}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-2 text-brand-olive hover:bg-brand-beige/40 hover:text-brand-dark-brown"
+            className="shrink-0 rounded-lg p-2 text-brand-olive hover:bg-brand-beige/40 hover:text-brand-dark-brown"
             aria-label="Fechar"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4">{children}</div>
       </div>
     </div>
   );

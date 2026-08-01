@@ -130,16 +130,17 @@ export default function ClientsPage() {
         <EmptyState />
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
+          <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
-                <th className="px-4 py-3 font-medium">Nome</th>
-                <th className="px-4 py-3 font-medium">Propriedade rural</th>
-                <th className="px-4 py-3 font-medium">Documento</th>
-                <th className="hidden px-4 py-3 font-medium md:table-cell">Contato</th>
-                <th className="hidden px-4 py-3 font-medium lg:table-cell">Cidade</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium"></th>
+                <th className="px-3 py-3 font-medium sm:px-4">Nome</th>
+                <th className="hidden px-4 py-3 font-medium sm:table-cell">Propriedade rural</th>
+                <th className="hidden px-4 py-3 font-medium md:table-cell">Documento</th>
+                <th className="hidden px-4 py-3 font-medium lg:table-cell">Contato</th>
+                <th className="hidden px-4 py-3 font-medium xl:table-cell">Cidade</th>
+                <th className="px-3 py-3 font-medium sm:px-4">Status</th>
+                <th className="px-2 py-3 font-medium sm:px-4"></th>
               </tr>
             </thead>
             <tbody>
@@ -148,15 +149,15 @@ export default function ClientsPage() {
                   key={c.id}
                   className="border-t border-brand-beige/60 transition-colors hover:bg-brand-off-white/70"
                 >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
+                  <td className="px-3 py-3 sm:px-4">
+                    <div className="flex items-center gap-2 sm:gap-3">
                       <div
                         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${avatarTone(c.name)}`}
                       >
                         {c.name.charAt(0).toUpperCase()}
                       </div>
-                      <div>
-                        <span className="font-medium text-brand-dark-brown">{c.name}</span>
+                      <div className="min-w-0">
+                        <span className="block truncate font-medium text-brand-dark-brown">{c.name}</span>
                         <div className="mt-0.5 flex flex-wrap gap-1">
                           {c.is_buyer && <RoleChip label="Comprador" />}
                           {c.is_seller && <RoleChip label="Vendedor" />}
@@ -167,44 +168,50 @@ export default function ClientsPage() {
                             <span className="text-[10px] text-brand-olive/60">Sem papel definido</span>
                           )}
                         </div>
+                        {c.property_name && (
+                          <p className="mt-0.5 truncate text-[11px] text-brand-olive sm:hidden">
+                            {c.property_name}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-brand-brown">
+                  <td className="hidden px-4 py-3 text-brand-brown sm:table-cell">
                     {c.property_name || '—'}
                   </td>
-                  <td className="px-4 py-3 text-brand-brown">
+                  <td className="hidden px-4 py-3 text-brand-brown md:table-cell">
                     {c.document_type} {c.document || '—'}
                   </td>
-                  <td className="hidden px-4 py-3 text-brand-brown md:table-cell">
+                  <td className="hidden px-4 py-3 text-brand-brown lg:table-cell">
                     {c.whatsapp || c.phone || c.email || '—'}
                   </td>
-                  <td className="hidden px-4 py-3 text-brand-brown lg:table-cell">
+                  <td className="hidden px-4 py-3 text-brand-brown xl:table-cell">
                     {[c.city, c.state].filter(Boolean).join('/') || '—'}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-3 sm:px-4">
                     <StatusBadge active={c.active} />
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="inline-flex items-center gap-1">
+                  <td className="px-2 py-3 text-right sm:px-4">
+                    <div className="inline-flex items-center gap-0.5 sm:gap-1">
                       <button
                         type="button"
                         onClick={() => openEdit(c.id)}
-                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-brand-brown hover:bg-brand-beige/50"
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-brown hover:bg-brand-beige/50"
+                        title={canWrite ? 'Editar' : 'Ver'}
                       >
                         <Pencil className="h-4 w-4" />
-                        {canWrite ? 'Editar' : 'Ver'}
+                        <span className="hidden sm:inline">{canWrite ? 'Editar' : 'Ver'}</span>
                       </button>
                       {canWrite && (
                         <button
                           type="button"
                           onClick={() => onDelete(c)}
                           disabled={deletingId === c.id}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50"
                           title="Excluir"
                         >
                           <Trash2 className="h-4 w-4" />
-                          {deletingId === c.id ? '...' : 'Excluir'}
+                          <span className="hidden sm:inline">{deletingId === c.id ? '...' : 'Excluir'}</span>
                         </button>
                       )}
                     </div>
@@ -213,6 +220,7 @@ export default function ClientsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

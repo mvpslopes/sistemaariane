@@ -209,68 +209,79 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
         <Loading message="Carregando contratos..." />
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
-          <table className="min-w-full text-left text-sm">
-            <thead className="bg-brand-off-white text-brand-olive">
-              <tr>
-                <th className="px-4 py-3 font-medium">Nº / Animal</th>
-                <th className="hidden px-4 py-3 font-medium md:table-cell">Tipo</th>
-                <th className="hidden px-4 py-3 font-medium lg:table-cell">Comprador</th>
-                <th className="px-4 py-3 font-medium">Valor</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-sm">
+              <thead className="bg-brand-off-white text-brand-olive">
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-brand-olive">
-                    Nenhum contrato encontrado
-                  </td>
+                  <th className="px-3 py-3 font-medium sm:px-4">Nº / Animal</th>
+                  <th className="hidden px-4 py-3 font-medium md:table-cell">Tipo</th>
+                  <th className="hidden px-4 py-3 font-medium lg:table-cell">Comprador</th>
+                  <th className="px-3 py-3 font-medium sm:px-4">Valor</th>
+                  <th className="px-3 py-3 font-medium sm:px-4">Status</th>
+                  <th className="px-2 py-3 font-medium sm:px-4"></th>
                 </tr>
-              )}
-              {filtered.map((c) => (
-                <tr key={c.id} className="border-t border-brand-beige/60 hover:bg-brand-off-white/70">
-                  <td className="px-4 py-3 font-medium text-brand-dark-brown">
-                    <div>{c.animal_name}</div>
-                    {c.contract_number && (
-                      <div className="text-xs font-normal text-brand-olive">{c.contract_number}</div>
-                    )}
-                  </td>
-                  <td className="hidden px-4 py-3 text-brand-brown md:table-cell">
-                    {saleLabel(c.sale_type)}
-                    {c.share_pct != null && c.sale_type !== 'inteiro' ? ` (${c.share_pct}%)` : ''}
-                  </td>
-                  <td className="hidden px-4 py-3 text-brand-brown lg:table-cell">{c.buyer_name}</td>
-                  <td className="px-4 py-3 text-brand-brown">{money(c.total_amount)}</td>
-                  <td className="px-4 py-3">
-                    <span className="inline-flex rounded-full bg-brand-beige/60 px-2.5 py-0.5 text-xs font-medium text-brand-dark-brown">
-                      {statusLabel[c.status]}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="inline-flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => openDetail(c.id)}
-                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-brand-brown hover:bg-brand-beige/50"
-                      >
-                        <FileText className="h-4 w-4" /> Abrir
-                      </button>
-                      {canWrite && c.status !== 'cancelado' && c.status !== 'concluido' && (
+              </thead>
+              <tbody>
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-10 text-center text-brand-olive">
+                      Nenhum contrato encontrado
+                    </td>
+                  </tr>
+                )}
+                {filtered.map((c) => (
+                  <tr key={c.id} className="border-t border-brand-beige/60 hover:bg-brand-off-white/70">
+                    <td className="px-3 py-3 font-medium text-brand-dark-brown sm:px-4">
+                      <div className="max-w-[9.5rem] truncate sm:max-w-none">{c.animal_name}</div>
+                      {c.contract_number && (
+                        <div className="text-xs font-normal text-brand-olive">{c.contract_number}</div>
+                      )}
+                      <div className="mt-0.5 truncate text-xs font-normal text-brand-olive lg:hidden">
+                        {c.buyer_name}
+                      </div>
+                    </td>
+                    <td className="hidden px-4 py-3 text-brand-brown md:table-cell">
+                      {saleLabel(c.sale_type)}
+                      {c.share_pct != null && c.sale_type !== 'inteiro' ? ` (${c.share_pct}%)` : ''}
+                    </td>
+                    <td className="hidden px-4 py-3 text-brand-brown lg:table-cell">{c.buyer_name}</td>
+                    <td className="whitespace-nowrap px-3 py-3 text-brand-brown sm:px-4">
+                      {money(c.total_amount)}
+                    </td>
+                    <td className="px-3 py-3 sm:px-4">
+                      <span className="inline-flex rounded-full bg-brand-beige/60 px-2 py-0.5 text-[11px] font-medium text-brand-dark-brown sm:px-2.5 sm:text-xs">
+                        {statusLabel[c.status]}
+                      </span>
+                    </td>
+                    <td className="px-2 py-3 text-right sm:px-4">
+                      <div className="inline-flex items-center gap-0.5 sm:gap-1">
                         <button
                           type="button"
-                          onClick={() => setEditId(c.id)}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-brand-brown hover:bg-brand-beige/50"
+                          onClick={() => openDetail(c.id)}
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-brown hover:bg-brand-beige/50"
+                          title="Abrir"
                         >
-                          <Pencil className="h-4 w-4" /> Editar
+                          <FileText className="h-4 w-4" />
+                          <span className="hidden sm:inline">Abrir</span>
                         </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                        {canWrite && c.status !== 'cancelado' && c.status !== 'concluido' && (
+                          <button
+                            type="button"
+                            onClick={() => setEditId(c.id)}
+                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-brown hover:bg-brand-beige/50"
+                            title="Editar"
+                          >
+                            <Pencil className="h-4 w-4" />
+                            <span className="hidden sm:inline">Editar</span>
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

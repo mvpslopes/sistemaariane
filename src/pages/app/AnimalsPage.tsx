@@ -138,16 +138,17 @@ export default function AnimalsPage() {
         <EmptyState />
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
+          <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
-                <th className="px-4 py-3 font-medium">Animal</th>
+                <th className="px-3 py-3 font-medium sm:px-4">Animal</th>
                 <th className="hidden px-4 py-3 font-medium md:table-cell">Registro</th>
                 <th className="hidden px-4 py-3 font-medium lg:table-cell">Chip</th>
-                <th className="px-4 py-3 font-medium">Sexo</th>
+                <th className="hidden px-4 py-3 font-medium sm:table-cell">Sexo</th>
                 <th className="hidden px-4 py-3 font-medium xl:table-cell">Vendedor(es)</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium"></th>
+                <th className="px-3 py-3 font-medium sm:px-4">Status</th>
+                <th className="px-2 py-3 font-medium sm:px-4"></th>
               </tr>
             </thead>
             <tbody>
@@ -156,8 +157,8 @@ export default function AnimalsPage() {
                   key={a.id}
                   className="border-t border-brand-beige/60 transition-colors hover:bg-brand-off-white/70"
                 >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
+                  <td className="px-3 py-3 sm:px-4">
+                    <div className="flex items-center gap-2 sm:gap-3">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-brand-beige bg-brand-off-white">
                         {a.photo_url ? (
                           <img src={mediaUrl(a.photo_url) || undefined} alt="" className="h-full w-full object-cover" />
@@ -165,42 +166,48 @@ export default function AnimalsPage() {
                           <Camera className="h-4 w-4 text-brand-olive/40" />
                         )}
                       </div>
-                      <span className="font-medium text-brand-dark-brown">{a.name}</span>
+                      <div className="min-w-0">
+                        <span className="block truncate font-medium text-brand-dark-brown">{a.name}</span>
+                        <span className="text-[11px] text-brand-olive sm:hidden">
+                          {a.sex === 'M' ? 'Macho' : a.sex === 'F' ? 'Fêmea' : a.sex === 'C' ? 'Castrado' : '—'}
+                        </span>
+                      </div>
                     </div>
                   </td>
                   <td className="hidden px-4 py-3 text-brand-brown md:table-cell">{a.registration_no || '—'}</td>
                   <td className="hidden px-4 py-3 text-brand-brown lg:table-cell">{a.chip_no || '—'}</td>
-                  <td className="px-4 py-3 text-brand-brown">
+                  <td className="hidden px-4 py-3 text-brand-brown sm:table-cell">
                     {a.sex === 'M' ? 'Macho' : a.sex === 'F' ? 'Fêmea' : a.sex === 'C' ? 'Castrado' : '—'}
                   </td>
                   <td className="hidden px-4 py-3 text-brand-brown xl:table-cell">{(a.owners as string) || '—'}</td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 py-3 sm:px-4">
                     <span
-                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${statusTone[a.status]}`}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium sm:px-2.5 sm:text-xs ${statusTone[a.status]}`}
                     >
                       <span className={`h-1.5 w-1.5 rounded-full ${statusDot[a.status]}`} />
                       {statusLabel[a.status] ?? a.status}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="inline-flex items-center gap-1">
+                  <td className="px-2 py-3 text-right sm:px-4">
+                    <div className="inline-flex items-center gap-0.5 sm:gap-1">
                       <button
                         type="button"
                         onClick={() => openEdit(a.id)}
-                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-brand-brown hover:bg-brand-beige/50"
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-brown hover:bg-brand-beige/50"
+                        title={canWrite ? 'Editar' : 'Ver'}
                       >
                         <Pencil className="h-4 w-4" />
-                        {canWrite ? 'Editar' : 'Ver'}
+                        <span className="hidden sm:inline">{canWrite ? 'Editar' : 'Ver'}</span>
                       </button>
                       {canWrite && a.status === 'ativo' && (
                         <button
                           type="button"
                           onClick={() => setSaleAnimalId(a.id)}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-brand-gold hover:bg-brand-gold/10"
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-gold hover:bg-brand-gold/10"
                           title="Gerar venda"
                         >
                           <FileText className="h-4 w-4" />
-                          Venda
+                          <span className="hidden sm:inline">Venda</span>
                         </button>
                       )}
                       {canWrite && (
@@ -208,11 +215,11 @@ export default function AnimalsPage() {
                           type="button"
                           onClick={() => onDelete(a)}
                           disabled={deletingId === a.id}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50"
                           title="Excluir animal"
                         >
                           <Trash2 className="h-4 w-4" />
-                          {deletingId === a.id ? '...' : 'Excluir'}
+                          <span className="hidden sm:inline">{deletingId === a.id ? '...' : 'Excluir'}</span>
                         </button>
                       )}
                     </div>
@@ -221,6 +228,7 @@ export default function AnimalsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

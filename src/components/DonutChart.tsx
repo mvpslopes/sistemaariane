@@ -11,7 +11,7 @@ interface DonutChartProps {
   thickness?: number;
 }
 
-export default function DonutChart({ title, slices, size = 160, thickness = 22 }: DonutChartProps) {
+export default function DonutChart({ title, slices, size = 132, thickness = 18 }: DonutChartProps) {
   const total = slices.reduce((sum, s) => sum + s.value, 0);
   const radius = (size - thickness) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -36,10 +36,11 @@ export default function DonutChart({ title, slices, size = 160, thickness = 22 }
           });
 
   return (
-    <div className="rounded-2xl border border-brand-beige bg-white p-5 shadow-card">
-      <h3 className="mb-4 text-sm font-semibold text-brand-dark-brown">{title}</h3>
-      <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative shrink-0" style={{ width: size, height: size }}>
+    <div className="flex h-full flex-col rounded-2xl border border-brand-beige bg-white p-4 shadow-card sm:p-5">
+      <h3 className="mb-3 text-sm font-semibold text-brand-dark-brown">{title}</h3>
+
+      <div className="mx-auto mb-4 shrink-0" style={{ width: size, height: size }}>
+        <div className="relative" style={{ width: size, height: size }}>
           <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
             <circle
               cx={center}
@@ -71,30 +72,30 @@ export default function DonutChart({ title, slices, size = 160, thickness = 22 }
             <p className="text-[10px] uppercase tracking-wide text-brand-olive">total</p>
           </div>
         </div>
-
-        <ul className="w-full space-y-2 sm:max-w-[55%]">
-          {slices.map((slice) => {
-            const pct = total > 0 ? Math.round((slice.value / total) * 100) : 0;
-            return (
-              <li key={slice.label} className="flex items-center justify-between gap-2 text-sm">
-                <span className="flex min-w-0 items-center gap-2 text-brand-dark-brown">
-                  <span
-                    className="h-2.5 w-2.5 shrink-0 rounded-full"
-                    style={{ backgroundColor: slice.color }}
-                  />
-                  <span className="truncate">{slice.label}</span>
-                </span>
-                <span className="shrink-0 tabular-nums text-brand-olive">
-                  {slice.value} · {pct}%
-                </span>
-              </li>
-            );
-          })}
-          {total === 0 && (
-            <li className="text-xs text-brand-olive">Sem dados para exibir</li>
-          )}
-        </ul>
       </div>
+
+      <ul className="w-full space-y-2">
+        {slices.map((slice) => {
+          const pct = total > 0 ? Math.round((slice.value / total) * 100) : 0;
+          return (
+            <li key={slice.label} className="flex items-center gap-2 text-sm">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: slice.color }}
+              />
+              <span className="min-w-0 flex-1 leading-snug text-brand-dark-brown">
+                {slice.label}
+              </span>
+              <span className="shrink-0 whitespace-nowrap pl-2 tabular-nums text-brand-olive">
+                {slice.value} · {pct}%
+              </span>
+            </li>
+          );
+        })}
+        {total === 0 && (
+          <li className="text-xs text-brand-olive">Sem dados para exibir</li>
+        )}
+      </ul>
     </div>
   );
 }

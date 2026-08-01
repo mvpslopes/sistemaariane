@@ -298,14 +298,15 @@ export default function AuctionsPage() {
         <Loading message="Carregando leilões..." />
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
+          <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
-                <th className="px-4 py-3 font-medium">Leilão</th>
+                <th className="px-3 py-3 font-medium sm:px-4">Leilão</th>
                 <th className="hidden px-4 py-3 font-medium md:table-cell">Data</th>
                 <th className="hidden px-4 py-3 font-medium lg:table-cell">Local</th>
-                <th className="px-4 py-3 font-medium">Lotes</th>
-                <th className="px-4 py-3 font-medium">Status</th>
+                <th className="px-3 py-3 font-medium sm:px-4">Lotes</th>
+                <th className="px-3 py-3 font-medium sm:px-4">Status</th>
                 <th className="px-4 py-3 font-medium"></th>
               </tr>
             </thead>
@@ -345,9 +346,11 @@ export default function AuctionsPage() {
                           e.stopPropagation();
                           openEditAuction(a);
                         }}
-                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-brand-brown hover:bg-brand-beige/50"
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-brown hover:bg-brand-beige/50"
+                        title="Editar"
                       >
-                        <Pencil className="h-4 w-4" /> Editar
+                        <Pencil className="h-4 w-4" />
+                        <span className="hidden sm:inline">Editar</span>
                       </button>
                     )}
                   </td>
@@ -355,6 +358,7 @@ export default function AuctionsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 

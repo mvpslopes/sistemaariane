@@ -333,14 +333,12 @@ export default function AppDashboard() {
         <h3 className="text-xs font-semibold uppercase tracking-widest text-brand-olive/70">
           Relatórios
         </h3>
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
           {!isCliente && partySlices.some((p) => p.value > 0) && (
             <DonutChart title="Perfis nos cadastros" slices={partySlices} />
           )}
           <DonutChart title="Contratos por status" slices={contractSlices} />
           <DonutChart title="Cobranças" slices={chargeSlices} />
-        </div>
-        <div className="grid gap-4 lg:grid-cols-3">
           <DonutChart title="Animais por status" slices={statusSlices} />
           <DonutChart title="Animais por sexo" slices={sexSlices} />
           <DonutChart title="Animais por associação" slices={associationSlices} />
