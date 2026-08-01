@@ -701,6 +701,32 @@ export async function sendContractToClicksign(id: string, pdfBase64: string) {
   });
 }
 
+export interface ClicksignSignerStatus {
+  role: string;
+  label: string;
+  name: string;
+  email?: string | null;
+  signed: boolean;
+  status: 'assinado' | 'pendente' | string;
+  statusLabel: string;
+  signedAt?: string | null;
+}
+
+export interface ClicksignTracking {
+  success: boolean;
+  envelopeId: string;
+  documentId?: string | null;
+  status: string;
+  statusLabel: string;
+  signedCount: number;
+  totalCount: number;
+  signers: ClicksignSignerStatus[];
+}
+
+export async function getClicksignStatus(id: string) {
+  return request<ClicksignTracking>(`/contracts/${id}/clicksign`);
+}
+
 export async function getCharges(filters?: { status?: string; contractId?: string; clientId?: string }) {
   const params = new URLSearchParams();
   if (filters?.status) params.set('status', filters.status);

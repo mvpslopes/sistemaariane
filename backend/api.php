@@ -815,6 +815,145 @@ function clicksign_send_contract(array $config, array $contract, string $pdfBase
     ];
 }
 
+function clicksign_status_label(string $status): string {
+    $map = [
+        'draft' => 'Rascunho',
+        'running' => 'Em processo',
+        'closed' => 'Finalizado',
+        'canceled' => 'Cancelado',
+        'cancelled' => 'Cancelado',
+    ];
+    return $map[$status] ?? ($status !== '' ? $status : 'Enviado');
+}
+
+/**
+ * Consulta envelope + signatários + eventos de assinatura na Clicksign.
+ * @return array{status:string,statusLabel:string,signedCount:int,totalCount:int,signers:list<array>}
+ */
+function clicksign_fetch_status(array $config, array $contract): array {
+    $envelopeId = trim((string)($contract['clicksign_envelope_id'] ?? ''));
+    $documentId = trim((string)($contract['clicksign_document_id'] ?? ''));
+    if ($envelopeId === '') {
+        throw new InvalidArgumentException('Contrato ainda não foi enviado à Clicksign');
+    }
+
+    $env = clicksign_request($config, 'GET', "/api/v3/envelopes/{$envelopeId}");
+    $status = (string)($env['data']['attributes']['status'] ?? ($contract['clicksign_status'] ?? 'running'));
+
+    $signersRes = clicksign_request($config, 'GET', "/api/v3/envelopes/{$envelopeId}/signers");
+    $csSigners = is_array($signersRes['data'] ?? null) ? $signersRes['data'] : [];
+
+    $signedEmails = [];
+    $signedAtByEmail = [];
+    if ($documentId !== '') {
+        try {
+            $eventsRes = clicksign_request(
+                $config,
+                'GET',
+                "/api/v3/envelopes/{$envelopeId}/documents/{$documentId}/events?filter%5Bname%5D=sign"
+            );
+            foreach (($eventsRes['data'] ?? []) as $ev) {
+                $email = strtolower(trim((string)($ev['attributes']['data']['user']['email'] ?? '')));
+                if ($email === '') continue;
+                $signedEmails[$email] = true;
+                if (empty($signedAtByEmail[$email])) {
+                    $signedAtByEmail[$email] = $ev['attributes']['created'] ?? null;
+                }
+            }
+        } catch (Throwable $e) {
+            // fallback abaixo
+        }
+    }
+    if (!$signedEmails) {
+        try {
+            $eventsRes = clicksign_request(
+                $config,
+                'GET',
+                "/api/v3/envelopes/{$envelopeId}/events?filter%5Bname%5D=sign"
+            );
+            foreach (($eventsRes['data'] ?? []) as $ev) {
+                $email = strtolower(trim((string)($ev['attributes']['data']['user']['email']
+                    ?? $ev['attributes']['data']['signer']['email']
+                    ?? '')));
+                if ($email === '') continue;
+                $signedEmails[$email] = true;
+                if (empty($signedAtByEmail[$email])) {
+                    $signedAtByEmail[$email] = $ev['attributes']['created'] ?? null;
+                }
+            }
+        } catch (Throwable $e) {
+            // segue sem eventos
+        }
+    }
+
+    $parties = [
+        ['role' => 'seller', 'label' => 'Vendedor', 'name' => $contract['seller_name'] ?? null, 'email' => $contract['seller_email'] ?? null],
+        ['role' => 'buyer', 'label' => 'Comprador', 'name' => $contract['buyer_name'] ?? null, 'email' => $contract['buyer_email'] ?? null],
+        ['role' => 'witness1', 'label' => 'Testemunha 1', 'name' => $contract['witness1_name'] ?? null, 'email' => $contract['witness1_email'] ?? null],
+        ['role' => 'witness2', 'label' => 'Testemunha 2', 'name' => $contract['witness2_name'] ?? null, 'email' => $contract['witness2_email'] ?? null],
+    ];
+
+    $byEmail = [];
+    foreach ($csSigners as $s) {
+        $email = strtolower(trim((string)($s['attributes']['email'] ?? '')));
+        if ($email !== '') $byEmail[$email] = $s;
+    }
+
+    $signers = [];
+    $used = [];
+    foreach ($parties as $p) {
+        $email = strtolower(trim((string)($p['email'] ?? '')));
+        $cs = $email !== '' ? ($byEmail[$email] ?? null) : null;
+        if ($cs) $used[$email] = true;
+        $name = trim((string)($p['name'] ?? '')) ?: trim((string)($cs['attributes']['name'] ?? '')) ?: '—';
+        $signed = $email !== '' && !empty($signedEmails[$email]);
+        // Se o envelope já fechou e não achamos evento, considera assinado
+        if (!$signed && $status === 'closed' && $email !== '') $signed = true;
+        $signers[] = [
+            'role' => $p['role'],
+            'label' => $p['label'],
+            'name' => $name,
+            'email' => $p['email'] ?: ($cs['attributes']['email'] ?? null),
+            'signed' => $signed,
+            'status' => $signed ? 'assinado' : 'pendente',
+            'statusLabel' => $signed ? 'Assinado' : 'Pendente',
+            'signedAt' => $signedAtByEmail[$email] ?? null,
+        ];
+    }
+
+    // Signatários extras da Clicksign que não bateram com as partes
+    foreach ($csSigners as $s) {
+        $email = strtolower(trim((string)($s['attributes']['email'] ?? '')));
+        if ($email === '' || !empty($used[$email])) continue;
+        $signed = !empty($signedEmails[$email]) || $status === 'closed';
+        $signers[] = [
+            'role' => 'other',
+            'label' => 'Signatário',
+            'name' => trim((string)($s['attributes']['name'] ?? '')) ?: '—',
+            'email' => $s['attributes']['email'] ?? null,
+            'signed' => $signed,
+            'status' => $signed ? 'assinado' : 'pendente',
+            'statusLabel' => $signed ? 'Assinado' : 'Pendente',
+            'signedAt' => $signedAtByEmail[$email] ?? null,
+        ];
+    }
+
+    $signedCount = 0;
+    foreach ($signers as $s) {
+        if (!empty($s['signed'])) $signedCount++;
+    }
+
+    return [
+        'envelopeId' => $envelopeId,
+        'documentId' => $documentId ?: null,
+        'status' => $status,
+        'statusLabel' => clicksign_status_label($status),
+        'signedCount' => $signedCount,
+        'totalCount' => count($signers),
+        'signers' => $signers,
+    ];
+}
+
 function map_contract_row(array $r): array {
     return [
         'id' => (string)$r['id'],
@@ -2200,6 +2339,30 @@ if ($resource === 'contracts') {
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
             json_out(['error' => 'Erro ao atualizar contrato'], 500);
+        }
+    }
+
+    if ($method === 'GET' && $id && $action === 'clicksign') {
+        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
+        $stmt->execute([(int)$id]);
+        $r = $stmt->fetch();
+        if (!$r) json_out(['error' => 'Contrato não encontrado'], 404);
+        if (empty($r['clicksign_envelope_id'])) {
+            json_out(['error' => 'Contrato ainda não foi enviado à Clicksign'], 400);
+        }
+        try {
+            $statusInfo = clicksign_fetch_status($config, map_contract_row($r));
+            $pdo->prepare('UPDATE contracts SET clicksign_status=? WHERE id=?')
+                ->execute([$statusInfo['status'], (int)$id]);
+            if ($statusInfo['status'] === 'closed' && ($r['status'] ?? '') === 'aguardando_assinatura') {
+                $pdo->prepare("UPDATE contracts SET status='ativo' WHERE id=?")->execute([(int)$id]);
+            }
+            json_out(['success' => true] + $statusInfo);
+        } catch (InvalidArgumentException $e) {
+            json_out(['error' => $e->getMessage()], 400);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Falha ao consultar Clicksign: ' . $e->getMessage()], 500);
         }
     }
 

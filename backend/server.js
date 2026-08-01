@@ -2279,6 +2279,161 @@ async function clicksignSendContract(contract, pdfBase64Raw) {
   return { envelopeId, documentId, status: 'running' };
 }
 
+function clicksignStatusLabel(status) {
+  const map = {
+    draft: 'Rascunho',
+    running: 'Em processo',
+    closed: 'Finalizado',
+    canceled: 'Cancelado',
+    cancelled: 'Cancelado',
+  };
+  return map[status] || status || 'Enviado';
+}
+
+async function clicksignFetchStatus(contract) {
+  const envelopeId = String(contract.clicksign_envelope_id || '').trim();
+  const documentId = String(contract.clicksign_document_id || '').trim();
+  if (!envelopeId) {
+    const err = new Error('Contrato ainda não foi enviado à Clicksign');
+    err.status = 400;
+    throw err;
+  }
+
+  const env = await clicksignRequest('GET', `/api/v3/envelopes/${envelopeId}`);
+  const status = env?.data?.attributes?.status || contract.clicksign_status || 'running';
+
+  const signersRes = await clicksignRequest('GET', `/api/v3/envelopes/${envelopeId}/signers`);
+  const csSigners = Array.isArray(signersRes?.data) ? signersRes.data : [];
+
+  const signedEmails = {};
+  const signedAtByEmail = {};
+  const collectSignEvents = (events) => {
+    for (const ev of events || []) {
+      const email = String(
+        ev?.attributes?.data?.user?.email ||
+          ev?.attributes?.data?.signer?.email ||
+          ''
+      )
+        .trim()
+        .toLowerCase();
+      if (!email) continue;
+      signedEmails[email] = true;
+      if (!signedAtByEmail[email]) signedAtByEmail[email] = ev?.attributes?.created || null;
+    }
+  };
+
+  if (documentId) {
+    try {
+      const eventsRes = await clicksignRequest(
+        'GET',
+        `/api/v3/envelopes/${envelopeId}/documents/${documentId}/events?filter%5Bname%5D=sign`
+      );
+      collectSignEvents(eventsRes?.data);
+    } catch {
+      /* fallback */
+    }
+  }
+  if (!Object.keys(signedEmails).length) {
+    try {
+      const eventsRes = await clicksignRequest(
+        'GET',
+        `/api/v3/envelopes/${envelopeId}/events?filter%5Bname%5D=sign`
+      );
+      collectSignEvents(eventsRes?.data);
+    } catch {
+      /* segue sem eventos */
+    }
+  }
+
+  const parties = [
+    { role: 'seller', label: 'Vendedor', name: contract.seller_name, email: contract.seller_email },
+    { role: 'buyer', label: 'Comprador', name: contract.buyer_name, email: contract.buyer_email },
+    { role: 'witness1', label: 'Testemunha 1', name: contract.witness1_name, email: contract.witness1_email },
+    { role: 'witness2', label: 'Testemunha 2', name: contract.witness2_name, email: contract.witness2_email },
+  ];
+
+  const byEmail = {};
+  for (const s of csSigners) {
+    const email = String(s?.attributes?.email || '')
+      .trim()
+      .toLowerCase();
+    if (email) byEmail[email] = s;
+  }
+
+  const signers = [];
+  const used = {};
+  for (const p of parties) {
+    const email = String(p.email || '')
+      .trim()
+      .toLowerCase();
+    const cs = email ? byEmail[email] : null;
+    if (cs) used[email] = true;
+    const name = String(p.name || '').trim() || String(cs?.attributes?.name || '').trim() || '—';
+    let signed = Boolean(email && signedEmails[email]);
+    if (!signed && status === 'closed' && email) signed = true;
+    signers.push({
+      role: p.role,
+      label: p.label,
+      name,
+      email: p.email || cs?.attributes?.email || null,
+      signed,
+      status: signed ? 'assinado' : 'pendente',
+      statusLabel: signed ? 'Assinado' : 'Pendente',
+      signedAt: signedAtByEmail[email] || null,
+    });
+  }
+
+  for (const s of csSigners) {
+    const email = String(s?.attributes?.email || '')
+      .trim()
+      .toLowerCase();
+    if (!email || used[email]) continue;
+    const signed = Boolean(signedEmails[email]) || status === 'closed';
+    signers.push({
+      role: 'other',
+      label: 'Signatário',
+      name: String(s?.attributes?.name || '').trim() || '—',
+      email: s?.attributes?.email || null,
+      signed,
+      status: signed ? 'assinado' : 'pendente',
+      statusLabel: signed ? 'Assinado' : 'Pendente',
+      signedAt: signedAtByEmail[email] || null,
+    });
+  }
+
+  return {
+    envelopeId,
+    documentId: documentId || null,
+    status,
+    statusLabel: clicksignStatusLabel(status),
+    signedCount: signers.filter((s) => s.signed).length,
+    totalCount: signers.length,
+    signers,
+  };
+}
+
+app.get('/api/contracts/:id/clicksign', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [rows] = await pool.execute(`${contractSelect} AND c.id = ?`, [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Contrato não encontrado' });
+    const contract = mapContract(rows[0]);
+    if (!contract.clicksign_envelope_id) {
+      return res.status(400).json({ error: 'Contrato ainda não foi enviado à Clicksign' });
+    }
+    const statusInfo = await clicksignFetchStatus(contract);
+    await pool.execute('UPDATE contracts SET clicksign_status=? WHERE id=?', [statusInfo.status, id]);
+    if (statusInfo.status === 'closed' && contract.status === 'aguardando_assinatura') {
+      await pool.execute("UPDATE contracts SET status='ativo' WHERE id=?", [id]);
+    }
+    res.json({ success: true, ...statusInfo });
+  } catch (error) {
+    console.error(error);
+    const status = error.status || 500;
+    res.status(status).json({ error: error.message || 'Falha ao consultar Clicksign' });
+  }
+});
+
 app.post('/api/contracts/:id/clicksign', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const id = Number(req.params.id);

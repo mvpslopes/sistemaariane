@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, FileText, Printer, Pencil, Send } from 'lucide-react';
+import { Plus, Search, FileText, Printer, Pencil, Send, RefreshCw, CheckCircle2, Clock } from 'lucide-react';
 import {
   getContract,
   getContracts,
+  getClicksignStatus,
   sendContractToClicksign,
   updateContract,
   type Contract,
+  type ClicksignTracking,
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -52,7 +54,20 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const [detailLoading, setDetailLoading] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
   const [sendingClicksign, setSendingClicksign] = useState(false);
+  const [clicksignTracking, setClicksignTracking] = useState<ClicksignTracking | null>(null);
+  const [loadingClicksign, setLoadingClicksign] = useState(false);
   const preselectedAnimal = initialAnimalId;
+
+  const clicksignStatusPt = (status?: string | null) => {
+    const map: Record<string, string> = {
+      draft: 'Rascunho',
+      running: 'Em processo',
+      closed: 'Finalizado',
+      canceled: 'Cancelado',
+      cancelled: 'Cancelado',
+    };
+    return (status && map[status]) || status || 'Enviado';
+  };
 
   const load = async () => {
     setLoading(true);
@@ -69,11 +84,34 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
     load();
   }, []);
 
+  const loadClicksignTracking = async (id: string, silent = false) => {
+    setLoadingClicksign(true);
+    try {
+      const tracking = await getClicksignStatus(id);
+      setClicksignTracking(tracking);
+      setDetail((prev) =>
+        prev && prev.id === id
+          ? { ...prev, clicksign_status: tracking.status }
+          : prev
+      );
+      if (!silent) success('Status das assinaturas atualizado');
+    } catch (e: any) {
+      if (!silent) toastError(e.message || 'Erro ao consultar assinaturas');
+    } finally {
+      setLoadingClicksign(false);
+    }
+  };
+
   const openDetail = async (id: string) => {
     setDetailId(id);
     setDetailLoading(true);
+    setClicksignTracking(null);
     try {
-      setDetail(await getContract(id));
+      const c = await getContract(id);
+      setDetail(c);
+      if (c.clicksign_envelope_id) {
+        void loadClicksignTracking(id, true);
+      }
     } catch (e: any) {
       toastError(e.message || 'Erro ao abrir contrato');
       setDetailId(null);
@@ -295,19 +333,100 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
             {(detail.clicksign_envelope_id ||
               (canWrite && detail.status !== 'cancelado' && detail.status !== 'concluido')) && (
               <div className="rounded-xl border border-brand-beige bg-brand-off-white/60 p-4 space-y-3">
-                <div>
-                  <h4 className="text-sm font-semibold text-brand-dark-brown">Assinatura Clicksign</h4>
-                  <p className="mt-0.5 text-xs text-brand-olive">
-                    Envia o PDF por e-mail para o vendedor, o comprador e as 2 testemunhas assinarem.
-                  </p>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-brand-dark-brown">Assinatura digital</h4>
+                    <p className="mt-0.5 text-xs text-brand-olive">
+                      {detail.clicksign_envelope_id
+                        ? 'Acompanhamento das assinaturas pela Clicksign.'
+                        : 'Envia o PDF por e-mail para o vendedor, o comprador e as 2 testemunhas assinarem.'}
+                    </p>
+                  </div>
+                  {detail.clicksign_envelope_id && (
+                    <button
+                      type="button"
+                      disabled={loadingClicksign}
+                      onClick={() => loadClicksignTracking(detail.id)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-brand-beige bg-white px-3 py-1.5 text-xs font-medium text-brand-brown hover:bg-brand-beige/40 disabled:opacity-50"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${loadingClicksign ? 'animate-spin' : ''}`} />
+                      {loadingClicksign ? 'Atualizando...' : 'Atualizar'}
+                    </button>
+                  )}
                 </div>
+
                 {detail.clicksign_envelope_id ? (
-                  <p className="text-sm text-brand-dark-brown">
-                    Já enviado · status: <strong>{detail.clicksign_status || 'enviado'}</strong>
-                    {detail.clicksign_sent_at
-                      ? ` · ${new Date(detail.clicksign_sent_at).toLocaleString('pt-BR')}`
-                      : ''}
-                  </p>
+                  <>
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-brand-dark-brown">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          (clicksignTracking?.status || detail.clicksign_status) === 'closed'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : (clicksignTracking?.status || detail.clicksign_status) === 'canceled' ||
+                                (clicksignTracking?.status || detail.clicksign_status) === 'cancelled'
+                              ? 'bg-red-100 text-red-700'
+                              : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {clicksignTracking?.statusLabel ||
+                          clicksignStatusPt(detail.clicksign_status)}
+                      </span>
+                      {clicksignTracking && (
+                        <span className="text-sm font-medium">
+                          {clicksignTracking.signedCount}/{clicksignTracking.totalCount} assinaturas
+                        </span>
+                      )}
+                      {detail.clicksign_sent_at && (
+                        <span className="text-xs text-brand-olive">
+                          Enviado em {new Date(detail.clicksign_sent_at).toLocaleString('pt-BR')}
+                        </span>
+                      )}
+                    </div>
+
+                    {loadingClicksign && !clicksignTracking ? (
+                      <p className="text-xs text-brand-olive">Carregando acompanhamento...</p>
+                    ) : clicksignTracking?.signers?.length ? (
+                      <ul className="divide-y divide-brand-beige/80 rounded-xl border border-brand-beige bg-white">
+                        {clicksignTracking.signers.map((s) => (
+                          <li
+                            key={`${s.role}-${s.email || s.name}`}
+                            className="flex items-start gap-3 px-3 py-2.5"
+                          >
+                            {s.signed ? (
+                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                            ) : (
+                              <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+                                <p className="text-sm font-medium text-brand-dark-brown">
+                                  {s.label}
+                                  <span className="font-normal text-brand-olive"> · {s.name}</span>
+                                </p>
+                                <span
+                                  className={`text-xs font-semibold ${
+                                    s.signed ? 'text-emerald-700' : 'text-amber-700'
+                                  }`}
+                                >
+                                  {s.statusLabel}
+                                </span>
+                              </div>
+                              {s.email && (
+                                <p className="truncate text-xs text-brand-olive">{s.email}</p>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <ul className="space-y-1 text-sm text-brand-olive">
+                        <li>Vendedor: {detail.seller_name || '—'}</li>
+                        <li>Comprador: {detail.buyer_name || '—'}</li>
+                        {detail.witness1_name && <li>Testemunha 1: {detail.witness1_name}</li>}
+                        {detail.witness2_name && <li>Testemunha 2: {detail.witness2_name}</li>}
+                      </ul>
+                    )}
+                  </>
                 ) : (
                   <button
                     type="button"
