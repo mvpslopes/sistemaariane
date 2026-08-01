@@ -660,7 +660,38 @@ function clicksign_send_contract(array $config, array $contract, string $pdfBase
     }
 
     $number = $contract['contract_number'] ?: $contract['id'];
-    $animal = $contract['animal_name'] ?: 'Animal';
+    $animal = trim((string)($contract['animal_name'] ?? '')) ?: 'Animal';
+    $lot = trim((string)($contract['lot_label'] ?? ''));
+    $sellerName = trim((string)($contract['seller_name'] ?? ''));
+    $buyerName = trim((string)($contract['buyer_name'] ?? ''));
+    $title = trim((string)($contract['template_title'] ?? '')) ?: 'Nota de Leilão e Contrato';
+
+    $envelopeParts = [$title, (string)$number];
+    if ($lot !== '' && $lot !== '—') $envelopeParts[] = 'Lote ' . $lot;
+    $envelopeParts[] = $animal;
+    if ($sellerName !== '') $envelopeParts[] = 'Vend. ' . $sellerName;
+    if ($buyerName !== '') $envelopeParts[] = 'Comp. ' . $buyerName;
+    $envelopeName = implode(' — ', $envelopeParts);
+    if (function_exists('mb_strlen') && mb_strlen($envelopeName) > 180) {
+        $envelopeName = mb_substr($envelopeName, 0, 177) . '...';
+    } elseif (strlen($envelopeName) > 180) {
+        $envelopeName = substr($envelopeName, 0, 177) . '...';
+    }
+
+    $slug = static function (string $s): string {
+        $s = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s) ?: $s;
+        $s = preg_replace('/[^A-Za-z0-9]+/', '-', $s) ?? '';
+        $s = trim($s, '-');
+        return $s !== '' ? $s : 'doc';
+    };
+    $pdfName = 'Contrato-' . $slug((string)$number);
+    if ($lot !== '' && $lot !== '—') $pdfName .= '-Lote-' . $slug($lot);
+    $pdfName .= '-' . $slug($animal);
+    if ($sellerName !== '') $pdfName .= '-' . $slug($sellerName);
+    if ($buyerName !== '') $pdfName .= '-' . $slug($buyerName);
+    if (strlen($pdfName) > 120) $pdfName = substr($pdfName, 0, 120);
+    $pdfFilename = rtrim($pdfName, '-') . '.pdf';
+
     $signers = [
         [
             'name' => trim((string)($contract['seller_name'] ?? '')),
@@ -699,7 +730,7 @@ function clicksign_send_contract(array $config, array $contract, string $pdfBase
         'data' => [
             'type' => 'envelopes',
             'attributes' => [
-                'name' => "Contrato {$number} — {$animal}",
+                'name' => $envelopeName,
                 'locale' => 'pt-BR',
                 'auto_close' => true,
                 'remind_interval' => 3,
@@ -713,7 +744,7 @@ function clicksign_send_contract(array $config, array $contract, string $pdfBase
         'data' => [
             'type' => 'documents',
             'attributes' => [
-                'filename' => "contrato-{$number}.pdf",
+                'filename' => $pdfFilename,
                 'content_base64' => 'data:application/pdf;base64,' . $pdfBase64,
             ],
         ],

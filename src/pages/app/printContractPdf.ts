@@ -172,14 +172,22 @@ export function buildContractHtml(contract: Contract): string {
 
   const schedule =
     contract.charges && contract.charges.length > 0
-      ? `<div class="schedule">${contract.charges
-          .map(
+      ? (() => {
+          const cells = contract.charges.map(
             (ch) =>
-              `<div class="sch-item">${String(ch.installment_no).padStart(2, '0')}/${String(
+              `<td class="sch-item">${String(ch.installment_no).padStart(2, '0')}/${String(
                 contract.installments
-              ).padStart(2, '0')} – ${esc(money(ch.amount))} – ${esc(fmtDate(ch.due_date))}</div>`
-          )
-          .join('')}</div>`
+              ).padStart(2, '0')} – ${esc(money(ch.amount))} – ${esc(fmtDate(ch.due_date))}</td>`
+          );
+          const cols = 4;
+          const rows: string[] = [];
+          for (let i = 0; i < cells.length; i += cols) {
+            const slice = cells.slice(i, i + cols);
+            while (slice.length < cols) slice.push('<td class="sch-item"></td>');
+            rows.push(`<tr>${slice.join('')}</tr>`);
+          }
+          return `<table class="schedule"><tbody>${rows.join('')}</tbody></table>`;
+        })()
       : '';
 
   const commission =
@@ -336,16 +344,23 @@ export function buildContractHtml(contract: Contract): string {
     ? `<div class="page np-page">${allPromissoryCards.join('\n')}</div>`
     : '';
 
+  const signsTable = `
+      <table class="signs">
+        <tr>
+          <td class="sign"><div class="line"></div>VENDEDOR<br/><strong>${esc(contract.seller_name || '________________')}</strong></td>
+          <td class="sign"><div class="line"></div>COMPRADOR<br/><strong>${esc(contract.buyer_name || '________________')}</strong></td>
+        </tr>
+        <tr>
+          <td class="sign"><div class="line"></div>TESTEMUNHA 1<br/><strong>${esc(contract.witness1_name || '________________')}</strong></td>
+          <td class="sign"><div class="line"></div>TESTEMUNHA 2<br/><strong>${esc(contract.witness2_name || '________________')}</strong></td>
+        </tr>
+      </table>`;
+
   const signatureBlock = `
     <div class="page signs-page">
       <p class="signs-title">ASSINATURAS</p>
       <p class="signs-meta">CONTRATO Nº ${esc(String(number))} — LOTE ${esc(lot)} — ${esc(contract.animal_name || '')}</p>
-      <div class="signs">
-        <div class="sign"><div class="line"></div>VENDEDOR<br/><strong>${esc(contract.seller_name || '________________')}</strong></div>
-        <div class="sign"><div class="line"></div>COMPRADOR<br/><strong>${esc(contract.buyer_name || '________________')}</strong></div>
-        <div class="sign"><div class="line"></div>TESTEMUNHA 1<br/><strong>${esc(contract.witness1_name || '________________')}</strong></div>
-        <div class="sign"><div class="line"></div>TESTEMUNHA 2<br/><strong>${esc(contract.witness2_name || '________________')}</strong></div>
-      </div>
+      ${signsTable}
     </div>`;
 
   const versoBody = (contract.template_body || '')
@@ -373,15 +388,17 @@ export function buildContractHtml(contract: Contract): string {
     }
     .page { page-break-after: always; }
     .page:last-child { page-break-after: auto; }
-    .head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 8px; }
-    .head-left { flex: 1; }
+    /* Tabelas no lugar de flex/grid — html2canvas/Clicksign renderiza melhor */
+    table.head { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+    table.head td { vertical-align: top; }
+    .head-left { width: auto; padding-right: 12px; }
     .logo { height: 42px; width: auto; display: block; margin-bottom: 6px; }
     .doc-title { font-size: 12pt; font-weight: 800; letter-spacing: 0.02em; margin: 0 0 2px; text-transform: uppercase; }
     .auction { font-size: 10pt; font-weight: 700; margin: 0 0 4px; }
     .company { font-size: 7.5pt; color: #444; line-height: 1.3; }
     .idbox {
       width: 170px; border: 1px solid #999; background: #f0f0f0;
-      padding: 8px; text-align: center; flex-shrink: 0;
+      padding: 8px; text-align: center;
     }
     .idbox .lote { font-size: 18pt; font-weight: 800; margin: 0; }
     .idbox .via { font-size: 7.5pt; margin: 4px 0; line-height: 1.35; font-weight: 700; }
@@ -398,25 +415,22 @@ export function buildContractHtml(contract: Contract): string {
     table.data { width: 100%; border-collapse: collapse; font-size: 8.5pt; }
     table.data th, table.data td { border: 1px solid #ccc; padding: 4px 6px; text-align: left; }
     table.data th { background: #eee; font-size: 8pt; }
-    .fin { display: flex; flex-wrap: wrap; gap: 12px 20px; padding: 6px; font-size: 9pt; }
-    .fin strong { font-size: 10pt; }
+    table.fin { width: 100%; border-collapse: collapse; padding: 0; font-size: 9pt; }
+    table.fin td { padding: 6px 10px; vertical-align: top; }
+    table.fin strong { font-size: 10pt; }
     .pay-summary { padding: 6px; font-size: 8.5pt; border-top: 1px solid #ddd; }
     .obs {
       padding: 8px 10px; font-size: 8.5pt; line-height: 1.45;
       text-align: justify; white-space: pre-wrap;
     }
-    .schedule {
-      display: grid; grid-template-columns: 1fr 1fr 1fr 1fr;
-      gap: 2px 8px; padding: 6px; font-size: 7.5pt;
-    }
+    table.schedule { width: 100%; border-collapse: collapse; font-size: 7.5pt; }
+    table.schedule td { padding: 4px 6px; vertical-align: top; white-space: nowrap; }
     .sch-item { white-space: nowrap; }
     .legal {
       margin-top: 10px; font-size: 8pt; font-weight: 700; text-align: center;
     }
-    .signs {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 18px 24px;
-      margin-top: 28px;
-    }
+    table.signs { width: 100%; border-collapse: collapse; margin-top: 28px; }
+    table.signs td.sign { width: 50%; text-align: center; font-size: 8pt; padding: 8px 16px; vertical-align: top; }
     .signs-page { padding-top: 18mm; }
     .signs-title {
       font-size: 12pt; font-weight: 800; text-align: center;
@@ -426,9 +440,8 @@ export function buildContractHtml(contract: Contract): string {
       text-align: center; font-size: 8.5pt; font-weight: 700;
       margin: 0 0 36px;
     }
-    .signs-page .signs { margin-top: 12mm; gap: 28px 32px; }
+    .signs-page table.signs { margin-top: 12mm; }
     .signs-page .sign .line { margin: 36px 0 6px; }
-    .sign { text-align: center; font-size: 8pt; }
     .sign .line { border-top: 1px dashed #333; margin: 28px 0 4px; }
     .muted { color: #555; font-size: 8pt; padding: 0 6px 6px; }
     .verso-title { font-size: 11pt; font-weight: 800; text-align: center; margin: 0 0 4px; text-transform: uppercase; }
@@ -466,24 +479,28 @@ export function buildContractHtml(contract: Contract): string {
 </head>
 <body>
   <div class="page">
-    <div class="head">
-      <div class="head-left">
-        <img class="logo" src="${logoUrl}" alt="Ariane Andrade" />
-        <p class="doc-title">${esc(title)}</p>
-        <p class="auction">${esc(auctionLine)}</p>
-        <div class="company">
-          ARIANE ANDRADE INTELIGÊNCIA AGROPECUÁRIA LTDA<br/>
-          CNPJ 43.507.435/0001-30 · Rio de Janeiro / RJ<br/>
-          contato@arianeandradeassessoria.app.br
-        </div>
-      </div>
-      <div class="idbox">
-        <p class="lote">LOTE ${esc(lot)}</p>
-        <p class="via">VIA DAS PARTES<br/>VENDEDOR E COMPRADOR</p>
-        <p class="num">${esc(number)}</p>
-        <p class="emi">Emissão: ${esc(emit)}</p>
-      </div>
-    </div>
+    <table class="head">
+      <tr>
+        <td class="head-left">
+          <img class="logo" src="${logoUrl}" alt="Ariane Andrade" />
+          <p class="doc-title">${esc(title)}</p>
+          <p class="auction">${esc(auctionLine)}</p>
+          <div class="company">
+            ARIANE ANDRADE INTELIGÊNCIA AGROPECUÁRIA LTDA<br/>
+            CNPJ 43.507.435/0001-30 · Rio de Janeiro / RJ<br/>
+            contato@arianeandradeassessoria.app.br
+          </div>
+        </td>
+        <td style="width:170px">
+          <div class="idbox">
+            <p class="lote">LOTE ${esc(lot)}</p>
+            <p class="via">VIA DAS PARTES<br/>VENDEDOR E COMPRADOR</p>
+            <p class="num">${esc(number)}</p>
+            <p class="emi">Emissão: ${esc(emit)}</p>
+          </div>
+        </td>
+      </tr>
+    </table>
 
     ${partyBlock('Dados do Vendedor', {
       name: contract.seller_name,
@@ -542,11 +559,11 @@ export function buildContractHtml(contract: Contract): string {
 
     <div class="section">
       <div class="section-h">Composição Financeira do(s) Contrato(s)</div>
-      <div class="fin">
-        <div>Parcelas: <strong>${esc(String(contract.installments))}</strong></div>
-        ${commission}
-        <div>Valor Total do Contrato: <strong>${esc(money(contract.total_amount))}</strong></div>
-      </div>
+      <table class="fin"><tr>
+        <td>Parcelas: <strong>${esc(String(contract.installments))}</strong></td>
+        <td>${commission || '&nbsp;'}</td>
+        <td>Valor Total do Contrato: <strong>${esc(money(contract.total_amount))}</strong></td>
+      </tr></table>
     </div>
 
     <div class="section">
@@ -562,12 +579,7 @@ export function buildContractHtml(contract: Contract): string {
       FAZENDO PARTE INTEGRAL DO PRESENTE INSTRUMENTO.
     </p>
 
-    <div class="signs">
-      <div class="sign"><div class="line"></div>VENDEDOR<br/><strong>${esc(contract.seller_name)}</strong></div>
-      <div class="sign"><div class="line"></div>COMPRADOR<br/><strong>${esc(contract.buyer_name)}</strong></div>
-      <div class="sign"><div class="line"></div>TESTEMUNHA 1<br/><strong>${esc(contract.witness1_name || '________________')}</strong></div>
-      <div class="sign"><div class="line"></div>TESTEMUNHA 2<br/><strong>${esc(contract.witness2_name || '________________')}</strong></div>
-    </div>
+    ${signsTable}
   </div>
 
   <div class="page">
@@ -644,19 +656,67 @@ export async function getContractPdfBase64(contract: Contract): Promise<string> 
   const mod = await import('html2pdf.js');
   const html2pdf = (mod as { default: any }).default;
   const html = buildContractHtml(contract);
-  const dataUrl: string = await html2pdf()
-    .set({
-      margin: [8, 8, 8, 8],
-      filename: `contrato-${contract.contract_number || contract.id}.pdf`,
-      image: { type: 'jpeg', quality: 0.92 },
-      html2canvas: { scale: 2, useCORS: true, logging: false },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-      pagebreak: { mode: ['css', 'legacy'] },
-    })
-    .from(html)
-    .outputPdf('datauristring');
-  if (!dataUrl || !dataUrl.includes('base64,')) {
-    throw new Error('Falha ao gerar PDF do contrato');
+
+  // html2canvas perde o CSS quando o elemento vem de um iframe/documento separado.
+  // Por isso montamos o conteúdo diretamente no documento principal (mesma janela),
+  // com o <style> do contrato injetado junto, escondido fora da tela.
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  const styleContent = parsed.querySelector('style')?.textContent || '';
+  const bodyContent = parsed.body.innerHTML;
+
+  const host = document.createElement('div');
+  host.id = 'clicksign-pdf-host';
+  host.style.cssText =
+    'position:fixed;left:-10000px;top:0;width:794px;background:#fff;z-index:-1;';
+  document.body.appendChild(host);
+
+  const styleTag = document.createElement('style');
+  styleTag.textContent = styleContent;
+  host.appendChild(styleTag);
+
+  const content = document.createElement('div');
+  content.innerHTML = bodyContent;
+  host.appendChild(content);
+
+  const waitImages = () =>
+    Promise.all(
+      Array.from(content.querySelectorAll('img')).map(
+        (img) =>
+          img.complete
+            ? Promise.resolve()
+            : new Promise<void>((resolve) => {
+                img.addEventListener('load', () => resolve(), { once: true });
+                img.addEventListener('error', () => resolve(), { once: true });
+              })
+      )
+    );
+
+  try {
+    await waitImages();
+
+    const dataUrl: string = await html2pdf()
+      .set({
+        margin: [8, 8, 8, 8],
+        filename: `contrato-${contract.contract_number || contract.id}.pdf`,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          windowWidth: 794,
+          backgroundColor: '#ffffff',
+        },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        pagebreak: { mode: ['css', 'legacy'] },
+      })
+      .from(content)
+      .outputPdf('datauristring');
+
+    if (!dataUrl || !dataUrl.includes('base64,')) {
+      throw new Error('Falha ao gerar PDF do contrato');
+    }
+    return dataUrl;
+  } finally {
+    host.remove();
   }
-  return dataUrl;
 }

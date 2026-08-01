@@ -2163,7 +2163,36 @@ async function clicksignSendContract(contract, pdfBase64Raw) {
   }
 
   const number = contract.contract_number || contract.id;
-  const animal = contract.animal_name || 'Animal';
+  const animal = String(contract.animal_name || '').trim() || 'Animal';
+  const lot = String(contract.lot_label || '').trim();
+  const sellerName = String(contract.seller_name || '').trim();
+  const buyerName = String(contract.buyer_name || '').trim();
+  const title = String(contract.template_title || '').trim() || 'Nota de Leilão e Contrato';
+
+  const envelopeParts = [title, String(number)];
+  if (lot && lot !== '—') envelopeParts.push(`Lote ${lot}`);
+  envelopeParts.push(animal);
+  if (sellerName) envelopeParts.push(`Vend. ${sellerName}`);
+  if (buyerName) envelopeParts.push(`Comp. ${buyerName}`);
+  let envelopeName = envelopeParts.join(' — ');
+  if (envelopeName.length > 180) envelopeName = `${envelopeName.slice(0, 177)}...`;
+
+  const slug = (s) => {
+    const t = String(s || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^A-Za-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    return t || 'doc';
+  };
+  let pdfName = `Contrato-${slug(number)}`;
+  if (lot && lot !== '—') pdfName += `-Lote-${slug(lot)}`;
+  pdfName += `-${slug(animal)}`;
+  if (sellerName) pdfName += `-${slug(sellerName)}`;
+  if (buyerName) pdfName += `-${slug(buyerName)}`;
+  if (pdfName.length > 120) pdfName = pdfName.slice(0, 120);
+  const pdfFilename = `${pdfName.replace(/-+$/, '')}.pdf`;
+
   const signers = [
     { name: (contract.seller_name || '').trim(), email: (contract.seller_email || '').trim(), role: 'seller', label: 'vendedor' },
     { name: (contract.buyer_name || '').trim(), email: (contract.buyer_email || '').trim(), role: 'buyer', label: 'comprador' },
@@ -2182,7 +2211,7 @@ async function clicksignSendContract(contract, pdfBase64Raw) {
     data: {
       type: 'envelopes',
       attributes: {
-        name: `Contrato ${number} — ${animal}`,
+        name: envelopeName,
         locale: 'pt-BR',
         auto_close: true,
         remind_interval: 3,
@@ -2196,7 +2225,7 @@ async function clicksignSendContract(contract, pdfBase64Raw) {
     data: {
       type: 'documents',
       attributes: {
-        filename: `contrato-${number}.pdf`,
+        filename: pdfFilename,
         content_base64: `data:application/pdf;base64,${pdfBase64}`,
       },
     },
