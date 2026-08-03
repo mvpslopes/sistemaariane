@@ -370,7 +370,7 @@ if ($resource === 'dashboard' && $method === 'GET') {
 
         $stmt = $pdo->prepare(
             "SELECT COUNT(*) AS total FROM contracts
-             WHERE buyer_id = ? OR seller_id = ? OR assessor_id = ?"
+             WHERE (buyer_id = ? OR seller_id = ? OR assessor_id = ?) AND status != 'cancelado'"
         );
         $stmt->execute([$cid, $cid, $cid]);
         $contracts = (int)$stmt->fetch()['total'];
@@ -389,18 +389,28 @@ if ($resource === 'dashboard' && $method === 'GET') {
         $stmt->execute([$cid, $cid, $cid]);
         $contractsAwaiting = (int)$stmt->fetch()['total'];
 
-        $stmt = $pdo->prepare("SELECT COUNT(*) AS total FROM charges WHERE client_id = ? AND status = 'pendente'");
+        $stmt = $pdo->prepare(
+            "SELECT COUNT(*) AS total FROM charges ch
+             INNER JOIN contracts c ON c.id = ch.contract_id
+             WHERE ch.client_id = ? AND ch.status = 'pendente' AND c.status != 'cancelado'"
+        );
         $stmt->execute([$cid]);
         $chargesPending = (int)$stmt->fetch()['total'];
 
         $stmt = $pdo->prepare(
-            "SELECT COUNT(*) AS total FROM charges
-             WHERE client_id = ? AND (status = 'atrasado' OR (status = 'pendente' AND due_date < CURDATE()))"
+            "SELECT COUNT(*) AS total FROM charges ch
+             INNER JOIN contracts c ON c.id = ch.contract_id
+             WHERE ch.client_id = ? AND c.status != 'cancelado'
+               AND (ch.status = 'atrasado' OR (ch.status = 'pendente' AND ch.due_date < CURDATE()))"
         );
         $stmt->execute([$cid]);
         $chargesOverdue = (int)$stmt->fetch()['total'];
 
-        $stmt = $pdo->prepare("SELECT COUNT(*) AS total FROM charges WHERE client_id = ? AND status = 'pago'");
+        $stmt = $pdo->prepare(
+            "SELECT COUNT(*) AS total FROM charges ch
+             INNER JOIN contracts c ON c.id = ch.contract_id
+             WHERE ch.client_id = ? AND ch.status = 'pago' AND c.status != 'cancelado'"
+        );
         $stmt->execute([$cid]);
         $chargesPaid = (int)$stmt->fetch()['total'];
 
@@ -431,15 +441,25 @@ if ($resource === 'dashboard' && $method === 'GET') {
     $avalistas = (int)$pdo->query('SELECT COUNT(*) AS t FROM clients WHERE active = 1 AND is_avalista = 1')->fetch()['t'];
     $animals = (int)$pdo->query('SELECT COUNT(*) AS t FROM animals')->fetch()['t'];
     $activeAnimals = (int)$pdo->query("SELECT COUNT(*) AS t FROM animals WHERE status = 'ativo'")->fetch()['t'];
-    $contracts = (int)$pdo->query('SELECT COUNT(*) AS t FROM contracts')->fetch()['t'];
+    $contracts = (int)$pdo->query("SELECT COUNT(*) AS t FROM contracts WHERE status != 'cancelado'")->fetch()['t'];
     $contractsActive = (int)$pdo->query("SELECT COUNT(*) AS t FROM contracts WHERE status = 'ativo'")->fetch()['t'];
     $contractsAwaiting = (int)$pdo->query("SELECT COUNT(*) AS t FROM contracts WHERE status = 'aguardando_assinatura'")->fetch()['t'];
-    $chargesPending = (int)$pdo->query("SELECT COUNT(*) AS t FROM charges WHERE status = 'pendente'")->fetch()['t'];
-    $chargesOverdue = (int)$pdo->query(
-        "SELECT COUNT(*) AS t FROM charges
-         WHERE status = 'atrasado' OR (status = 'pendente' AND due_date < CURDATE())"
+    $chargesPending = (int)$pdo->query(
+        "SELECT COUNT(*) AS t FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE ch.status = 'pendente' AND c.status != 'cancelado'"
     )->fetch()['t'];
-    $chargesPaid = (int)$pdo->query("SELECT COUNT(*) AS t FROM charges WHERE status = 'pago'")->fetch()['t'];
+    $chargesOverdue = (int)$pdo->query(
+        "SELECT COUNT(*) AS t FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE c.status != 'cancelado'
+           AND (ch.status = 'atrasado' OR (ch.status = 'pendente' AND ch.due_date < CURDATE()))"
+    )->fetch()['t'];
+    $chargesPaid = (int)$pdo->query(
+        "SELECT COUNT(*) AS t FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE ch.status = 'pago' AND c.status != 'cancelado'"
+    )->fetch()['t'];
     $users = in_array($auth['role'], ['root', 'admin'], true)
         ? (int)$pdo->query('SELECT COUNT(*) AS t FROM users WHERE active = 1')->fetch()['t']
         : null;
@@ -599,6 +619,22 @@ function generate_charges(PDO $pdo, int $contractId, int $buyerId, float $total,
             'pendente',
         ]);
     }
+}
+
+/** Contratos já cancelados: inativa cobranças/repasses abertos (corrige registros antigos). */
+function sync_cancelled_contract_finance(PDO $pdo): void {
+    $pdo->exec(
+        "UPDATE charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         SET ch.status = 'cancelado'
+         WHERE c.status = 'cancelado' AND ch.status NOT IN ('pago', 'cancelado')"
+    );
+    $pdo->exec(
+        "UPDATE payouts p
+         INNER JOIN contracts c ON c.id = p.contract_id
+         SET p.status = 'cancelado'
+         WHERE c.status = 'cancelado' AND p.status NOT IN ('pago', 'cancelado')"
+    );
 }
 
 function clicksign_config(array $config): array {
@@ -951,7 +987,21 @@ function clicksign_fetch_status(array $config, array $contract): array {
         'signedCount' => $signedCount,
         'totalCount' => count($signers),
         'signers' => $signers,
+        'signedFileUrl' => null,
     ];
+}
+
+function clicksign_get_signed_file_url(array $config, array $contract): ?string {
+    $envelopeId = trim((string)($contract['clicksign_envelope_id'] ?? ''));
+    $documentId = trim((string)($contract['clicksign_document_id'] ?? ''));
+    if ($envelopeId === '' || $documentId === '') return null;
+    $doc = clicksign_request($config, 'GET', "/api/v3/envelopes/{$envelopeId}/documents/{$documentId}");
+    $files = $doc['data']['links']['files'] ?? $doc['links']['files'] ?? [];
+    if (!is_array($files)) return null;
+    foreach (['signed', 'signed_file_url', 'signed-file'] as $key) {
+        if (!empty($files[$key]) && is_string($files[$key])) return $files[$key];
+    }
+    return null;
 }
 
 function map_contract_row(array $r): array {
@@ -2296,7 +2346,8 @@ if ($resource === 'contracts') {
             json_out(['error' => $e->getMessage()], 400);
         }
 
-        $shouldRecalc = $schedule !== null || !empty($body['recalcCharges']) || $financeChanged || $chargesOutOfSync;
+        $isCancelling = array_key_exists('status', $body) && $body['status'] === 'cancelado';
+        $shouldRecalc = !$isCancelling && ($schedule !== null || !empty($body['recalcCharges']) || $financeChanged || $chargesOutOfSync);
 
         if ($shouldRecalc) {
             $paid = $pdo->prepare("SELECT COUNT(*) FROM charges WHERE contract_id = ? AND status = 'pago'");
@@ -2310,6 +2361,15 @@ if ($resource === 'contracts') {
             $pdo->beginTransaction();
             $params[] = (int)$id;
             $pdo->prepare('UPDATE contracts SET ' . implode(',', $fields) . ' WHERE id=?')->execute($params);
+
+            if ($isCancelling) {
+                $pdo->prepare(
+                    "UPDATE charges SET status = 'cancelado' WHERE contract_id = ? AND status != 'pago'"
+                )->execute([(int)$id]);
+                $pdo->prepare(
+                    "UPDATE payouts SET status = 'cancelado' WHERE contract_id = ? AND status != 'pago'"
+                )->execute([(int)$id]);
+            }
 
             if ($shouldRecalc) {
                 $rulesStmt = $pdo->prepare(
@@ -2342,7 +2402,31 @@ if ($resource === 'contracts') {
         }
     }
 
-    if ($method === 'GET' && $id && $action === 'clicksign') {
+    if ($method === 'GET' && $id && $action === 'clicksign' && $subId === 'signed-pdf') {
+        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
+        $stmt->execute([(int)$id]);
+        $r = $stmt->fetch();
+        if (!$r) json_out(['error' => 'Contrato não encontrado'], 404);
+        if (empty($r['clicksign_envelope_id']) || empty($r['clicksign_document_id'])) {
+            json_out(['error' => 'Contrato sem documento na Clicksign'], 400);
+        }
+        try {
+            $url = clicksign_get_signed_file_url($config, map_contract_row($r));
+            if (!$url) {
+                json_out([
+                    'error' => 'Cópia assinada ainda não disponível. Aguarde a finalização de todas as assinaturas.',
+                ], 404);
+            }
+            json_out(['success' => true, 'url' => $url]);
+        } catch (InvalidArgumentException $e) {
+            json_out(['error' => $e->getMessage()], 400);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Falha ao obter PDF assinado: ' . $e->getMessage()], 500);
+        }
+    }
+
+    if ($method === 'GET' && $id && $action === 'clicksign' && !$subId) {
         require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
         $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
         $stmt->execute([(int)$id]);
@@ -2353,6 +2437,13 @@ if ($resource === 'contracts') {
         }
         try {
             $statusInfo = clicksign_fetch_status($config, map_contract_row($r));
+            if (($statusInfo['status'] ?? '') === 'closed') {
+                try {
+                    $statusInfo['signedFileUrl'] = clicksign_get_signed_file_url($config, map_contract_row($r));
+                } catch (Throwable $e) {
+                    $statusInfo['signedFileUrl'] = null;
+                }
+            }
             $pdo->prepare('UPDATE contracts SET clicksign_status=? WHERE id=?')
                 ->execute([$statusInfo['status'], (int)$id]);
             if ($statusInfo['status'] === 'closed' && ($r['status'] ?? '') === 'aguardando_assinatura') {
@@ -2463,6 +2554,7 @@ if ($resource === 'contracts') {
 if ($resource === 'charges') {
     if ($method === 'GET' && !$id) {
         $auth = require_auth($config['jwt_secret']);
+        sync_cancelled_contract_finance($pdo);
         $sql = "SELECT ch.*, a.name AS animal_name, c.status AS contract_status, cl.name AS client_name
                 FROM charges ch
                 INNER JOIN contracts c ON c.id = ch.contract_id
@@ -2475,9 +2567,16 @@ if ($resource === 'charges') {
             $sql .= ' AND (ch.client_id = ? OR c.seller_id = ?)';
             array_push($params, $auth['clientId'], $auth['clientId']);
         }
-        if (!empty($_GET['status'])) {
-            $sql .= ' AND ch.status = ?';
-            $params[] = $_GET['status'];
+        $statusFilter = isset($_GET['status']) ? (string)$_GET['status'] : '';
+        if ($statusFilter === 'cancelado') {
+            $sql .= " AND ch.status = 'cancelado'";
+        } elseif ($statusFilter === 'atrasado') {
+            $sql .= " AND c.status != 'cancelado' AND ch.status = 'pendente' AND ch.due_date < CURDATE()";
+        } elseif ($statusFilter !== '') {
+            $sql .= " AND c.status != 'cancelado' AND ch.status = ?";
+            $params[] = $statusFilter;
+        } else {
+            $sql .= " AND c.status != 'cancelado' AND ch.status != 'cancelado'";
         }
         if (!empty($_GET['contractId'])) {
             $sql .= ' AND ch.contract_id = ?';
@@ -2738,6 +2837,7 @@ if ($resource === 'auction-lots') {
 if ($resource === 'payouts') {
     if ($method === 'GET' && !$id) {
         $auth = require_auth($config['jwt_secret']);
+        sync_cancelled_contract_finance($pdo);
         $sql = "SELECT p.*, cl.name AS beneficiary_name, a.name AS animal_name,
                        ch.status AS charge_status, ch.due_date AS charge_due_date
                 FROM payouts p
@@ -2752,9 +2852,14 @@ if ($resource === 'payouts') {
             $sql .= ' AND p.beneficiary_client_id = ?';
             $params[] = $auth['clientId'];
         }
-        if (!empty($_GET['status'])) {
-            $sql .= ' AND p.status = ?';
-            $params[] = $_GET['status'];
+        $statusFilter = isset($_GET['status']) ? (string)$_GET['status'] : '';
+        if ($statusFilter === 'cancelado') {
+            $sql .= " AND p.status = 'cancelado'";
+        } elseif ($statusFilter !== '') {
+            $sql .= " AND c.status != 'cancelado' AND p.status = ?";
+            $params[] = $statusFilter;
+        } else {
+            $sql .= " AND c.status != 'cancelado' AND p.status != 'cancelado'";
         }
         if (!empty($_GET['contractId'])) {
             $sql .= ' AND p.contract_id = ?';

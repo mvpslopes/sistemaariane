@@ -721,10 +721,15 @@ export interface ClicksignTracking {
   signedCount: number;
   totalCount: number;
   signers: ClicksignSignerStatus[];
+  signedFileUrl?: string | null;
 }
 
 export async function getClicksignStatus(id: string) {
   return request<ClicksignTracking>(`/contracts/${id}/clicksign`);
+}
+
+export async function getClicksignSignedPdfUrl(id: string) {
+  return request<{ success: boolean; url: string }>(`/contracts/${id}/clicksign/signed-pdf`);
 }
 
 export async function getCharges(filters?: { status?: string; contractId?: string; clientId?: string }) {

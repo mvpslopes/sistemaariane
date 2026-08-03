@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, FileText, Printer, Pencil, Send, RefreshCw, CheckCircle2, Clock } from 'lucide-react';
+import { Plus, Search, FileText, Printer, Pencil, Send, RefreshCw, CheckCircle2, Clock, Download } from 'lucide-react';
 import {
   getContract,
   getContracts,
   getClicksignStatus,
+  getClicksignSignedPdfUrl,
   sendContractToClicksign,
   updateContract,
   type Contract,
@@ -23,6 +24,14 @@ const statusLabel: Record<Contract['status'], string> = {
   ativo: 'Ativo',
   concluido: 'Concluído',
   cancelado: 'Cancelado',
+};
+
+const statusTone: Record<Contract['status'], string> = {
+  rascunho: 'bg-slate-100 text-slate-700',
+  aguardando_assinatura: 'bg-amber-100 text-amber-800',
+  ativo: 'bg-emerald-100 text-emerald-800',
+  concluido: 'bg-sky-100 text-sky-800',
+  cancelado: 'bg-red-100 text-red-700',
 };
 
 const saleLabel = (type: string) => {
@@ -157,14 +166,30 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
 
   const onCancel = async () => {
     if (!detailId || !canWrite) return;
-    if (!confirm('Cancelar este contrato?')) return;
+    if (
+      !confirm(
+        'Cancelar este contrato?\n\nAs cobranças e repasses pendentes serão cancelados e deixarão de contar no painel.'
+      )
+    ) {
+      return;
+    }
     try {
       await updateContract(detailId, { status: 'cancelado' });
-      success('Contrato cancelado');
+      success('Contrato cancelado · cobranças pendentes inativadas');
       await openDetail(detailId);
       await load();
     } catch (e: any) {
       toastError(e.message || 'Erro ao cancelar');
+    }
+  };
+
+  const onDownloadSignedPdf = async () => {
+    if (!detail?.id) return;
+    try {
+      const res = await getClicksignSignedPdfUrl(detail.id);
+      if (res.url) window.open(res.url, '_blank', 'noopener,noreferrer');
+    } catch (e: any) {
+      toastError(e.message || 'Cópia assinada ainda não disponível');
     }
   };
 
@@ -249,7 +274,9 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                       {money(c.total_amount)}
                     </td>
                     <td className="px-3 py-3 sm:px-4">
-                      <span className="inline-flex rounded-full bg-brand-beige/60 px-2 py-0.5 text-[11px] font-medium text-brand-dark-brown sm:px-2.5 sm:text-xs">
+                      <span
+                        className={`inline-flex max-w-[7.5rem] rounded-full px-2 py-0.5 text-center text-[11px] font-medium leading-tight sm:max-w-none sm:px-2.5 sm:text-xs ${statusTone[c.status]}`}
+                      >
                         {statusLabel[c.status]}
                       </span>
                     </td>
@@ -332,7 +359,16 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
           <div className="space-y-5">
             <div className="grid gap-3 text-sm sm:grid-cols-2">
               <Info label="Tipo" value={`${saleLabel(detail.sale_type)}${detail.share_pct && detail.sale_type !== 'inteiro' ? ` · ${detail.share_pct}%` : ''}`} />
-              <Info label="Status" value={statusLabel[detail.status]} />
+              <Info
+                label="Status"
+                value={
+                  <span
+                    className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${statusTone[detail.status]}`}
+                  >
+                    {statusLabel[detail.status]}
+                  </span>
+                }
+              />
               <Info label="Vendedor" value={detail.seller_name || '—'} />
               <Info label="Comprador" value={detail.buyer_name || '—'} />
               <Info label="Assessor" value={detail.assessor_name || '—'} />
@@ -505,6 +541,17 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
               >
                 <Printer className="h-4 w-4" /> Imprimir / PDF
               </button>
+              {(detail.clicksign_status === 'closed' ||
+                clicksignTracking?.status === 'closed' ||
+                clicksignTracking?.signedFileUrl) && (
+                <button
+                  type="button"
+                  onClick={onDownloadSignedPdf}
+                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
+                >
+                  <Download className="h-4 w-4" /> Cópia assinada (PDF)
+                </button>
+              )}
               {canWrite && detail.status !== 'cancelado' && (
                 <button type="button" onClick={onCancel} className="rounded-xl border border-red-200 px-4 py-2 text-sm text-red-600 hover:bg-red-50">
                   Cancelar contrato
@@ -534,11 +581,11 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   );
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+function Info({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
       <p className="text-xs uppercase tracking-wide text-brand-olive">{label}</p>
-      <p className="font-medium text-brand-dark-brown">{value}</p>
+      <div className="font-medium text-brand-dark-brown">{value}</div>
     </div>
   );
 }

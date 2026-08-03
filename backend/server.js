@@ -309,7 +309,7 @@ app.get('/api/dashboard', auth(), async (req, res) => {
       );
       const [[contracts]] = await pool.execute(
         `SELECT COUNT(*) AS total FROM contracts
-         WHERE buyer_id = ? OR seller_id = ? OR assessor_id = ?`,
+         WHERE (buyer_id = ? OR seller_id = ? OR assessor_id = ?) AND status != 'cancelado'`,
         [cid, cid, cid]
       );
       const [[contractsActive]] = await pool.execute(
@@ -323,16 +323,22 @@ app.get('/api/dashboard', auth(), async (req, res) => {
         [cid, cid, cid]
       );
       const [[chargesPending]] = await pool.execute(
-        `SELECT COUNT(*) AS total FROM charges WHERE client_id = ? AND status = 'pendente'`,
+        `SELECT COUNT(*) AS total FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE ch.client_id = ? AND ch.status = 'pendente' AND c.status != 'cancelado'`,
         [cid]
       );
       const [[chargesOverdue]] = await pool.execute(
-        `SELECT COUNT(*) AS total FROM charges
-         WHERE client_id = ? AND (status = 'atrasado' OR (status = 'pendente' AND due_date < CURDATE()))`,
+        `SELECT COUNT(*) AS total FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE ch.client_id = ? AND c.status != 'cancelado'
+           AND (ch.status = 'atrasado' OR (ch.status = 'pendente' AND ch.due_date < CURDATE()))`,
         [cid]
       );
       const [[chargesPaid]] = await pool.execute(
-        `SELECT COUNT(*) AS total FROM charges WHERE client_id = ? AND status = 'pago'`,
+        `SELECT COUNT(*) AS total FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE ch.client_id = ? AND ch.status = 'pago' AND c.status != 'cancelado'`,
         [cid]
       );
 
@@ -375,7 +381,9 @@ app.get('/api/dashboard', auth(), async (req, res) => {
     const [[activeAnimals]] = await pool.execute(
       "SELECT COUNT(*) AS total FROM animals WHERE status = 'ativo'"
     );
-    const [[contracts]] = await pool.execute('SELECT COUNT(*) AS total FROM contracts');
+    const [[contracts]] = await pool.execute(
+      "SELECT COUNT(*) AS total FROM contracts WHERE status != 'cancelado'"
+    );
     const [[contractsActive]] = await pool.execute(
       "SELECT COUNT(*) AS total FROM contracts WHERE status = 'ativo'"
     );
@@ -383,14 +391,20 @@ app.get('/api/dashboard', auth(), async (req, res) => {
       "SELECT COUNT(*) AS total FROM contracts WHERE status = 'aguardando_assinatura'"
     );
     const [[chargesPending]] = await pool.execute(
-      "SELECT COUNT(*) AS total FROM charges WHERE status = 'pendente'"
+      `SELECT COUNT(*) AS total FROM charges ch
+       INNER JOIN contracts c ON c.id = ch.contract_id
+       WHERE ch.status = 'pendente' AND c.status != 'cancelado'`
     );
     const [[chargesOverdue]] = await pool.execute(
-      `SELECT COUNT(*) AS total FROM charges
-       WHERE status = 'atrasado' OR (status = 'pendente' AND due_date < CURDATE())`
+      `SELECT COUNT(*) AS total FROM charges ch
+       INNER JOIN contracts c ON c.id = ch.contract_id
+       WHERE c.status != 'cancelado'
+         AND (ch.status = 'atrasado' OR (ch.status = 'pendente' AND ch.due_date < CURDATE()))`
     );
     const [[chargesPaid]] = await pool.execute(
-      "SELECT COUNT(*) AS total FROM charges WHERE status = 'pago'"
+      `SELECT COUNT(*) AS total FROM charges ch
+       INNER JOIN contracts c ON c.id = ch.contract_id
+       WHERE ch.status = 'pago' AND c.status != 'cancelado'`
     );
     const [[users]] = await pool.execute('SELECT COUNT(*) AS total FROM users WHERE active = 1');
 
@@ -544,6 +558,22 @@ async function generateCharges(conn, contractId, buyerId, total, n, firstDue, me
       [contractId, buyerId, i + 1, rows[i].amount, rows[i].dueDate, method]
     );
   }
+}
+
+/** Contratos já cancelados: inativa cobranças/repasses abertos (corrige registros antigos). */
+async function syncCancelledContractFinance(conn = pool) {
+  await conn.execute(
+    `UPDATE charges ch
+     INNER JOIN contracts c ON c.id = ch.contract_id
+     SET ch.status = 'cancelado'
+     WHERE c.status = 'cancelado' AND ch.status NOT IN ('pago', 'cancelado')`
+  );
+  await conn.execute(
+    `UPDATE payouts p
+     INNER JOIN contracts c ON c.id = p.contract_id
+     SET p.status = 'cancelado'
+     WHERE c.status = 'cancelado' AND p.status NOT IN ('pago', 'cancelado')`
+  );
 }
 
 /** Regras de repasse (% por beneficiário) → parcelas vinculadas a cada cobrança */
@@ -2055,8 +2085,11 @@ app.put('/api/contracts/:id', auth(['root', 'admin', 'user']), async (req, res) 
       Math.abs(Number(chargeAgg.total_sum) - nextTotal) > 0.02 ||
       Number(chargeAgg.qty) !== nextInstallments;
 
+    const isCancelling = b.status === 'cancelado';
+
     const shouldRecalc =
-      Boolean(schedule) || Boolean(b.recalcCharges) || financeChanged || chargesOutOfSync;
+      !isCancelling &&
+      (Boolean(schedule) || Boolean(b.recalcCharges) || financeChanged || chargesOutOfSync);
 
     if (shouldRecalc) {
       const [[paidOnly]] = await conn.execute(
@@ -2073,6 +2106,19 @@ app.put('/api/contracts/:id', auth(['root', 'admin', 'user']), async (req, res) 
 
     params.push(id);
     await conn.execute(`UPDATE contracts SET ${fields.join(',')} WHERE id=?`, params);
+
+    if (isCancelling) {
+      await conn.execute(
+        `UPDATE charges SET status = 'cancelado'
+         WHERE contract_id = ? AND status != 'pago'`,
+        [id]
+      );
+      await conn.execute(
+        `UPDATE payouts SET status = 'cancelado'
+         WHERE contract_id = ? AND status != 'pago'`,
+        [id]
+      );
+    }
 
     if (shouldRecalc) {
       const [ruleRows] = await conn.execute(
@@ -2409,7 +2455,25 @@ async function clicksignFetchStatus(contract) {
     signedCount: signers.filter((s) => s.signed).length,
     totalCount: signers.length,
     signers,
+    signedFileUrl: null,
   };
+}
+
+async function clicksignGetSignedFileUrl(contract) {
+  const envelopeId = String(contract.clicksign_envelope_id || '').trim();
+  const documentId = String(contract.clicksign_document_id || '').trim();
+  if (!envelopeId || !documentId) return null;
+  const doc = await clicksignRequest(
+    'GET',
+    `/api/v3/envelopes/${envelopeId}/documents/${documentId}`
+  );
+  const files = doc?.data?.links?.files || doc?.links?.files || {};
+  return (
+    files.signed ||
+    files.signed_file_url ||
+    files['signed-file'] ||
+    null
+  );
 }
 
 app.get('/api/contracts/:id/clicksign', auth(['root', 'admin', 'user']), async (req, res) => {
@@ -2422,6 +2486,13 @@ app.get('/api/contracts/:id/clicksign', auth(['root', 'admin', 'user']), async (
       return res.status(400).json({ error: 'Contrato ainda não foi enviado à Clicksign' });
     }
     const statusInfo = await clicksignFetchStatus(contract);
+    if (statusInfo.status === 'closed') {
+      try {
+        statusInfo.signedFileUrl = await clicksignGetSignedFileUrl(contract);
+      } catch (e) {
+        console.error('Clicksign signed file:', e.message);
+      }
+    }
     await pool.execute('UPDATE contracts SET clicksign_status=? WHERE id=?', [statusInfo.status, id]);
     if (statusInfo.status === 'closed' && contract.status === 'aguardando_assinatura') {
       await pool.execute("UPDATE contracts SET status='ativo' WHERE id=?", [id]);
@@ -2431,6 +2502,29 @@ app.get('/api/contracts/:id/clicksign', auth(['root', 'admin', 'user']), async (
     console.error(error);
     const status = error.status || 500;
     res.status(status).json({ error: error.message || 'Falha ao consultar Clicksign' });
+  }
+});
+
+app.get('/api/contracts/:id/clicksign/signed-pdf', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [rows] = await pool.execute(`${contractSelect} AND c.id = ?`, [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Contrato não encontrado' });
+    const contract = mapContract(rows[0]);
+    if (!contract.clicksign_envelope_id || !contract.clicksign_document_id) {
+      return res.status(400).json({ error: 'Contrato sem documento na Clicksign' });
+    }
+    const url = await clicksignGetSignedFileUrl(contract);
+    if (!url) {
+      return res.status(404).json({
+        error: 'Cópia assinada ainda não disponível. Aguarde a finalização de todas as assinaturas.',
+      });
+    }
+    res.json({ success: true, url });
+  } catch (error) {
+    console.error(error);
+    const status = error.status || 500;
+    res.status(status).json({ error: error.message || 'Falha ao obter PDF assinado' });
   }
 });
 
@@ -2519,6 +2613,7 @@ app.post('/api/contracts/:id/sign', auth(), async (req, res) => {
 
 app.get('/api/charges', auth(), async (req, res) => {
   try {
+    await syncCancelledContractFinance();
     let sql = `SELECT ch.*, a.name AS animal_name, c.status AS contract_status, cl.name AS client_name
                FROM charges ch
                INNER JOIN contracts c ON c.id = ch.contract_id
@@ -2531,9 +2626,17 @@ app.get('/api/charges', auth(), async (req, res) => {
       sql += ' AND (ch.client_id = ? OR c.seller_id = ?)';
       params.push(req.user.clientId, req.user.clientId);
     }
-    if (req.query.status) {
-      sql += ' AND ch.status = ?';
-      params.push(req.query.status);
+    const statusFilter = req.query.status ? String(req.query.status) : '';
+    if (statusFilter === 'cancelado') {
+      sql += " AND ch.status = 'cancelado'";
+    } else if (statusFilter === 'atrasado') {
+      sql +=
+        " AND c.status != 'cancelado' AND ch.status = 'pendente' AND ch.due_date < CURDATE()";
+    } else if (statusFilter) {
+      sql += " AND c.status != 'cancelado' AND ch.status = ?";
+      params.push(statusFilter);
+    } else {
+      sql += " AND c.status != 'cancelado' AND ch.status != 'cancelado'";
     }
     if (req.query.contractId) {
       sql += ' AND ch.contract_id = ?';
@@ -2835,6 +2938,7 @@ app.put('/api/auction-lots/:id', auth(['root', 'admin', 'user']), async (req, re
 
 app.get('/api/payouts', auth(), async (req, res) => {
   try {
+    await syncCancelledContractFinance();
     let sql = `SELECT p.*, cl.name AS beneficiary_name, a.name AS animal_name,
                       ch.status AS charge_status, ch.due_date AS charge_due_date
                FROM payouts p
@@ -2849,9 +2953,14 @@ app.get('/api/payouts', auth(), async (req, res) => {
       sql += ' AND p.beneficiary_client_id = ?';
       params.push(req.user.clientId);
     }
-    if (req.query.status) {
-      sql += ' AND p.status = ?';
-      params.push(req.query.status);
+    const statusFilter = req.query.status ? String(req.query.status) : '';
+    if (statusFilter === 'cancelado') {
+      sql += " AND p.status = 'cancelado'";
+    } else if (statusFilter) {
+      sql += " AND c.status != 'cancelado' AND p.status = ?";
+      params.push(statusFilter);
+    } else {
+      sql += " AND c.status != 'cancelado' AND p.status != 'cancelado'";
     }
     if (req.query.contractId) {
       sql += ' AND p.contract_id = ?';
