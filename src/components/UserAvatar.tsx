@@ -1,5 +1,3 @@
-import { mediaUrl } from '../services/apiService';
-
 const sizeMap = {
   sm: 'h-8 w-8 text-[10px]',
   md: 'h-9 w-9 text-xs',
@@ -8,24 +6,12 @@ const sizeMap = {
 
 interface UserAvatarProps {
   name: string;
-  avatarUrl?: string | null;
   size?: keyof typeof sizeMap;
   className?: string;
 }
 
-export default function UserAvatar({ name, avatarUrl, size = 'md', className = '' }: UserAvatarProps) {
-  const src = mediaUrl(avatarUrl);
+export default function UserAvatar({ name, size = 'md', className = '' }: UserAvatarProps) {
   const initial = (name || '?').charAt(0).toUpperCase();
-
-  if (src) {
-    return (
-      <img
-        src={src}
-        alt={name}
-        className={`${sizeMap[size]} shrink-0 rounded-full object-cover ring-2 ring-brand-beige/80 ${className}`}
-      />
-    );
-  }
 
   return (
     <div

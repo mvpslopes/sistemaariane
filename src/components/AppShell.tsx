@@ -51,7 +51,7 @@ const pageMeta: Record<string, { title: string; subtitle: string }> = {
     title: 'Repasses',
     subtitle: 'Assessoria, dono do animal e assessores por parcela',
   },
-  '/app/perfil': { title: 'Meu perfil', subtitle: 'Nome e foto de exibição' },
+  '/app/perfil': { title: 'Meu perfil', subtitle: 'Dados de exibição da conta' },
   '/app/usuarios': { title: 'Usuários', subtitle: 'Acessos ao sistema' },
   '/app/alterar-senha': { title: 'Alterar senha', subtitle: 'Segurança da sua conta' },
 };
@@ -159,24 +159,25 @@ export default function AppShell() {
           mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         } ${compact ? 'md:w-[76px]' : 'md:w-64'} md:shrink-0`}
       >
-        <div className={`flex items-center gap-3 px-4 py-4 ${compact ? 'md:justify-center' : ''}`}>
-          <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-brand-beige shadow-lg shadow-black/20">
-            <img
-              src={`${import.meta.env.BASE_URL}logo-sistema-ariane.png`}
-              alt="Ariane Andrade Assessoria"
-              className="h-full w-full object-cover"
-            />
-          </div>
-          {!compact && (
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold tracking-wide text-white">Sistema Ariane</p>
-              <p className="truncate text-xs text-brand-beige/50">Gestão de Haras</p>
-            </div>
+        <div className={`flex items-start gap-2 px-4 py-4 ${compact ? 'md:justify-center md:px-2' : ''}`}>
+          {!compact ? (
+            <p className="min-w-0 flex-1 text-sm font-semibold leading-snug tracking-wide text-white">
+              Sistema Ariane
+              <br />
+              <span className="font-medium text-brand-beige/80">Gestão de Haras</span>
+            </p>
+          ) : (
+            <p
+              className="hidden text-center text-[10px] font-semibold leading-tight text-white md:block"
+              title="Sistema Ariane Gestão de Haras"
+            >
+              Sistema Ariane
+            </p>
           )}
           <button
             type="button"
             onClick={() => setMobileOpen(false)}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-brand-beige/80 hover:bg-white/10 hover:text-white md:hidden"
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-brand-beige/80 hover:bg-white/10 hover:text-white md:hidden"
             aria-label="Fechar menu"
           >
             <X className="h-5 w-5" />
@@ -425,12 +426,7 @@ export default function AppShell() {
           <div
             className={`flex items-center gap-3 rounded-xl px-3 py-2.5 ${compact ? 'md:justify-center' : ''}`}
           >
-            <UserAvatar
-              name={user?.name || 'U'}
-              avatarUrl={user?.avatarUrl}
-              size="md"
-              className="!ring-white/20"
-            />
+            <UserAvatar name={user?.name || 'U'} size="md" className="!ring-white/20" />
             {!compact && (
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-white">{user?.name}</p>

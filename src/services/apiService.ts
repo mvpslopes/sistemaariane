@@ -2,7 +2,17 @@
  * API client — MVP Sistema Haras
  */
 
-const RAW_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api';
+function defaultApiUrl(): string {
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host && host !== 'localhost' && host !== '127.0.0.1') {
+      return `${window.location.origin}/api.php`;
+    }
+  }
+  return 'http://localhost:3000/api';
+}
+
+const RAW_URL = import.meta.env.VITE_API_URL || defaultApiUrl();
 
 /** Normaliza base: Node (/api) ou PHP (.../api.php) */
 function resolveBaseUrl(): string {
@@ -418,7 +428,7 @@ export async function getMe() {
   return request<{ user: AuthUser }>('/me');
 }
 
-export async function updateProfile(data: { name: string; avatarUrl?: string | null }) {
+export async function updateProfile(data: { name: string }) {
   return request<{ success: boolean; user: AuthUser }>('/me', {
     method: 'PUT',
     body: JSON.stringify(data),
@@ -607,15 +617,11 @@ export async function uploadAnimalPhoto(file: File) {
   return uploadMedia(file, 'animal');
 }
 
-export async function uploadAvatar(file: File) {
-  return uploadMedia(file, 'avatar');
-}
-
 export async function uploadPersonDocument(file: File) {
   return uploadMedia(file, 'person-doc');
 }
 
-async function uploadMedia(file: File, kind: 'animal' | 'avatar' | 'person-doc') {
+async function uploadMedia(file: File, kind: 'animal' | 'person-doc') {
   const token = getToken();
   const form = new FormData();
   form.append('file', file);
