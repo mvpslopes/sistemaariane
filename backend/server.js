@@ -701,9 +701,13 @@ function mapContract(r) {
     witness1_id: r.witness1_id ? String(r.witness1_id) : null,
     witness1_name: r.witness1_name || null,
     witness1_email: r.witness1_email || null,
+    witness1_phone: r.witness1_phone || null,
+    witness1_whatsapp: r.witness1_whatsapp || null,
     witness2_id: r.witness2_id ? String(r.witness2_id) : null,
     witness2_name: r.witness2_name || null,
     witness2_email: r.witness2_email || null,
+    witness2_phone: r.witness2_phone || null,
+    witness2_whatsapp: r.witness2_whatsapp || null,
     via_label: r.via_label || 'VIA DAS PARTES — VENDEDOR E COMPRADOR',
     clicksign_envelope_id: r.clicksign_envelope_id || null,
     clicksign_document_id: r.clicksign_document_id || null,
@@ -1771,7 +1775,9 @@ const contractSelect = `SELECT c.*,
     b.city AS buyer_city, b.state AS buyer_state,
     ass.name AS assessor_name,
     w1.name AS witness1_name, w1.email AS witness1_email,
+    w1.phone AS witness1_phone, w1.whatsapp AS witness1_whatsapp,
     w2.name AS witness2_name, w2.email AS witness2_email,
+    w2.phone AS witness2_phone, w2.whatsapp AS witness2_whatsapp,
     au.name AS auction_name, au.auction_date AS auction_date,
     t.name AS template_name,
     COALESCE(c.verso_title, t.title) AS template_title,
@@ -2336,6 +2342,59 @@ function clicksignStatusLabel(status) {
   return map[status] || status || 'Enviado';
 }
 
+function clicksignSignUrl(signerId, csSigner = null) {
+  if (csSigner) {
+    const attrs = csSigner.attributes || {};
+    for (const key of ['url', 'sign_url', 'signing_url']) {
+      if (attrs[key] && typeof attrs[key] === 'string') return attrs[key];
+    }
+    const links = csSigner.links || {};
+    for (const key of ['sign', 'signing_url', 'url']) {
+      if (links[key] && typeof links[key] === 'string') return links[key];
+    }
+  }
+  const id = String(signerId || '').trim();
+  if (!id) return null;
+  try {
+    const { base } = loadClicksignConfig();
+    return `${base.replace(/\/$/, '')}/sign/${encodeURIComponent(id)}`;
+  } catch {
+    return null;
+  }
+}
+
+async function clicksignNotify(contract, signerId = null) {
+  const envelopeId = String(contract.clicksign_envelope_id || '').trim();
+  if (!envelopeId) {
+    const err = new Error('Contrato ainda não foi enviado à Clicksign');
+    err.status = 400;
+    throw err;
+  }
+  if (contract.status === 'cancelado') {
+    const err = new Error('Contrato cancelado');
+    err.status = 400;
+    throw err;
+  }
+  const env = await clicksignRequest('GET', `/api/v3/envelopes/${envelopeId}`);
+  const status = env?.data?.attributes?.status || contract.clicksign_status || '';
+  if (status !== 'running') {
+    const err = new Error('Só é possível reenviar notificações enquanto o envelope está em processo');
+    err.status = 400;
+    throw err;
+  }
+  const payload = { data: { type: 'notifications', attributes: {} } };
+  const sid = String(signerId || '').trim();
+  if (sid) {
+    await clicksignRequest(
+      'POST',
+      `/api/v3/envelopes/${envelopeId}/signers/${encodeURIComponent(sid)}/notifications`,
+      payload
+    );
+    return;
+  }
+  await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/notifications`, payload);
+}
+
 async function clicksignFetchStatus(contract) {
   const envelopeId = String(contract.clicksign_envelope_id || '').trim();
   const documentId = String(contract.clicksign_document_id || '').trim();
@@ -2392,10 +2451,38 @@ async function clicksignFetchStatus(contract) {
   }
 
   const parties = [
-    { role: 'seller', label: 'Vendedor', name: contract.seller_name, email: contract.seller_email },
-    { role: 'buyer', label: 'Comprador', name: contract.buyer_name, email: contract.buyer_email },
-    { role: 'witness1', label: 'Testemunha 1', name: contract.witness1_name, email: contract.witness1_email },
-    { role: 'witness2', label: 'Testemunha 2', name: contract.witness2_name, email: contract.witness2_email },
+    {
+      role: 'seller',
+      label: 'Vendedor',
+      name: contract.seller_name,
+      email: contract.seller_email,
+      phone: contract.seller_phone,
+      whatsapp: contract.seller_whatsapp,
+    },
+    {
+      role: 'buyer',
+      label: 'Comprador',
+      name: contract.buyer_name,
+      email: contract.buyer_email,
+      phone: contract.buyer_phone,
+      whatsapp: contract.buyer_whatsapp,
+    },
+    {
+      role: 'witness1',
+      label: 'Testemunha 1',
+      name: contract.witness1_name,
+      email: contract.witness1_email,
+      phone: contract.witness1_phone,
+      whatsapp: contract.witness1_whatsapp,
+    },
+    {
+      role: 'witness2',
+      label: 'Testemunha 2',
+      name: contract.witness2_name,
+      email: contract.witness2_email,
+      phone: contract.witness2_phone,
+      whatsapp: contract.witness2_whatsapp,
+    },
   ];
 
   const byEmail = {};
@@ -2417,11 +2504,16 @@ async function clicksignFetchStatus(contract) {
     const name = String(p.name || '').trim() || String(cs?.attributes?.name || '').trim() || '—';
     let signed = Boolean(email && signedEmails[email]);
     if (!signed && status === 'closed' && email) signed = true;
+    const signerId = cs?.id ? String(cs.id) : null;
     signers.push({
       role: p.role,
       label: p.label,
       name,
       email: p.email || cs?.attributes?.email || null,
+      phone: p.phone || null,
+      whatsapp: p.whatsapp || null,
+      signerId,
+      signUrl: signed ? null : clicksignSignUrl(signerId, cs),
       signed,
       status: signed ? 'assinado' : 'pendente',
       statusLabel: signed ? 'Assinado' : 'Pendente',
@@ -2435,11 +2527,16 @@ async function clicksignFetchStatus(contract) {
       .toLowerCase();
     if (!email || used[email]) continue;
     const signed = Boolean(signedEmails[email]) || status === 'closed';
+    const signerId = s?.id ? String(s.id) : null;
     signers.push({
       role: 'other',
       label: 'Signatário',
       name: String(s?.attributes?.name || '').trim() || '—',
       email: s?.attributes?.email || null,
+      phone: s?.attributes?.phone_number || null,
+      whatsapp: null,
+      signerId,
+      signUrl: signed ? null : clicksignSignUrl(signerId, s),
       signed,
       status: signed ? 'assinado' : 'pendente',
       statusLabel: signed ? 'Assinado' : 'Pendente',
@@ -2525,6 +2622,27 @@ app.get('/api/contracts/:id/clicksign/signed-pdf', auth(['root', 'admin', 'user'
     console.error(error);
     const status = error.status || 500;
     res.status(status).json({ error: error.message || 'Falha ao obter PDF assinado' });
+  }
+});
+
+app.post('/api/contracts/:id/clicksign/notify', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [rows] = await pool.execute(`${contractSelect} AND c.id = ?`, [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Contrato não encontrado' });
+    const contract = mapContract(rows[0]);
+    const signerId = req.body?.signerId ? String(req.body.signerId).trim() : '';
+    await clicksignNotify(contract, signerId || null);
+    res.json({
+      success: true,
+      message: signerId
+        ? 'Notificação reenviada ao signatário'
+        : 'Notificações reenviadas aos signatários pendentes',
+    });
+  } catch (error) {
+    console.error(error);
+    const status = error.status || 500;
+    res.status(status).json({ error: error.message || 'Falha ao reenviar notificação' });
   }
 });
 

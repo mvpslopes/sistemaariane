@@ -240,9 +240,13 @@ export interface Contract {
   witness1_id?: string | null;
   witness1_name?: string | null;
   witness1_email?: string | null;
+  witness1_phone?: string | null;
+  witness1_whatsapp?: string | null;
   witness2_id?: string | null;
   witness2_name?: string | null;
   witness2_email?: string | null;
+  witness2_phone?: string | null;
+  witness2_whatsapp?: string | null;
   via_label?: string | null;
   clicksign_envelope_id?: string | null;
   clicksign_document_id?: string | null;
@@ -712,6 +716,10 @@ export interface ClicksignSignerStatus {
   label: string;
   name: string;
   email?: string | null;
+  phone?: string | null;
+  whatsapp?: string | null;
+  signerId?: string | null;
+  signUrl?: string | null;
   signed: boolean;
   status: 'assinado' | 'pendente' | string;
   statusLabel: string;
@@ -736,6 +744,13 @@ export async function getClicksignStatus(id: string) {
 
 export async function getClicksignSignedPdfUrl(id: string) {
   return request<{ success: boolean; url: string }>(`/contracts/${id}/clicksign/signed-pdf`);
+}
+
+export async function notifyClicksign(id: string, signerId?: string | null) {
+  return request<{ success: boolean; message: string }>(`/contracts/${id}/clicksign/notify`, {
+    method: 'POST',
+    body: JSON.stringify(signerId ? { signerId } : {}),
+  });
 }
 
 export async function getCharges(filters?: { status?: string; contractId?: string; clientId?: string }) {

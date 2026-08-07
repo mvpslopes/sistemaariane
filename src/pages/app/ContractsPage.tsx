@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Plus, Search, FileText, Printer, Pencil, Send, RefreshCw, CheckCircle2, Clock, Download } from 'lucide-react';
+import { Plus, Search, FileText, Printer, Pencil, Send, RefreshCw, CheckCircle2, Clock, Download, Copy, MessageCircle, Mail } from 'lucide-react';
 import {
   getContract,
   getContracts,
   getClicksignStatus,
   getClicksignSignedPdfUrl,
   sendContractToClicksign,
+  notifyClicksign,
   updateContract,
   type Contract,
   type ClicksignTracking,
+  type ClicksignSignerStatus,
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -65,6 +67,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const [sendingClicksign, setSendingClicksign] = useState(false);
   const [clicksignTracking, setClicksignTracking] = useState<ClicksignTracking | null>(null);
   const [loadingClicksign, setLoadingClicksign] = useState(false);
+  const [notifyingClicksign, setNotifyingClicksign] = useState<string | null>(null);
   const preselectedAnimal = initialAnimalId;
 
   const clicksignStatusPt = (status?: string | null) => {
@@ -161,6 +164,59 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
       toastError(e.message || 'Erro ao enviar para Clicksign');
     } finally {
       setSendingClicksign(false);
+    }
+  };
+
+  const digitsOnly = (v?: string | null) => (v || '').replace(/\D/g, '');
+
+  const whatsappDigits = (phone?: string | null, whatsapp?: string | null) => {
+    let d = digitsOnly(whatsapp) || digitsOnly(phone);
+    if (!d) return '';
+    if (d.length <= 11) d = `55${d}`;
+    return d;
+  };
+
+  const signMessage = (s: ClicksignSignerStatus) => {
+    const animal = detail?.animal_name || 'contrato';
+    const link = s.signUrl || '';
+    return `Olá ${s.name}! Segue o link para assinar o contrato de ${animal} na Clicksign:\n\n${link}`;
+  };
+
+  const onCopySignLink = async (s: ClicksignSignerStatus) => {
+    if (!s.signUrl) {
+      toastError('Link de assinatura indisponível');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(s.signUrl);
+      success('Link de assinatura copiado');
+    } catch {
+      toastError('Não foi possível copiar o link');
+    }
+  };
+
+  const onWhatsAppSign = (s: ClicksignSignerStatus) => {
+    if (!s.signUrl) {
+      toastError('Link de assinatura indisponível');
+      return;
+    }
+    const text = encodeURIComponent(signMessage(s));
+    const phone = whatsappDigits(s.phone, s.whatsapp);
+    const url = phone ? `https://wa.me/${phone}?text=${text}` : `https://wa.me/?text=${text}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const onNotifyClicksign = async (signerId?: string | null) => {
+    if (!detail || !canWrite) return;
+    const key = signerId || 'all';
+    setNotifyingClicksign(key);
+    try {
+      const res = await notifyClicksign(detail.id, signerId);
+      success(res.message || 'Notificação reenviada');
+    } catch (e: any) {
+      toastError(e.message || 'Erro ao reenviar notificação');
+    } finally {
+      setNotifyingClicksign(null);
     }
   };
 
@@ -390,15 +446,29 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     </p>
                   </div>
                   {detail.clicksign_envelope_id && (
-                    <button
-                      type="button"
-                      disabled={loadingClicksign}
-                      onClick={() => loadClicksignTracking(detail.id)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-brand-beige bg-white px-3 py-1.5 text-xs font-medium text-brand-brown hover:bg-brand-beige/40 disabled:opacity-50"
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${loadingClicksign ? 'animate-spin' : ''}`} />
-                      {loadingClicksign ? 'Atualizando...' : 'Atualizar'}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {canWrite &&
+                        (clicksignTracking?.status || detail.clicksign_status) === 'running' && (
+                          <button
+                            type="button"
+                            disabled={!!notifyingClicksign}
+                            onClick={() => onNotifyClicksign()}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-brand-beige bg-white px-3 py-1.5 text-xs font-medium text-brand-brown hover:bg-brand-beige/40 disabled:opacity-50"
+                          >
+                            <Mail className="h-3.5 w-3.5" />
+                            {notifyingClicksign === 'all' ? 'Reenviando...' : 'Reenviar a todos'}
+                          </button>
+                        )}
+                      <button
+                        type="button"
+                        disabled={loadingClicksign}
+                        onClick={() => loadClicksignTracking(detail.id)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-brand-beige bg-white px-3 py-1.5 text-xs font-medium text-brand-brown hover:bg-brand-beige/40 disabled:opacity-50"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${loadingClicksign ? 'animate-spin' : ''}`} />
+                        {loadingClicksign ? 'Atualizando...' : 'Atualizar'}
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -436,7 +506,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                       <ul className="divide-y divide-brand-beige/80 rounded-xl border border-brand-beige bg-white">
                         {clicksignTracking.signers.map((s) => (
                           <li
-                            key={`${s.role}-${s.email || s.name}`}
+                            key={`${s.role}-${s.email || s.name}-${s.signerId || ''}`}
                             className="flex items-start gap-3 px-3 py-2.5"
                           >
                             {s.signed ? (
@@ -444,7 +514,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                             ) : (
                               <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
                             )}
-                            <div className="min-w-0 flex-1">
+                            <div className="min-w-0 flex-1 space-y-2">
                               <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
                                 <p className="text-sm font-medium text-brand-dark-brown">
                                   {s.label}
@@ -455,11 +525,46 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                                     s.signed ? 'text-emerald-700' : 'text-amber-700'
                                   }`}
                                 >
-                                  {s.statusLabel}
+                                  {s.signed && s.signedAt
+                                    ? `Assinou em: ${new Date(s.signedAt).toLocaleDateString('pt-BR')}`
+                                    : s.statusLabel}
                                 </span>
                               </div>
                               {s.email && (
                                 <p className="truncate text-xs text-brand-olive">{s.email}</p>
+                              )}
+                              {!s.signed && canWrite && (
+                                <div className="flex flex-wrap gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={!s.signUrl}
+                                    onClick={() => onCopySignLink(s)}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-brand-beige bg-brand-off-white px-2.5 py-1 text-[11px] font-medium text-brand-brown hover:bg-brand-beige/50 disabled:opacity-40"
+                                  >
+                                    <Copy className="h-3 w-3" />
+                                    Copiar link
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={!s.signUrl}
+                                    onClick={() => onWhatsAppSign(s)}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-40"
+                                  >
+                                    <MessageCircle className="h-3 w-3" />
+                                    WhatsApp
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={!s.signerId || !!notifyingClicksign}
+                                    onClick={() => onNotifyClicksign(s.signerId)}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-brand-beige bg-white px-2.5 py-1 text-[11px] font-medium text-brand-brown hover:bg-brand-beige/40 disabled:opacity-40"
+                                  >
+                                    <Mail className="h-3 w-3" />
+                                    {notifyingClicksign === s.signerId
+                                      ? 'Reenviando...'
+                                      : 'Reenviar e-mail'}
+                                  </button>
+                                </div>
                               )}
                             </div>
                           </li>

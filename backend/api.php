@@ -862,6 +862,64 @@ function clicksign_status_label(string $status): string {
     return $map[$status] ?? ($status !== '' ? $status : 'Enviado');
 }
 
+/** URL pública de assinatura do signatário (para copiar / WhatsApp). */
+function clicksign_sign_url(array $config, ?string $signerId, ?array $csSigner = null): ?string {
+    if (is_array($csSigner)) {
+        $attrs = $csSigner['attributes'] ?? [];
+        foreach (['url', 'sign_url', 'signing_url'] as $key) {
+            if (!empty($attrs[$key]) && is_string($attrs[$key])) {
+                return $attrs[$key];
+            }
+        }
+        $links = $csSigner['links'] ?? [];
+        foreach (['sign', 'signing_url', 'url'] as $key) {
+            if (!empty($links[$key]) && is_string($links[$key])) {
+                return $links[$key];
+            }
+        }
+    }
+    $id = trim((string)$signerId);
+    if ($id === '') return null;
+    try {
+        $cs = clicksign_config($config);
+        return rtrim($cs['base'], '/') . '/sign/' . rawurlencode($id);
+    } catch (Throwable $e) {
+        return null;
+    }
+}
+
+function clicksign_notify(array $config, array $contract, ?string $signerId = null): void {
+    $envelopeId = trim((string)($contract['clicksign_envelope_id'] ?? ''));
+    if ($envelopeId === '') {
+        throw new InvalidArgumentException('Contrato ainda não foi enviado à Clicksign');
+    }
+    if (($contract['status'] ?? '') === 'cancelado') {
+        throw new InvalidArgumentException('Contrato cancelado');
+    }
+    $env = clicksign_request($config, 'GET', "/api/v3/envelopes/{$envelopeId}");
+    $status = (string)($env['data']['attributes']['status'] ?? ($contract['clicksign_status'] ?? ''));
+    if ($status !== 'running') {
+        throw new InvalidArgumentException('Só é possível reenviar notificações enquanto o envelope está em processo');
+    }
+    $payload = [
+        'data' => [
+            'type' => 'notifications',
+            'attributes' => new stdClass(),
+        ],
+    ];
+    $sid = trim((string)$signerId);
+    if ($sid !== '') {
+        clicksign_request(
+            $config,
+            'POST',
+            "/api/v3/envelopes/{$envelopeId}/signers/" . rawurlencode($sid) . '/notifications',
+            $payload
+        );
+        return;
+    }
+    clicksign_request($config, 'POST', "/api/v3/envelopes/{$envelopeId}/notifications", $payload);
+}
+
 /**
  * Consulta envelope + signatários + eventos de assinatura na Clicksign.
  * @return array{status:string,statusLabel:string,signedCount:int,totalCount:int,signers:list<array>}
@@ -923,10 +981,38 @@ function clicksign_fetch_status(array $config, array $contract): array {
     }
 
     $parties = [
-        ['role' => 'seller', 'label' => 'Vendedor', 'name' => $contract['seller_name'] ?? null, 'email' => $contract['seller_email'] ?? null],
-        ['role' => 'buyer', 'label' => 'Comprador', 'name' => $contract['buyer_name'] ?? null, 'email' => $contract['buyer_email'] ?? null],
-        ['role' => 'witness1', 'label' => 'Testemunha 1', 'name' => $contract['witness1_name'] ?? null, 'email' => $contract['witness1_email'] ?? null],
-        ['role' => 'witness2', 'label' => 'Testemunha 2', 'name' => $contract['witness2_name'] ?? null, 'email' => $contract['witness2_email'] ?? null],
+        [
+            'role' => 'seller',
+            'label' => 'Vendedor',
+            'name' => $contract['seller_name'] ?? null,
+            'email' => $contract['seller_email'] ?? null,
+            'phone' => $contract['seller_phone'] ?? null,
+            'whatsapp' => $contract['seller_whatsapp'] ?? null,
+        ],
+        [
+            'role' => 'buyer',
+            'label' => 'Comprador',
+            'name' => $contract['buyer_name'] ?? null,
+            'email' => $contract['buyer_email'] ?? null,
+            'phone' => $contract['buyer_phone'] ?? null,
+            'whatsapp' => $contract['buyer_whatsapp'] ?? null,
+        ],
+        [
+            'role' => 'witness1',
+            'label' => 'Testemunha 1',
+            'name' => $contract['witness1_name'] ?? null,
+            'email' => $contract['witness1_email'] ?? null,
+            'phone' => $contract['witness1_phone'] ?? null,
+            'whatsapp' => $contract['witness1_whatsapp'] ?? null,
+        ],
+        [
+            'role' => 'witness2',
+            'label' => 'Testemunha 2',
+            'name' => $contract['witness2_name'] ?? null,
+            'email' => $contract['witness2_email'] ?? null,
+            'phone' => $contract['witness2_phone'] ?? null,
+            'whatsapp' => $contract['witness2_whatsapp'] ?? null,
+        ],
     ];
 
     $byEmail = [];
@@ -945,11 +1031,16 @@ function clicksign_fetch_status(array $config, array $contract): array {
         $signed = $email !== '' && !empty($signedEmails[$email]);
         // Se o envelope já fechou e não achamos evento, considera assinado
         if (!$signed && $status === 'closed' && $email !== '') $signed = true;
+        $signerId = $cs['id'] ?? null;
         $signers[] = [
             'role' => $p['role'],
             'label' => $p['label'],
             'name' => $name,
             'email' => $p['email'] ?: ($cs['attributes']['email'] ?? null),
+            'phone' => $p['phone'] ?? null,
+            'whatsapp' => $p['whatsapp'] ?? null,
+            'signerId' => $signerId ? (string)$signerId : null,
+            'signUrl' => $signed ? null : clicksign_sign_url($config, $signerId ? (string)$signerId : null, $cs),
             'signed' => $signed,
             'status' => $signed ? 'assinado' : 'pendente',
             'statusLabel' => $signed ? 'Assinado' : 'Pendente',
@@ -962,11 +1053,16 @@ function clicksign_fetch_status(array $config, array $contract): array {
         $email = strtolower(trim((string)($s['attributes']['email'] ?? '')));
         if ($email === '' || !empty($used[$email])) continue;
         $signed = !empty($signedEmails[$email]) || $status === 'closed';
+        $signerId = $s['id'] ?? null;
         $signers[] = [
             'role' => 'other',
             'label' => 'Signatário',
             'name' => trim((string)($s['attributes']['name'] ?? '')) ?: '—',
             'email' => $s['attributes']['email'] ?? null,
+            'phone' => $s['attributes']['phone_number'] ?? null,
+            'whatsapp' => null,
+            'signerId' => $signerId ? (string)$signerId : null,
+            'signUrl' => $signed ? null : clicksign_sign_url($config, $signerId ? (string)$signerId : null, $s),
             'signed' => $signed,
             'status' => $signed ? 'assinado' : 'pendente',
             'statusLabel' => $signed ? 'Assinado' : 'Pendente',
@@ -1056,9 +1152,13 @@ function map_contract_row(array $r): array {
         'witness1_id' => !empty($r['witness1_id']) ? (string)$r['witness1_id'] : null,
         'witness1_name' => $r['witness1_name'] ?? null,
         'witness1_email' => $r['witness1_email'] ?? null,
+        'witness1_phone' => $r['witness1_phone'] ?? null,
+        'witness1_whatsapp' => $r['witness1_whatsapp'] ?? null,
         'witness2_id' => !empty($r['witness2_id']) ? (string)$r['witness2_id'] : null,
         'witness2_name' => $r['witness2_name'] ?? null,
         'witness2_email' => $r['witness2_email'] ?? null,
+        'witness2_phone' => $r['witness2_phone'] ?? null,
+        'witness2_whatsapp' => $r['witness2_whatsapp'] ?? null,
         'via_label' => $r['via_label'] ?? 'VIA DAS PARTES — VENDEDOR E COMPRADOR',
         'clicksign_envelope_id' => $r['clicksign_envelope_id'] ?? null,
         'clicksign_document_id' => $r['clicksign_document_id'] ?? null,
@@ -2036,7 +2136,9 @@ if ($resource === 'contracts') {
         b.city AS buyer_city, b.state AS buyer_state,
         ass.name AS assessor_name,
         w1.name AS witness1_name, w1.email AS witness1_email,
+        w1.phone AS witness1_phone, w1.whatsapp AS witness1_whatsapp,
         w2.name AS witness2_name, w2.email AS witness2_email,
+        w2.phone AS witness2_phone, w2.whatsapp AS witness2_whatsapp,
         au.name AS auction_name, au.auction_date AS auction_date,
         t.name AS template_name,
         COALESCE(c.verso_title, t.title) AS template_title,
@@ -2457,7 +2559,29 @@ if ($resource === 'contracts') {
         }
     }
 
-    if ($method === 'POST' && $id && $action === 'clicksign') {
+    if ($method === 'POST' && $id && $action === 'clicksign' && $subId === 'notify') {
+        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
+        $stmt->execute([(int)$id]);
+        $r = $stmt->fetch();
+        if (!$r) json_out(['error' => 'Contrato não encontrado'], 404);
+        try {
+            $signerId = isset($body['signerId']) ? trim((string)$body['signerId']) : '';
+            clicksign_notify($config, map_contract_row($r), $signerId !== '' ? $signerId : null);
+            json_out([
+                'success' => true,
+                'message' => $signerId !== ''
+                    ? 'Notificação reenviada ao signatário'
+                    : 'Notificações reenviadas aos signatários pendentes',
+            ]);
+        } catch (InvalidArgumentException $e) {
+            json_out(['error' => $e->getMessage()], 400);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Falha ao reenviar notificação: ' . $e->getMessage()], 500);
+        }
+    }
+
+    if ($method === 'POST' && $id && $action === 'clicksign' && !$subId) {
         require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
         $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
         $stmt->execute([(int)$id]);
