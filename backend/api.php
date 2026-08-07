@@ -885,7 +885,9 @@ function clicksign_send_contract(array $config, array $contract, string $pdfBase
                 'type' => 'requirements',
                 'attributes' => [
                     'action' => 'provide_evidence',
-                    'auth' => 'embedded_signature',
+                    // Widget iframe (embedded.min) exige auth email/sms/whatsapp.
+                    // embedded_signature só funciona com o fluxo noWidget (sem iframe).
+                    'auth' => 'email',
                 ],
                 'relationships' => [
                     'document' => ['data' => ['type' => 'documents', 'id' => $documentId]],

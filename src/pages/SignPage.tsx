@@ -181,8 +181,8 @@ export default function SignPage() {
             <p className="font-medium">Não foi possível abrir a assinatura</p>
             <p className="mt-1">{error}</p>
             <p className="mt-3 text-red-600/80">
-              Se o contrato foi enviado antes desta atualização, peça um novo envio à Clicksign ou use o
-              link do e-mail.
+              Se o erro persistir, cancele o envio no contrato e envie novamente à Clicksign, ou use o
+              link do e-mail da Clicksign.
             </p>
           </div>
         )}
