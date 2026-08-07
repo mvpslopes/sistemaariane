@@ -705,6 +705,7 @@ export async function sendContractToClicksign(id: string, pdfBase64: string) {
     envelopeId: string;
     documentId: string;
     status: string;
+    warnings?: string[];
   }>(`/contracts/${id}/clicksign`, {
     method: 'POST',
     body: JSON.stringify({ pdfBase64 }),
@@ -744,6 +745,12 @@ export async function getClicksignStatus(id: string) {
 
 export async function getClicksignSignedPdfUrl(id: string) {
   return request<{ success: boolean; url: string }>(`/contracts/${id}/clicksign/signed-pdf`);
+}
+
+export async function cancelClicksignEnvelope(id: string) {
+  return request<{ success: boolean; message: string }>(`/contracts/${id}/clicksign/cancel`, {
+    method: 'POST',
+  });
 }
 
 export async function notifyClicksign(id: string, signerId?: string | null) {

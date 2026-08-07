@@ -141,6 +141,15 @@ app.get('/api/health', async (_req, res) => {
   }
 });
 
+app.get('/api/clicksign-widget', (_req, res) => {
+  try {
+    const { base } = loadClicksignConfig();
+    res.json({ endpoint: base || 'https://app.clicksign.com' });
+  } catch {
+    res.json({ endpoint: process.env.CLICKSIGN_BASE_URL || 'https://app.clicksign.com' });
+  }
+});
+
 // Auth
 app.post('/api/login', async (req, res) => {
   try {
@@ -665,6 +674,7 @@ function mapContract(r) {
     seller_name: r.seller_name || null,
     seller_document: r.seller_document || null,
     seller_document_type: r.seller_document_type || null,
+    seller_birth_date: r.seller_birth_date || null,
     seller_email: r.seller_email || null,
     seller_phone: r.seller_phone || null,
     seller_whatsapp: r.seller_whatsapp || null,
@@ -675,6 +685,7 @@ function mapContract(r) {
     buyer_name: r.buyer_name || null,
     buyer_document: r.buyer_document || null,
     buyer_document_type: r.buyer_document_type || null,
+    buyer_birth_date: r.buyer_birth_date || null,
     buyer_email: r.buyer_email || null,
     buyer_phone: r.buyer_phone || null,
     buyer_whatsapp: r.buyer_whatsapp || null,
@@ -703,11 +714,17 @@ function mapContract(r) {
     witness1_email: r.witness1_email || null,
     witness1_phone: r.witness1_phone || null,
     witness1_whatsapp: r.witness1_whatsapp || null,
+    witness1_document: r.witness1_document || null,
+    witness1_document_type: r.witness1_document_type || null,
+    witness1_birth_date: r.witness1_birth_date || null,
     witness2_id: r.witness2_id ? String(r.witness2_id) : null,
     witness2_name: r.witness2_name || null,
     witness2_email: r.witness2_email || null,
     witness2_phone: r.witness2_phone || null,
     witness2_whatsapp: r.witness2_whatsapp || null,
+    witness2_document: r.witness2_document || null,
+    witness2_document_type: r.witness2_document_type || null,
+    witness2_birth_date: r.witness2_birth_date || null,
     via_label: r.via_label || 'VIA DAS PARTES — VENDEDOR E COMPRADOR',
     clicksign_envelope_id: r.clicksign_envelope_id || null,
     clicksign_document_id: r.clicksign_document_id || null,
@@ -1766,18 +1783,24 @@ const contractSelect = `SELECT c.*,
     a.birth_date AS animal_birth_date, a.sex AS animal_sex,
     a.notes AS animal_notes,
     s.name AS seller_name, s.document AS seller_document, s.document_type AS seller_document_type,
+    s.birth_date AS seller_birth_date,
     s.email AS seller_email, s.phone AS seller_phone, s.whatsapp AS seller_whatsapp,
     s.address AS seller_address, s.address_number AS seller_address_number,
     s.city AS seller_city, s.state AS seller_state,
     b.name AS buyer_name, b.document AS buyer_document, b.document_type AS buyer_document_type,
+    b.birth_date AS buyer_birth_date,
     b.email AS buyer_email, b.phone AS buyer_phone, b.whatsapp AS buyer_whatsapp,
     b.address AS buyer_address, b.address_number AS buyer_address_number,
     b.city AS buyer_city, b.state AS buyer_state,
     ass.name AS assessor_name,
     w1.name AS witness1_name, w1.email AS witness1_email,
     w1.phone AS witness1_phone, w1.whatsapp AS witness1_whatsapp,
+    w1.document AS witness1_document, w1.document_type AS witness1_document_type,
+    w1.birth_date AS witness1_birth_date,
     w2.name AS witness2_name, w2.email AS witness2_email,
     w2.phone AS witness2_phone, w2.whatsapp AS witness2_whatsapp,
+    w2.document AS witness2_document, w2.document_type AS witness2_document_type,
+    w2.birth_date AS witness2_birth_date,
     au.name AS auction_name, au.auction_date AS auction_date,
     t.name AS template_name,
     COALESCE(c.verso_title, t.title) AS template_title,
@@ -2204,6 +2227,50 @@ async function clicksignRequest(method, pathUrl, payload) {
   return json;
 }
 
+function clicksignNormalizeBirthday(value) {
+  if (!value) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  const birth = String(value).trim();
+  const iso = birth.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const br = birth.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (br) return `${br[3]}-${br[2]}-${br[1]}`;
+  return null;
+}
+
+function clicksignFormatCpf(digits) {
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9, 11)}`;
+}
+
+/** @returns {[object, string|null]} */
+function clicksignSignerAttributes(s) {
+  const attrs = {
+    name: s.name,
+    email: s.email,
+  };
+  const docType = String(s.document_type || '').toUpperCase();
+  const docDigits = String(s.document || '').replace(/\D+/g, '');
+  const hasCpf = (docType === 'CPF' || docType === '') && docDigits.length === 11;
+  if (hasCpf) {
+    attrs.has_documentation = true;
+    attrs.documentation = clicksignFormatCpf(docDigits);
+  }
+  const birthday = clicksignNormalizeBirthday(s.birth_date);
+  if (birthday) attrs.birthday = birthday;
+
+  let warning = null;
+  if (!hasCpf || !birthday) {
+    const missing = [];
+    if (!hasCpf) missing.push('CPF');
+    if (!birthday) missing.push('data de nascimento');
+    const label = s.label || 'signatário';
+    warning = `${label.charAt(0).toUpperCase()}${label.slice(1)} sem ${missing.join(' e ')} no cadastro`;
+  }
+  return [attrs, warning];
+}
+
 async function clicksignSendContract(contract, pdfBase64Raw) {
   let pdfBase64 = String(pdfBase64Raw || '');
   if (pdfBase64.includes('base64,')) pdfBase64 = pdfBase64.split('base64,').pop() || '';
@@ -2246,10 +2313,42 @@ async function clicksignSendContract(contract, pdfBase64Raw) {
   const pdfFilename = `${pdfName.replace(/-+$/, '')}.pdf`;
 
   const signers = [
-    { name: (contract.seller_name || '').trim(), email: (contract.seller_email || '').trim(), role: 'seller', label: 'vendedor' },
-    { name: (contract.buyer_name || '').trim(), email: (contract.buyer_email || '').trim(), role: 'buyer', label: 'comprador' },
-    { name: (contract.witness1_name || '').trim(), email: (contract.witness1_email || '').trim(), role: 'witness', label: 'testemunha 1' },
-    { name: (contract.witness2_name || '').trim(), email: (contract.witness2_email || '').trim(), role: 'witness', label: 'testemunha 2' },
+    {
+      name: (contract.seller_name || '').trim(),
+      email: (contract.seller_email || '').trim(),
+      document: contract.seller_document,
+      document_type: contract.seller_document_type,
+      birth_date: contract.seller_birth_date,
+      role: 'seller',
+      label: 'vendedor',
+    },
+    {
+      name: (contract.buyer_name || '').trim(),
+      email: (contract.buyer_email || '').trim(),
+      document: contract.buyer_document,
+      document_type: contract.buyer_document_type,
+      birth_date: contract.buyer_birth_date,
+      role: 'buyer',
+      label: 'comprador',
+    },
+    {
+      name: (contract.witness1_name || '').trim(),
+      email: (contract.witness1_email || '').trim(),
+      document: contract.witness1_document,
+      document_type: contract.witness1_document_type,
+      birth_date: contract.witness1_birth_date,
+      role: 'witness',
+      label: 'testemunha 1',
+    },
+    {
+      name: (contract.witness2_name || '').trim(),
+      email: (contract.witness2_email || '').trim(),
+      document: contract.witness2_document,
+      document_type: contract.witness2_document_type,
+      birth_date: contract.witness2_birth_date,
+      role: 'witness',
+      label: 'testemunha 2',
+    },
   ];
   for (const s of signers) {
     if (!s.name || !s.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.email)) {
@@ -2285,11 +2384,15 @@ async function clicksignSendContract(contract, pdfBase64Raw) {
   const documentId = doc?.data?.id;
   if (!documentId) throw new Error('Clicksign não retornou o documento');
 
+  const warnings = [];
   for (const s of signers) {
+    const [signerAttrs, signerWarning] = clicksignSignerAttributes(s);
+    if (signerWarning) warnings.push(signerWarning);
+
     const signerRes = await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/signers`, {
       data: {
         type: 'signers',
-        attributes: { name: s.name, email: s.email },
+        attributes: signerAttrs,
       },
     });
     const signerId = signerRes?.data?.id;
@@ -2308,7 +2411,7 @@ async function clicksignSendContract(contract, pdfBase64Raw) {
     await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/requirements`, {
       data: {
         type: 'requirements',
-        attributes: { action: 'provide_evidence', auth: 'email' },
+        attributes: { action: 'provide_evidence', auth: 'embedded_signature' },
         relationships: {
           document: { data: { type: 'documents', id: documentId } },
           signer: { data: { type: 'signers', id: signerId } },
@@ -2328,7 +2431,7 @@ async function clicksignSendContract(contract, pdfBase64Raw) {
     data: { type: 'notifications', attributes: {} },
   });
 
-  return { envelopeId, documentId, status: 'running' };
+  return { envelopeId, documentId, status: 'running', warnings };
 }
 
 function clicksignStatusLabel(status) {
@@ -2342,7 +2445,7 @@ function clicksignStatusLabel(status) {
   return map[status] || status || 'Enviado';
 }
 
-function clicksignSignUrl(signerId, csSigner = null) {
+function clicksignSignUrl(signerId, csSigner = null, publicOrigin = null) {
   if (csSigner) {
     const attrs = csSigner.attributes || {};
     for (const key of ['url', 'sign_url', 'signing_url']) {
@@ -2350,17 +2453,20 @@ function clicksignSignUrl(signerId, csSigner = null) {
     }
     const links = csSigner.links || {};
     for (const key of ['sign', 'signing_url', 'url']) {
-      if (links[key] && typeof links[key] === 'string') return links[key];
+      if (
+        links[key] &&
+        typeof links[key] === 'string' &&
+        !String(links[key]).includes('/api/v3/')
+      ) {
+        return links[key];
+      }
     }
   }
   const id = String(signerId || '').trim();
   if (!id) return null;
-  try {
-    const { base } = loadClicksignConfig();
-    return `${base.replace(/\/$/, '')}/sign/${encodeURIComponent(id)}`;
-  } catch {
-    return null;
-  }
+  const origin = String(publicOrigin || '').replace(/\/$/, '');
+  if (origin) return `${origin}/assinar/${encodeURIComponent(id)}`;
+  return `/assinar/${encodeURIComponent(id)}`;
 }
 
 async function clicksignNotify(contract, signerId = null) {
@@ -2395,7 +2501,7 @@ async function clicksignNotify(contract, signerId = null) {
   await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/notifications`, payload);
 }
 
-async function clicksignFetchStatus(contract) {
+async function clicksignFetchStatus(contract, publicOrigin = null) {
   const envelopeId = String(contract.clicksign_envelope_id || '').trim();
   const documentId = String(contract.clicksign_document_id || '').trim();
   if (!envelopeId) {
@@ -2513,7 +2619,7 @@ async function clicksignFetchStatus(contract) {
       phone: p.phone || null,
       whatsapp: p.whatsapp || null,
       signerId,
-      signUrl: signed ? null : clicksignSignUrl(signerId, cs),
+      signUrl: signed ? null : clicksignSignUrl(signerId, cs, publicOrigin),
       signed,
       status: signed ? 'assinado' : 'pendente',
       statusLabel: signed ? 'Assinado' : 'Pendente',
@@ -2536,7 +2642,7 @@ async function clicksignFetchStatus(contract) {
       phone: s?.attributes?.phone_number || null,
       whatsapp: null,
       signerId,
-      signUrl: signed ? null : clicksignSignUrl(signerId, s),
+      signUrl: signed ? null : clicksignSignUrl(signerId, s, publicOrigin),
       signed,
       status: signed ? 'assinado' : 'pendente',
       statusLabel: signed ? 'Assinado' : 'Pendente',
@@ -2582,7 +2688,10 @@ app.get('/api/contracts/:id/clicksign', auth(['root', 'admin', 'user']), async (
     if (!contract.clicksign_envelope_id) {
       return res.status(400).json({ error: 'Contrato ainda não foi enviado à Clicksign' });
     }
-    const statusInfo = await clicksignFetchStatus(contract);
+    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    const publicOrigin = host ? `${proto}://${host}` : null;
+    const statusInfo = await clicksignFetchStatus(contract, publicOrigin);
     if (statusInfo.status === 'closed') {
       try {
         statusInfo.signedFileUrl = await clicksignGetSignedFileUrl(contract);
@@ -2622,6 +2731,38 @@ app.get('/api/contracts/:id/clicksign/signed-pdf', auth(['root', 'admin', 'user'
     console.error(error);
     const status = error.status || 500;
     res.status(status).json({ error: error.message || 'Falha ao obter PDF assinado' });
+  }
+});
+
+app.post('/api/contracts/:id/clicksign/cancel', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [rows] = await pool.execute(`${contractSelect} AND c.id = ?`, [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Contrato não encontrado' });
+    const contract = mapContract(rows[0]);
+    const envelopeId = String(contract.clicksign_envelope_id || '').trim();
+    if (!envelopeId) {
+      return res.status(400).json({ error: 'Contrato ainda não foi enviado à Clicksign' });
+    }
+    try {
+      await clicksignRequest('PATCH', `/api/v3/envelopes/${envelopeId}`, {
+        data: { id: envelopeId, type: 'envelopes', attributes: { status: 'canceled' } },
+      });
+    } catch (e) {
+      // Envelope pode já estar fechado/cancelado na Clicksign; seguimos limpando localmente.
+    }
+    const newStatus = contract.status === 'aguardando_assinatura' ? 'ativo' : contract.status;
+    await pool.execute(
+      `UPDATE contracts
+       SET clicksign_envelope_id=NULL, clicksign_document_id=NULL, clicksign_status=NULL, clicksign_sent_at=NULL, status=?
+       WHERE id=?`,
+      [newStatus, id]
+    );
+    res.json({ success: true, message: 'Envio cancelado. Você já pode enviar novamente.' });
+  } catch (error) {
+    console.error(error);
+    const status = error.status || 500;
+    res.status(status).json({ error: error.message || 'Falha ao cancelar envio' });
   }
 });
 

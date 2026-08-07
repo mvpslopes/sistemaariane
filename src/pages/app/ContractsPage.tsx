@@ -7,6 +7,7 @@ import {
   getClicksignSignedPdfUrl,
   sendContractToClicksign,
   notifyClicksign,
+  cancelClicksignEnvelope,
   updateContract,
   type Contract,
   type ClicksignTracking,
@@ -68,6 +69,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const [clicksignTracking, setClicksignTracking] = useState<ClicksignTracking | null>(null);
   const [loadingClicksign, setLoadingClicksign] = useState(false);
   const [notifyingClicksign, setNotifyingClicksign] = useState<string | null>(null);
+  const [cancellingClicksign, setCancellingClicksign] = useState(false);
   const preselectedAnimal = initialAnimalId;
 
   const clicksignStatusPt = (status?: string | null) => {
@@ -156,8 +158,15 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
     setSendingClicksign(true);
     try {
       const pdfBase64 = await getContractPdfBase64(detail);
-      await sendContractToClicksign(detail.id, pdfBase64);
-      success('Contrato enviado à Clicksign. Os e-mails de assinatura foram disparados.');
+      const sent = await sendContractToClicksign(detail.id, pdfBase64);
+      const warnings = sent.warnings || [];
+      if (warnings.length) {
+        toastError(
+          `Enviado, mas faltam dados no cadastro (CPF/nascimento não serão pré-preenchidos):\n${warnings.join('\n')}`
+        );
+      } else {
+        success('Contrato enviado à Clicksign. Os e-mails de assinatura foram disparados.');
+      }
       await openDetail(detail.id);
       await load();
     } catch (e: any) {
@@ -176,19 +185,29 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
     return d;
   };
 
+  const shareSignUrl = (s: ClicksignSignerStatus) => {
+    if (s.signUrl) {
+      if (s.signUrl.startsWith('http')) return s.signUrl;
+      return `${window.location.origin}${s.signUrl.startsWith('/') ? '' : '/'}${s.signUrl}`;
+    }
+    if (!s.signerId) return null;
+    return `${window.location.origin}/assinar/${encodeURIComponent(s.signerId)}`;
+  };
+
   const signMessage = (s: ClicksignSignerStatus) => {
     const animal = detail?.animal_name || 'contrato';
-    const link = s.signUrl || '';
-    return `Olá ${s.name}! Segue o link para assinar o contrato de ${animal} na Clicksign:\n\n${link}`;
+    const link = shareSignUrl(s) || '';
+    return `Olá ${s.name}! Segue o link para assinar o contrato de ${animal}:\n\n${link}`;
   };
 
   const onCopySignLink = async (s: ClicksignSignerStatus) => {
-    if (!s.signUrl) {
+    const url = shareSignUrl(s);
+    if (!url) {
       toastError('Link de assinatura indisponível');
       return;
     }
     try {
-      await navigator.clipboard.writeText(s.signUrl);
+      await navigator.clipboard.writeText(url);
       success('Link de assinatura copiado');
     } catch {
       toastError('Não foi possível copiar o link');
@@ -196,14 +215,15 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   };
 
   const onWhatsAppSign = (s: ClicksignSignerStatus) => {
-    if (!s.signUrl) {
+    const url = shareSignUrl(s);
+    if (!url) {
       toastError('Link de assinatura indisponível');
       return;
     }
     const text = encodeURIComponent(signMessage(s));
     const phone = whatsappDigits(s.phone, s.whatsapp);
-    const url = phone ? `https://wa.me/${phone}?text=${text}` : `https://wa.me/?text=${text}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+    const wa = phone ? `https://wa.me/${phone}?text=${text}` : `https://wa.me/?text=${text}`;
+    window.open(wa, '_blank', 'noopener,noreferrer');
   };
 
   const onNotifyClicksign = async (signerId?: string | null) => {
@@ -217,6 +237,29 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
       toastError(e.message || 'Erro ao reenviar notificação');
     } finally {
       setNotifyingClicksign(null);
+    }
+  };
+
+  const onCancelClicksign = async () => {
+    if (!detail || !canWrite) return;
+    if (
+      !confirm(
+        'Cancelar o envio à Clicksign?\n\nO link de assinatura atual deixará de funcionar e você poderá enviar o contrato novamente (com os dados atualizados de CPF/nascimento).'
+      )
+    ) {
+      return;
+    }
+    setCancellingClicksign(true);
+    try {
+      const res = await cancelClicksignEnvelope(detail.id);
+      success(res.message || 'Envio cancelado');
+      setClicksignTracking(null);
+      await openDetail(detail.id);
+      await load();
+    } catch (e: any) {
+      toastError(e.message || 'Erro ao cancelar envio');
+    } finally {
+      setCancellingClicksign(false);
     }
   };
 
@@ -468,6 +511,18 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                         <RefreshCw className={`h-3.5 w-3.5 ${loadingClicksign ? 'animate-spin' : ''}`} />
                         {loadingClicksign ? 'Atualizando...' : 'Atualizar'}
                       </button>
+                      {canWrite &&
+                        (clicksignTracking?.status || detail.clicksign_status) === 'running' && (
+                          <button
+                            type="button"
+                            disabled={cancellingClicksign}
+                            onClick={onCancelClicksign}
+                            title="Cancela o envelope atual na Clicksign para permitir um novo envio (ex.: após corrigir CPF/data de nascimento no cadastro)"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                          >
+                            {cancellingClicksign ? 'Cancelando...' : 'Cancelar envio'}
+                          </button>
+                        )}
                     </div>
                   )}
                 </div>
@@ -534,36 +589,42 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                                 <p className="truncate text-xs text-brand-olive">{s.email}</p>
                               )}
                               {!s.signed && canWrite && (
-                                <div className="flex flex-wrap gap-1.5">
-                                  <button
-                                    type="button"
-                                    disabled={!s.signUrl}
-                                    onClick={() => onCopySignLink(s)}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-brand-beige bg-brand-off-white px-2.5 py-1 text-[11px] font-medium text-brand-brown hover:bg-brand-beige/50 disabled:opacity-40"
-                                  >
-                                    <Copy className="h-3 w-3" />
-                                    Copiar link
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={!s.signUrl}
-                                    onClick={() => onWhatsAppSign(s)}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-40"
-                                  >
-                                    <MessageCircle className="h-3 w-3" />
-                                    WhatsApp
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={!s.signerId || !!notifyingClicksign}
-                                    onClick={() => onNotifyClicksign(s.signerId)}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-brand-beige bg-white px-2.5 py-1 text-[11px] font-medium text-brand-brown hover:bg-brand-beige/40 disabled:opacity-40"
-                                  >
-                                    <Mail className="h-3 w-3" />
-                                    {notifyingClicksign === s.signerId
-                                      ? 'Reenviando...'
-                                      : 'Reenviar e-mail'}
-                                  </button>
+                                <div className="space-y-1.5">
+                                  <div className="flex flex-wrap gap-1.5">
+                                    <button
+                                      type="button"
+                                      disabled={!shareSignUrl(s)}
+                                      onClick={() => onCopySignLink(s)}
+                                      className="inline-flex items-center gap-1 rounded-lg border border-brand-beige bg-brand-off-white px-2.5 py-1 text-[11px] font-medium text-brand-brown hover:bg-brand-beige/50 disabled:opacity-40"
+                                    >
+                                      <Copy className="h-3 w-3" />
+                                      Copiar link
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={!shareSignUrl(s)}
+                                      onClick={() => onWhatsAppSign(s)}
+                                      className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100 disabled:opacity-40"
+                                    >
+                                      <MessageCircle className="h-3 w-3" />
+                                      WhatsApp
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={!s.signerId || !!notifyingClicksign}
+                                      onClick={() => onNotifyClicksign(s.signerId)}
+                                      className="inline-flex items-center gap-1 rounded-lg border border-brand-beige bg-white px-2.5 py-1 text-[11px] font-medium text-brand-brown hover:bg-brand-beige/40 disabled:opacity-40"
+                                    >
+                                      <Mail className="h-3 w-3" />
+                                      {notifyingClicksign === s.signerId
+                                        ? 'Reenviando...'
+                                        : 'Reenviar e-mail'}
+                                    </button>
+                                  </div>
+                                  <p className="text-[11px] text-brand-olive/80">
+                                    O link abre a assinatura no sistema (widget Clicksign). Contratos
+                                    enviados antes desta atualização podem exigir um novo envio.
+                                  </p>
                                 </div>
                               )}
                             </div>

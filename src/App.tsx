@@ -15,6 +15,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import SystemWrapper from './components/SystemWrapper';
 import AppShell from './components/AppShell';
 import Login from './pages/Login';
+import SignPage from './pages/SignPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
@@ -51,6 +52,9 @@ function AppContent() {
             </SystemWrapper>
           }
         />
+
+        {/* Assinatura incorporada Clicksign — pública, sem login */}
+        <Route path="/assinar/:signerKey" element={<SignPage />} />
 
         <Route
           path="/app/contratos/imprimir/:id"

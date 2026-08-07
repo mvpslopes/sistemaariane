@@ -192,6 +192,12 @@ if ($resource === 'health' && $method === 'GET') {
     }
 }
 
+// Config pública do widget Clicksign (sem token)
+if ($resource === 'clicksign-widget' && $method === 'GET') {
+    $base = rtrim((string)($config['clicksign_base_url'] ?? 'https://app.clicksign.com'), '/');
+    json_out(['endpoint' => $base ?: 'https://app.clicksign.com']);
+}
+
 // Login
 if ($resource === 'login' && $method === 'POST') {
     $login = trim($body['username'] ?? $body['email'] ?? '');
@@ -686,6 +692,53 @@ function clicksign_request(array $config, string $method, string $path, ?array $
  * Envia PDF para Clicksign: envelope + documento + 4 signatários + requisitos + ativação + notificação.
  * @return array{envelopeId:string,documentId:string,status:string}
  */
+function clicksign_normalize_birthday($value): ?string {
+    if ($value instanceof DateTimeInterface) {
+        return $value->format('Y-m-d');
+    }
+    $birth = trim((string)$value);
+    if ($birth === '') return null;
+    if (preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $birth, $m)) {
+        return $m[1] . '-' . $m[2] . '-' . $m[3];
+    }
+    if (preg_match('/^(\d{2})\/(\d{2})\/(\d{4})$/', $birth, $m)) {
+        return $m[3] . '-' . $m[2] . '-' . $m[1];
+    }
+    return null;
+}
+
+function clicksign_format_cpf(string $digits): string {
+    return substr($digits, 0, 3) . '.' . substr($digits, 3, 3) . '.' . substr($digits, 6, 3) . '-' . substr($digits, 9, 2);
+}
+
+/** @return array{0: array, 1: ?string} attributes + aviso se faltar CPF/nascimento */
+function clicksign_signer_attributes(array $s): array {
+    $attrs = [
+        'name' => $s['name'],
+        'email' => $s['email'],
+    ];
+    $docType = strtoupper(trim((string)($s['document_type'] ?? '')));
+    $docDigits = preg_replace('/\D+/', '', (string)($s['document'] ?? '')) ?? '';
+    $hasCpf = ($docType === 'CPF' || $docType === '') && strlen($docDigits) === 11;
+    // Clicksign documentation = CPF. Formato com máscara conforme docs.
+    if ($hasCpf) {
+        $attrs['has_documentation'] = true;
+        $attrs['documentation'] = clicksign_format_cpf($docDigits);
+    }
+    $birthday = clicksign_normalize_birthday($s['birth_date'] ?? null);
+    if ($birthday !== null) {
+        $attrs['birthday'] = $birthday;
+    }
+    $warning = null;
+    if (!$hasCpf || $birthday === null) {
+        $missing = [];
+        if (!$hasCpf) $missing[] = 'CPF';
+        if ($birthday === null) $missing[] = 'data de nascimento';
+        $warning = ucfirst((string)($s['label'] ?? 'signatário')) . ' sem ' . implode(' e ', $missing) . ' no cadastro';
+    }
+    return [$attrs, $warning];
+}
+
 function clicksign_send_contract(array $config, array $contract, string $pdfBase64): array {
     if (strpos($pdfBase64, 'base64,') !== false) {
         $pdfBase64 = substr($pdfBase64, strpos($pdfBase64, 'base64,') + 7);
@@ -732,24 +785,36 @@ function clicksign_send_contract(array $config, array $contract, string $pdfBase
         [
             'name' => trim((string)($contract['seller_name'] ?? '')),
             'email' => trim((string)($contract['seller_email'] ?? '')),
+            'document' => $contract['seller_document'] ?? null,
+            'document_type' => $contract['seller_document_type'] ?? null,
+            'birth_date' => $contract['seller_birth_date'] ?? null,
             'role' => 'seller',
             'label' => 'vendedor',
         ],
         [
             'name' => trim((string)($contract['buyer_name'] ?? '')),
             'email' => trim((string)($contract['buyer_email'] ?? '')),
+            'document' => $contract['buyer_document'] ?? null,
+            'document_type' => $contract['buyer_document_type'] ?? null,
+            'birth_date' => $contract['buyer_birth_date'] ?? null,
             'role' => 'buyer',
             'label' => 'comprador',
         ],
         [
             'name' => trim((string)($contract['witness1_name'] ?? '')),
             'email' => trim((string)($contract['witness1_email'] ?? '')),
+            'document' => $contract['witness1_document'] ?? null,
+            'document_type' => $contract['witness1_document_type'] ?? null,
+            'birth_date' => $contract['witness1_birth_date'] ?? null,
             'role' => 'witness',
             'label' => 'testemunha 1',
         ],
         [
             'name' => trim((string)($contract['witness2_name'] ?? '')),
             'email' => trim((string)($contract['witness2_email'] ?? '')),
+            'document' => $contract['witness2_document'] ?? null,
+            'document_type' => $contract['witness2_document_type'] ?? null,
+            'birth_date' => $contract['witness2_birth_date'] ?? null,
             'role' => 'witness',
             'label' => 'testemunha 2',
         ],
@@ -788,14 +853,15 @@ function clicksign_send_contract(array $config, array $contract, string $pdfBase
     $documentId = $doc['data']['id'] ?? null;
     if (!$documentId) throw new RuntimeException('Clicksign não retornou o documento');
 
+    $warnings = [];
     foreach ($signers as $s) {
+        [$signerAttrs, $signerWarning] = clicksign_signer_attributes($s);
+        if ($signerWarning !== null) $warnings[] = $signerWarning;
+
         $signerRes = clicksign_request($config, 'POST', "/api/v3/envelopes/{$envelopeId}/signers", [
             'data' => [
                 'type' => 'signers',
-                'attributes' => [
-                    'name' => $s['name'],
-                    'email' => $s['email'],
-                ],
+                'attributes' => $signerAttrs,
             ],
         ]);
         $signerId = $signerRes['data']['id'] ?? null;
@@ -819,7 +885,7 @@ function clicksign_send_contract(array $config, array $contract, string $pdfBase
                 'type' => 'requirements',
                 'attributes' => [
                     'action' => 'provide_evidence',
-                    'auth' => 'email',
+                    'auth' => 'embedded_signature',
                 ],
                 'relationships' => [
                     'document' => ['data' => ['type' => 'documents', 'id' => $documentId]],
@@ -848,6 +914,7 @@ function clicksign_send_contract(array $config, array $contract, string $pdfBase
         'envelopeId' => $envelopeId,
         'documentId' => $documentId,
         'status' => 'running',
+        'warnings' => $warnings,
     ];
 }
 
@@ -862,7 +929,7 @@ function clicksign_status_label(string $status): string {
     return $map[$status] ?? ($status !== '' ? $status : 'Enviado');
 }
 
-/** URL pública de assinatura do signatário (para copiar / WhatsApp). */
+/** URL pública no nosso sistema (assinatura incorporada Clicksign). */
 function clicksign_sign_url(array $config, ?string $signerId, ?array $csSigner = null): ?string {
     if (is_array($csSigner)) {
         $attrs = $csSigner['attributes'] ?? [];
@@ -873,19 +940,18 @@ function clicksign_sign_url(array $config, ?string $signerId, ?array $csSigner =
         }
         $links = $csSigner['links'] ?? [];
         foreach (['sign', 'signing_url', 'url'] as $key) {
-            if (!empty($links[$key]) && is_string($links[$key])) {
+            if (!empty($links[$key]) && is_string($links[$key]) && !str_contains($links[$key], '/api/v3/')) {
                 return $links[$key];
             }
         }
     }
     $id = trim((string)$signerId);
     if ($id === '') return null;
-    try {
-        $cs = clicksign_config($config);
-        return rtrim($cs['base'], '/') . '/sign/' . rawurlencode($id);
-    } catch (Throwable $e) {
-        return null;
+    $host = trim((string)($_SERVER['HTTP_HOST'] ?? ''));
+    if ($host === '') {
+        return '/assinar/' . rawurlencode($id);
     }
+    return 'https://' . $host . '/assinar/' . rawurlencode($id);
 }
 
 function clicksign_notify(array $config, array $contract, ?string $signerId = null): void {
@@ -1116,6 +1182,7 @@ function map_contract_row(array $r): array {
         'seller_name' => $r['seller_name'] ?? null,
         'seller_document' => $r['seller_document'] ?? null,
         'seller_document_type' => $r['seller_document_type'] ?? null,
+        'seller_birth_date' => $r['seller_birth_date'] ?? null,
         'seller_email' => $r['seller_email'] ?? null,
         'seller_phone' => $r['seller_phone'] ?? null,
         'seller_whatsapp' => $r['seller_whatsapp'] ?? null,
@@ -1126,6 +1193,7 @@ function map_contract_row(array $r): array {
         'buyer_name' => $r['buyer_name'] ?? null,
         'buyer_document' => $r['buyer_document'] ?? null,
         'buyer_document_type' => $r['buyer_document_type'] ?? null,
+        'buyer_birth_date' => $r['buyer_birth_date'] ?? null,
         'buyer_email' => $r['buyer_email'] ?? null,
         'buyer_phone' => $r['buyer_phone'] ?? null,
         'buyer_whatsapp' => $r['buyer_whatsapp'] ?? null,
@@ -1154,11 +1222,17 @@ function map_contract_row(array $r): array {
         'witness1_email' => $r['witness1_email'] ?? null,
         'witness1_phone' => $r['witness1_phone'] ?? null,
         'witness1_whatsapp' => $r['witness1_whatsapp'] ?? null,
+        'witness1_document' => $r['witness1_document'] ?? null,
+        'witness1_document_type' => $r['witness1_document_type'] ?? null,
+        'witness1_birth_date' => $r['witness1_birth_date'] ?? null,
         'witness2_id' => !empty($r['witness2_id']) ? (string)$r['witness2_id'] : null,
         'witness2_name' => $r['witness2_name'] ?? null,
         'witness2_email' => $r['witness2_email'] ?? null,
         'witness2_phone' => $r['witness2_phone'] ?? null,
         'witness2_whatsapp' => $r['witness2_whatsapp'] ?? null,
+        'witness2_document' => $r['witness2_document'] ?? null,
+        'witness2_document_type' => $r['witness2_document_type'] ?? null,
+        'witness2_birth_date' => $r['witness2_birth_date'] ?? null,
         'via_label' => $r['via_label'] ?? 'VIA DAS PARTES — VENDEDOR E COMPRADOR',
         'clicksign_envelope_id' => $r['clicksign_envelope_id'] ?? null,
         'clicksign_document_id' => $r['clicksign_document_id'] ?? null,
@@ -2127,18 +2201,24 @@ if ($resource === 'contracts') {
         a.birth_date AS animal_birth_date, a.sex AS animal_sex,
         a.notes AS animal_notes,
         s.name AS seller_name, s.document AS seller_document, s.document_type AS seller_document_type,
+        s.birth_date AS seller_birth_date,
         s.email AS seller_email, s.phone AS seller_phone, s.whatsapp AS seller_whatsapp,
         s.address AS seller_address, s.address_number AS seller_address_number,
         s.city AS seller_city, s.state AS seller_state,
         b.name AS buyer_name, b.document AS buyer_document, b.document_type AS buyer_document_type,
+        b.birth_date AS buyer_birth_date,
         b.email AS buyer_email, b.phone AS buyer_phone, b.whatsapp AS buyer_whatsapp,
         b.address AS buyer_address, b.address_number AS buyer_address_number,
         b.city AS buyer_city, b.state AS buyer_state,
         ass.name AS assessor_name,
         w1.name AS witness1_name, w1.email AS witness1_email,
         w1.phone AS witness1_phone, w1.whatsapp AS witness1_whatsapp,
+        w1.document AS witness1_document, w1.document_type AS witness1_document_type,
+        w1.birth_date AS witness1_birth_date,
         w2.name AS witness2_name, w2.email AS witness2_email,
         w2.phone AS witness2_phone, w2.whatsapp AS witness2_whatsapp,
+        w2.document AS witness2_document, w2.document_type AS witness2_document_type,
+        w2.birth_date AS witness2_birth_date,
         au.name AS auction_name, au.auction_date AS auction_date,
         t.name AS template_name,
         COALESCE(c.verso_title, t.title) AS template_title,
@@ -2559,6 +2639,38 @@ if ($resource === 'contracts') {
         }
     }
 
+    if ($method === 'POST' && $id && $action === 'clicksign' && $subId === 'cancel') {
+        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
+        $stmt->execute([(int)$id]);
+        $r = $stmt->fetch();
+        if (!$r) json_out(['error' => 'Contrato não encontrado'], 404);
+        $envelopeId = trim((string)($r['clicksign_envelope_id'] ?? ''));
+        if ($envelopeId === '') {
+            json_out(['error' => 'Contrato ainda não foi enviado à Clicksign'], 400);
+        }
+        try {
+            try {
+                clicksign_request($config, 'PATCH', "/api/v3/envelopes/{$envelopeId}", [
+                    'data' => [
+                        'id' => $envelopeId,
+                        'type' => 'envelopes',
+                        'attributes' => ['status' => 'canceled'],
+                    ],
+                ]);
+            } catch (Throwable $e) {
+                // Envelope pode já estar fechado/cancelado na Clicksign; seguimos limpando localmente.
+            }
+            $newStatus = ($r['status'] ?? '') === 'aguardando_assinatura' ? 'ativo' : $r['status'];
+            $pdo->prepare(
+                'UPDATE contracts SET clicksign_envelope_id=NULL, clicksign_document_id=NULL, clicksign_status=NULL, clicksign_sent_at=NULL, status=? WHERE id=?'
+            )->execute([$newStatus, (int)$id]);
+            json_out(['success' => true, 'message' => 'Envio cancelado. Você já pode enviar novamente.']);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Falha ao cancelar envio: ' . $e->getMessage()], 500);
+        }
+    }
+
     if ($method === 'POST' && $id && $action === 'clicksign' && $subId === 'notify') {
         require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
         $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
@@ -2613,6 +2725,7 @@ if ($resource === 'contracts') {
                 'envelopeId' => $sent['envelopeId'],
                 'documentId' => $sent['documentId'],
                 'status' => $sent['status'],
+                'warnings' => $sent['warnings'] ?? [],
             ]);
         } catch (InvalidArgumentException $e) {
             json_out(['error' => $e->getMessage()], 400);
