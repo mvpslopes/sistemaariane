@@ -85,27 +85,62 @@ export default function AppDashboard() {
   const isCliente = hasRole('cliente');
 
   useEffect(() => {
-    const load = isCliente
-      ? Promise.all([getDashboard(), getAnimals(), getContracts()]).then(
-          ([dash, animalList, contractList]) => {
-            setStats(dash);
-            setAnimals(animalList);
-            setContracts(contractList);
-            setRecent(buildRecent([], animalList, contractList));
-          }
-        )
-      : Promise.all([getDashboard(), getClients(), getAnimals(), getContracts()]).then(
-          ([dash, clientList, animalList, contractList]) => {
-            setStats(dash);
-            setAnimals(animalList);
-            setContracts(contractList);
-            setRecent(buildRecent(clientList, animalList, contractList));
-          }
-        );
+    const loadCliente = async () => {
+      const [dashRes, animalsRes, contractsRes] = await Promise.allSettled([
+        getDashboard(),
+        getAnimals(),
+        getContracts(),
+      ]);
 
-    load
-      .catch((e) => toastError(e.message || 'Erro ao carregar dashboard'))
-      .finally(() => setLoading(false));
+      if (dashRes.status === 'fulfilled') setStats(dashRes.value);
+      else toastError(dashRes.reason?.message || 'Erro ao carregar resumo');
+
+      const animalList = animalsRes.status === 'fulfilled' ? animalsRes.value : [];
+      if (animalsRes.status === 'rejected') {
+        toastError(animalsRes.reason?.message || 'Erro ao carregar animais');
+      }
+
+      const contractList = contractsRes.status === 'fulfilled' ? contractsRes.value : [];
+      if (contractsRes.status === 'rejected') {
+        toastError(contractsRes.reason?.message || 'Erro ao carregar contratos');
+      }
+
+      setAnimals(animalList);
+      setContracts(contractList);
+      setRecent(buildRecent([], animalList, contractList));
+    };
+
+    const loadAdmin = async () => {
+      const [dashRes, clientsRes, animalsRes, contractsRes] = await Promise.allSettled([
+        getDashboard(),
+        getClients(),
+        getAnimals(),
+        getContracts(),
+      ]);
+
+      if (dashRes.status === 'fulfilled') setStats(dashRes.value);
+      else toastError(dashRes.reason?.message || 'Erro ao carregar resumo');
+
+      const clientList = clientsRes.status === 'fulfilled' ? clientsRes.value : [];
+      const animalList = animalsRes.status === 'fulfilled' ? animalsRes.value : [];
+      const contractList = contractsRes.status === 'fulfilled' ? contractsRes.value : [];
+
+      if (clientsRes.status === 'rejected') {
+        toastError(clientsRes.reason?.message || 'Erro ao carregar pessoas');
+      }
+      if (animalsRes.status === 'rejected') {
+        toastError(animalsRes.reason?.message || 'Erro ao carregar animais');
+      }
+      if (contractsRes.status === 'rejected') {
+        toastError(contractsRes.reason?.message || 'Erro ao carregar contratos');
+      }
+
+      setAnimals(animalList);
+      setContracts(contractList);
+      setRecent(buildRecent(clientList, animalList, contractList));
+    };
+
+    (isCliente ? loadCliente() : loadAdmin()).finally(() => setLoading(false));
   }, [toastError, isCliente]);
 
   const statusSlices = useMemo(() => {
@@ -399,22 +434,39 @@ export default function AppDashboard() {
             <span className="rounded-full bg-white/10 px-3 py-1 text-xs">Contratos ✓</span>
             <span className="rounded-full bg-white/10 px-3 py-1 text-xs">Cobranças ✓</span>
           </div>
-          {!isCliente && (
-            <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-brand-beige/80">
-              <Link to="/app/pessoas" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
-                Ver pessoas
-              </Link>
-              <Link to="/app/contratos" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
-                Ver contratos
-              </Link>
-              <Link to="/app/animais" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
-                Ver animais
-              </Link>
-              <Link to="/app/cobrancas" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
-                Ver cobranças
-              </Link>
-            </div>
-          )}
+          <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-brand-beige/80">
+            {isCliente ? (
+              <>
+                <Link to="/app/animais" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
+                  Ver animais
+                </Link>
+                <Link to="/app/contratos" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
+                  Ver contratos
+                </Link>
+                <Link to="/app/cobrancas" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
+                  Ver cobranças
+                </Link>
+                <Link to="/app/perfil" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
+                  Meu perfil
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link to="/app/pessoas" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
+                  Ver pessoas
+                </Link>
+                <Link to="/app/contratos" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
+                  Ver contratos
+                </Link>
+                <Link to="/app/animais" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
+                  Ver animais
+                </Link>
+                <Link to="/app/cobrancas" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
+                  Ver cobranças
+                </Link>
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>

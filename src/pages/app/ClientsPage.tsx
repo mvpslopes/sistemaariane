@@ -129,27 +129,29 @@ export default function ClientsPage() {
       ) : clients.length === 0 ? (
         <EmptyState />
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
-          <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
+        <div className="rounded-2xl border border-brand-beige bg-white shadow-card">
+          <div className="w-full max-w-full overflow-x-auto">
+          <table className="w-full min-w-[720px] text-left text-sm">
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
-                <th className="px-3 py-3 font-medium sm:px-4">Nome</th>
-                <th className="hidden px-4 py-3 font-medium sm:table-cell">Propriedade rural</th>
-                <th className="hidden px-4 py-3 font-medium md:table-cell">Documento</th>
-                <th className="hidden px-4 py-3 font-medium lg:table-cell">Contato</th>
-                <th className="hidden px-4 py-3 font-medium xl:table-cell">Cidade</th>
-                <th className="px-3 py-3 font-medium sm:px-4">Status</th>
-                <th className="px-2 py-3 font-medium sm:px-4"></th>
+                <th className="min-w-[200px] max-w-[280px] px-3 py-3 font-medium sm:px-4">Nome</th>
+                <th className="hidden min-w-[140px] px-4 py-3 font-medium lg:table-cell">Propriedade</th>
+                <th className="hidden min-w-[120px] px-4 py-3 font-medium xl:table-cell">Documento</th>
+                <th className="hidden min-w-[120px] px-4 py-3 font-medium 2xl:table-cell">Contato</th>
+                <th className="hidden min-w-[100px] px-4 py-3 font-medium 2xl:table-cell">Cidade</th>
+                <th className="w-[88px] px-3 py-3 font-medium sm:px-4">Status</th>
+                <th className="sticky right-0 z-20 w-[96px] bg-brand-off-white px-2 py-3 text-right font-medium shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.08)] sm:w-[108px] sm:px-4">
+                  Ações
+                </th>
               </tr>
             </thead>
             <tbody>
               {clients.map((c) => (
                 <tr
                   key={c.id}
-                  className="border-t border-brand-beige/60 transition-colors hover:bg-brand-off-white/70"
+                  className="group border-t border-brand-beige/60 transition-colors hover:bg-brand-off-white/70"
                 >
-                  <td className="px-3 py-3 sm:px-4">
+                  <td className="min-w-[200px] max-w-[280px] px-3 py-3 sm:px-4">
                     <div className="flex items-center gap-2 sm:gap-3">
                       <div
                         className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${avatarTone(c.name)}`}
@@ -157,7 +159,9 @@ export default function ClientsPage() {
                         {c.name.charAt(0).toUpperCase()}
                       </div>
                       <div className="min-w-0">
-                        <span className="block truncate font-medium text-brand-dark-brown">{c.name}</span>
+                        <span className="block truncate font-medium text-brand-dark-brown" title={c.name}>
+                          {c.name}
+                        </span>
                         <div className="mt-0.5 flex flex-wrap gap-1">
                           {c.is_buyer && <RoleChip label="Comprador" />}
                           {c.is_seller && <RoleChip label="Vendedor" />}
@@ -165,53 +169,55 @@ export default function ClientsPage() {
                           {c.is_witness && <RoleChip label="Testemunha" />}
                           {c.is_avalista && <RoleChip label="Avalista" />}
                           {!c.is_buyer && !c.is_seller && !c.is_assessor && !c.is_witness && !c.is_avalista && (
-                            <span className="text-[10px] text-brand-olive/60">Sem papel definido</span>
+                            <span className="text-[10px] text-brand-olive/60">Sem papel</span>
                           )}
                         </div>
                         {c.property_name && (
-                          <p className="mt-0.5 truncate text-[11px] text-brand-olive sm:hidden">
+                          <p className="mt-0.5 truncate text-[11px] text-brand-olive lg:hidden" title={c.property_name}>
                             {c.property_name}
                           </p>
                         )}
                       </div>
                     </div>
                   </td>
-                  <td className="hidden px-4 py-3 text-brand-brown sm:table-cell">
+                  <td className="hidden max-w-[180px] truncate px-4 py-3 text-brand-brown lg:table-cell" title={c.property_name || undefined}>
                     {c.property_name || '—'}
                   </td>
-                  <td className="hidden px-4 py-3 text-brand-brown md:table-cell">
-                    {c.document_type} {c.document || '—'}
+                  <td className="hidden whitespace-nowrap px-4 py-3 text-brand-brown xl:table-cell">
+                    <span className="block max-w-[140px] truncate" title={`${c.document_type} ${c.document || ''}`}>
+                      {c.document_type} {c.document || '—'}
+                    </span>
                   </td>
-                  <td className="hidden px-4 py-3 text-brand-brown lg:table-cell">
+                  <td className="hidden max-w-[160px] truncate px-4 py-3 text-brand-brown 2xl:table-cell" title={c.whatsapp || c.phone || c.email || undefined}>
                     {c.whatsapp || c.phone || c.email || '—'}
                   </td>
-                  <td className="hidden px-4 py-3 text-brand-brown xl:table-cell">
+                  <td className="hidden whitespace-nowrap px-4 py-3 text-brand-brown 2xl:table-cell">
                     {[c.city, c.state].filter(Boolean).join('/') || '—'}
                   </td>
                   <td className="px-3 py-3 sm:px-4">
                     <StatusBadge active={c.active} />
                   </td>
-                  <td className="px-2 py-3 text-right sm:px-4">
-                    <div className="inline-flex items-center gap-0.5 sm:gap-1">
+                  <td className="sticky right-0 z-10 bg-white px-2 py-3 text-right shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.08)] group-hover:bg-brand-off-white/70 sm:px-4">
+                    <div className="inline-flex items-center gap-0.5">
                       <button
                         type="button"
                         onClick={() => openEdit(c.id)}
-                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-brown hover:bg-brand-beige/50"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-brand-brown hover:bg-brand-beige/50"
                         title={canWrite ? 'Editar' : 'Ver'}
+                        aria-label={canWrite ? 'Editar' : 'Ver'}
                       >
                         <Pencil className="h-4 w-4" />
-                        <span className="hidden sm:inline">{canWrite ? 'Editar' : 'Ver'}</span>
                       </button>
                       {canWrite && (
                         <button
                           type="button"
                           onClick={() => onDelete(c)}
                           disabled={deletingId === c.id}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-50"
                           title="Excluir"
+                          aria-label="Excluir"
                         >
                           <Trash2 className="h-4 w-4" />
-                          <span className="hidden sm:inline">{deletingId === c.id ? '...' : 'Excluir'}</span>
                         </button>
                       )}
                     </div>

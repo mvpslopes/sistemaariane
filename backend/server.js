@@ -123,6 +123,101 @@ function mapUser(row) {
   };
 }
 
+const DEFAULT_CLIENT_ACCESS_PASSWORD = 'ariane2026';
+
+function usernameSlugPart(value) {
+  let v = String(value || '').trim();
+  if (!v) return '';
+  v = v.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  v = v.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  return v;
+}
+
+async function generateUsernameFromName(fullName) {
+  const parts = String(fullName || '').trim().split(/\s+/).filter(Boolean);
+  let first = usernameSlugPart(parts[0] || 'usuario');
+  let last = usernameSlugPart(parts[parts.length - 1] || 'acesso');
+  if (!first) first = 'usuario';
+  if (!last) last = 'acesso';
+  const base = first === last ? first : `${first}.${last}`;
+  let candidate = base;
+  let n = 2;
+  while (true) {
+    const [rows] = await pool.execute('SELECT 1 FROM users WHERE username = ? LIMIT 1', [candidate]);
+    if (!rows.length) return candidate;
+    candidate = `${base}${n}`;
+    n += 1;
+  }
+}
+
+async function getClientAccessUser(clientId) {
+  const [rows] = await pool.execute(
+    `SELECT id, username, email, name, avatar_url, role, client_id, active, must_change_password, created_at
+     FROM users WHERE client_id = ? AND role = 'cliente' ORDER BY id ASC LIMIT 1`,
+    [clientId]
+  );
+  return rows.length ? mapUser(rows[0]) : null;
+}
+
+const clientPartyMatchSql = (alias = 'c') =>
+  `? IN (${alias}.buyer_id, ${alias}.seller_id, ${alias}.assessor_id, ${alias}.witness1_id, ${alias}.witness2_id)`;
+
+const CLIENT_CONTRACT_ACCESS_SQL = clientPartyMatchSql('c');
+
+const CLIENT_ANIMAL_ACCESS_SQL = `(
+  EXISTS (SELECT 1 FROM animal_owners ao WHERE ao.animal_id = a.id AND ao.client_id = ?)
+  OR EXISTS (
+    SELECT 1 FROM contracts cx
+    WHERE cx.animal_id = a.id
+      AND cx.status != 'cancelado'
+      AND ${clientPartyMatchSql('cx')}
+  )
+)`;
+
+function bindClientContractAccessParams(clientId) {
+  return [clientId];
+}
+
+function bindClientAnimalAccessParams(clientId) {
+  return [clientId, clientId];
+}
+
+function dashboardEmptyClienteStats() {
+  return {
+    clients: 1,
+    buyers: 0,
+    sellers: 0,
+    assessors: 0,
+    witnesses: 0,
+    avalistas: 0,
+    animals: 0,
+    activeAnimals: 0,
+    contracts: 0,
+    contractsActive: 0,
+    contractsAwaiting: 0,
+    chargesPending: 0,
+    chargesOverdue: 0,
+    chargesPaid: 0,
+    users: 0,
+  };
+}
+
+async function clientCanViewAnimal(animalId, clientId) {
+  const [ownerRows] = await pool.execute(
+    'SELECT 1 FROM animal_owners WHERE animal_id = ? AND client_id = ? LIMIT 1',
+    [animalId, clientId]
+  );
+  if (ownerRows.length) return true;
+  const [contractRows] = await pool.execute(
+    `SELECT 1 FROM contracts c
+     WHERE c.animal_id = ? AND c.status != 'cancelado'
+       AND ${clientPartyMatchSql('c')}
+     LIMIT 1`,
+    [animalId, clientId]
+  );
+  return contractRows.length > 0;
+}
+
 function canManageUsers(role) {
   return role === 'root' || role === 'admin';
 }
@@ -302,34 +397,36 @@ app.get('/api/dashboard', auth(), async (req, res) => {
   try {
     const isCliente = req.user.role === 'cliente';
 
-    if (isCliente && req.user.clientId) {
+    if (isCliente) {
+      if (!req.user.clientId) {
+        return res.json(dashboardEmptyClienteStats());
+      }
       const cid = req.user.clientId;
+      const animalParams = bindClientAnimalAccessParams(cid);
       const [[animals]] = await pool.execute(
-        `SELECT COUNT(*) AS total FROM animals a
-         INNER JOIN animal_owners ao ON ao.animal_id = a.id
-         WHERE ao.client_id = ?`,
-        [cid]
+        `SELECT COUNT(*) AS total FROM animals a WHERE ${CLIENT_ANIMAL_ACCESS_SQL}`,
+        animalParams
       );
       const [[activeAnimals]] = await pool.execute(
         `SELECT COUNT(*) AS total FROM animals a
-         INNER JOIN animal_owners ao ON ao.animal_id = a.id
-         WHERE ao.client_id = ? AND a.status = 'ativo'`,
-        [cid]
+         WHERE a.status = 'ativo' AND ${CLIENT_ANIMAL_ACCESS_SQL}`,
+        animalParams
       );
+      const contractParams = bindClientContractAccessParams(cid);
       const [[contracts]] = await pool.execute(
-        `SELECT COUNT(*) AS total FROM contracts
-         WHERE (buyer_id = ? OR seller_id = ? OR assessor_id = ?) AND status != 'cancelado'`,
-        [cid, cid, cid]
+        `SELECT COUNT(*) AS total FROM contracts c
+         WHERE ${CLIENT_CONTRACT_ACCESS_SQL} AND c.status != 'cancelado'`,
+        contractParams
       );
       const [[contractsActive]] = await pool.execute(
-        `SELECT COUNT(*) AS total FROM contracts
-         WHERE (buyer_id = ? OR seller_id = ? OR assessor_id = ?) AND status = 'ativo'`,
-        [cid, cid, cid]
+        `SELECT COUNT(*) AS total FROM contracts c
+         WHERE ${CLIENT_CONTRACT_ACCESS_SQL} AND c.status = 'ativo'`,
+        contractParams
       );
       const [[contractsAwaiting]] = await pool.execute(
-        `SELECT COUNT(*) AS total FROM contracts
-         WHERE (buyer_id = ? OR seller_id = ? OR assessor_id = ?) AND status = 'aguardando_assinatura'`,
-        [cid, cid, cid]
+        `SELECT COUNT(*) AS total FROM contracts c
+         WHERE ${CLIENT_CONTRACT_ACCESS_SQL} AND c.status = 'aguardando_assinatura'`,
+        contractParams
       );
       const [[chargesPending]] = await pool.execute(
         `SELECT COUNT(*) AS total FROM charges ch
@@ -970,6 +1067,80 @@ app.get('/api/clients', auth(), async (req, res) => {
   }
 });
 
+app.get('/api/clients/:id/access-user', auth(), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (req.user.role === 'cliente' && req.user.clientId !== id) {
+      return res.status(403).json({ error: 'Sem permissão' });
+    }
+    const user = await getClientAccessUser(id);
+    res.json({ user });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao buscar usuário de acesso' });
+  }
+});
+
+app.post('/api/clients/:id/access-user', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [rows] = await pool.execute('SELECT * FROM clients WHERE id = ?', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Pessoa não encontrada' });
+    const client = rows[0];
+    if (await getClientAccessUser(id)) {
+      return res.status(409).json({ error: 'Esta pessoa já possui usuário de acesso' });
+    }
+    const name = String(client.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Nome é obrigatório para criar usuário' });
+    const username = await generateUsernameFromName(name);
+    const email = String(client.email || '').trim() || null;
+    const hash = await bcrypt.hash(DEFAULT_CLIENT_ACCESS_PASSWORD, 12);
+    const [result] = await pool.execute(
+      `INSERT INTO users (username, email, password_hash, name, role, client_id, active, must_change_password)
+       VALUES (?, ?, ?, ?, 'cliente', ?, 1, 0)`,
+      [username, email, hash, name, id]
+    );
+    const [created] = await pool.execute(
+      `SELECT id, username, email, name, avatar_url, role, client_id, active, must_change_password, created_at
+       FROM users WHERE id = ?`,
+      [result.insertId]
+    );
+    res.json({
+      success: true,
+      user: mapUser(created[0]),
+      defaultPassword: DEFAULT_CLIENT_ACCESS_PASSWORD,
+      message: 'Usuário de acesso criado com sucesso',
+    });
+  } catch (error) {
+    console.error(error);
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Usuário ou e-mail já existe' });
+    }
+    res.status(500).json({ error: 'Erro ao criar usuário de acesso' });
+  }
+});
+
+app.put('/api/clients/:id/access-user/password', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const password = String(req.body?.password || '');
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'A senha deve ter pelo menos 6 caracteres' });
+    }
+    const user = await getClientAccessUser(id);
+    if (!user) {
+      return res.status(404).json({ error: 'Esta pessoa ainda não possui usuário de acesso' });
+    }
+    const hash = await bcrypt.hash(password, 12);
+    await pool.execute('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?', [
+      hash,
+      Number(user.id),
+    ]);
+    res.json({ success: true, message: 'Senha atualizada' });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao atualizar senha' });
+  }
+});
+
 app.get('/api/clients/:id', auth(), async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -1407,11 +1578,8 @@ app.get('/api/animals', auth(), async (req, res) => {
 
     if (req.user.role === 'cliente') {
       if (!req.user.clientId) return res.json([]);
-      sql += ` AND EXISTS (
-        SELECT 1 FROM animal_owners ao2
-        WHERE ao2.animal_id = a.id AND ao2.client_id = ?
-      )`;
-      params.push(req.user.clientId);
+      sql += ` AND ${CLIENT_ANIMAL_ACCESS_SQL}`;
+      params.push(...bindClientAnimalAccessParams(req.user.clientId));
     }
 
     if (q) {
@@ -1442,11 +1610,8 @@ app.get('/api/animals/:id', auth(), async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Animal não encontrado' });
 
     if (req.user.role === 'cliente') {
-      const [own] = await pool.execute(
-        'SELECT 1 FROM animal_owners WHERE animal_id = ? AND client_id = ?',
-        [id, req.user.clientId]
-      );
-      if (!own.length) return res.status(403).json({ error: 'Sem permissão' });
+      const allowed = await clientCanViewAnimal(id, req.user.clientId);
+      if (!allowed) return res.status(403).json({ error: 'Sem permissão' });
     }
 
     const [owners] = await pool.execute(
@@ -1822,8 +1987,8 @@ app.get('/api/contracts', auth(), async (req, res) => {
     const params = [];
     if (req.user.role === 'cliente') {
       if (!req.user.clientId) return res.json([]);
-      sql += ' AND (c.buyer_id = ? OR c.seller_id = ? OR c.assessor_id = ?)';
-      params.push(req.user.clientId, req.user.clientId, req.user.clientId);
+      sql += ` AND ${CLIENT_CONTRACT_ACCESS_SQL}`;
+      params.push(...bindClientContractAccessParams(req.user.clientId));
     }
     if (req.query.animalId) {
       sql += ' AND c.animal_id = ?';
@@ -1850,7 +2015,13 @@ app.get('/api/contracts/:id', auth(), async (req, res) => {
     const r = rows[0];
     if (req.user.role === 'cliente') {
       const cid = Number(req.user.clientId);
-      if (Number(r.buyer_id) !== cid && Number(r.seller_id) !== cid && Number(r.assessor_id || 0) !== cid) {
+      if (
+        Number(r.buyer_id) !== cid &&
+        Number(r.seller_id) !== cid &&
+        Number(r.assessor_id || 0) !== cid &&
+        Number(r.witness1_id || 0) !== cid &&
+        Number(r.witness2_id || 0) !== cid
+      ) {
         return res.status(403).json({ error: 'Sem permissão' });
       }
     }

@@ -462,6 +462,26 @@ export async function getClient(id: string) {
   return request<Client>(`/clients/${id}`);
 }
 
+export async function getClientAccessUser(clientId: string) {
+  return request<{ user: AuthUser | null }>(`/clients/${clientId}/access-user`);
+}
+
+export async function createClientAccessUser(clientId: string) {
+  return request<{
+    success: boolean;
+    user: AuthUser;
+    defaultPassword: string;
+    message: string;
+  }>(`/clients/${clientId}/access-user`, { method: 'POST' });
+}
+
+export async function resetClientAccessPassword(clientId: string, password: string) {
+  return request<{ success: boolean; message: string }>(`/clients/${clientId}/access-user/password`, {
+    method: 'PUT',
+    body: JSON.stringify({ password }),
+  });
+}
+
 export async function createClient(data: Partial<Client>) {
   return request<{ success: boolean; id: string }>('/clients', {
     method: 'POST',

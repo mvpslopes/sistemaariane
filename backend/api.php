@@ -164,6 +164,110 @@ function map_user(array $row): array {
     ];
 }
 
+const DEFAULT_CLIENT_ACCESS_PASSWORD = 'ariane2026';
+
+function username_slug_part(string $value): string {
+    $value = trim($value);
+    if ($value === '') return '';
+    if (function_exists('iconv')) {
+        $converted = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+        if ($converted !== false) $value = $converted;
+    }
+    $value = strtolower($value);
+    $value = preg_replace('/[^a-z0-9]+/', '', $value) ?? '';
+    return $value;
+}
+
+function generate_username_from_name(PDO $pdo, string $fullName): string {
+    $parts = preg_split('/\s+/u', trim($fullName)) ?: [];
+    $parts = array_values(array_filter($parts, fn($p) => trim((string)$p) !== ''));
+    $first = username_slug_part((string)($parts[0] ?? 'usuario'));
+    $last = username_slug_part((string)($parts[count($parts) - 1] ?? 'acesso'));
+    if ($first === '') $first = 'usuario';
+    if ($last === '') $last = 'acesso';
+    $base = $first === $last ? $first : "{$first}.{$last}";
+    $candidate = $base;
+    $n = 2;
+    $stmt = $pdo->prepare('SELECT 1 FROM users WHERE username = ? LIMIT 1');
+    while (true) {
+        $stmt->execute([$candidate]);
+        if (!$stmt->fetch()) return $candidate;
+        $candidate = $base . $n;
+        $n++;
+    }
+}
+
+function get_client_access_user(PDO $pdo, int $clientId): ?array {
+    $stmt = $pdo->prepare(
+        'SELECT id, username, email, name, avatar_url, role, client_id, active, must_change_password, created_at
+         FROM users WHERE client_id = ? AND role = ? ORDER BY id ASC LIMIT 1'
+    );
+    $stmt->execute([$clientId, 'cliente']);
+    $row = $stmt->fetch();
+    return $row ? map_user($row) : null;
+}
+
+function client_party_match_sql(string $alias = 'c'): string {
+    return "? IN ({$alias}.buyer_id, {$alias}.seller_id, {$alias}.assessor_id, {$alias}.witness1_id, {$alias}.witness2_id)";
+}
+
+function client_contract_access_sql(): string {
+    return client_party_match_sql('c');
+}
+
+function bind_client_contract_access(array &$params, int $clientId): void {
+    $params[] = $clientId;
+}
+
+/** Animais que a pessoa possui ou que aparecem em contratos dela (comprador/vendedor/etc.). */
+function client_animal_access_sql(string $animalAlias = 'a'): string {
+    return "(EXISTS (SELECT 1 FROM animal_owners ao WHERE ao.animal_id = {$animalAlias}.id AND ao.client_id = ?)
+        OR EXISTS (
+            SELECT 1 FROM contracts cx
+            WHERE cx.animal_id = {$animalAlias}.id
+              AND cx.status != 'cancelado'
+              AND " . client_party_match_sql('cx') . "
+        ))";
+}
+
+function bind_client_animal_access(array &$params, int $clientId): void {
+    array_push($params, $clientId, $clientId);
+}
+
+function client_can_view_animal(PDO $pdo, int $animalId, int $clientId): bool {
+    $stmt = $pdo->prepare('SELECT 1 FROM animal_owners WHERE animal_id = ? AND client_id = ? LIMIT 1');
+    $stmt->execute([$animalId, $clientId]);
+    if ($stmt->fetch()) return true;
+    $stmt = $pdo->prepare(
+        'SELECT 1 FROM contracts c
+         WHERE c.animal_id = ? AND c.status != ?
+           AND ' . client_party_match_sql('c') . '
+         LIMIT 1'
+    );
+    $stmt->execute([$animalId, 'cancelado', $clientId]);
+    return (bool)$stmt->fetch();
+}
+
+function dashboard_empty_cliente_stats(): array {
+    return [
+        'clients' => 1,
+        'buyers' => 0,
+        'sellers' => 0,
+        'assessors' => 0,
+        'witnesses' => 0,
+        'avalistas' => 0,
+        'animals' => 0,
+        'activeAnimals' => 0,
+        'contracts' => 0,
+        'contractsActive' => 0,
+        'contractsAwaiting' => 0,
+        'chargesPending' => 0,
+        'chargesOverdue' => 0,
+        'chargesPaid' => 0,
+        'users' => 0,
+    ];
+}
+
 function json_out($data, int $code = 200): void {
     http_response_code($code);
     echo json_encode($data);
@@ -356,87 +460,102 @@ if ($resource === 'change-password' && $method === 'PUT') {
 // Dashboard
 if ($resource === 'dashboard' && $method === 'GET') {
     $auth = require_auth($config['jwt_secret']);
-    if ($auth['role'] === 'cliente' && $auth['clientId']) {
-        $cid = (int)$auth['clientId'];
-        $stmt = $pdo->prepare(
-            "SELECT COUNT(*) AS total FROM animals a
-             INNER JOIN animal_owners ao ON ao.animal_id = a.id
-             WHERE ao.client_id = ?"
-        );
-        $stmt->execute([$cid]);
-        $animals = (int)$stmt->fetch()['total'];
+    if ($auth['role'] === 'cliente') {
+        if (!$auth['clientId']) {
+            json_out(dashboard_empty_cliente_stats());
+        }
+        try {
+            $cid = (int)$auth['clientId'];
+            $stmt = $pdo->prepare(
+                "SELECT COUNT(*) AS total FROM animals a
+                 WHERE " . client_animal_access_sql('a')
+            );
+            $params = [];
+            bind_client_animal_access($params, $cid);
+            $stmt->execute($params);
+            $animals = (int)$stmt->fetch()['total'];
 
-        $stmt = $pdo->prepare(
-            "SELECT COUNT(*) AS total FROM animals a
-             INNER JOIN animal_owners ao ON ao.animal_id = a.id
-             WHERE ao.client_id = ? AND a.status = 'ativo'"
-        );
-        $stmt->execute([$cid]);
-        $activeAnimals = (int)$stmt->fetch()['total'];
+            $stmt = $pdo->prepare(
+                "SELECT COUNT(*) AS total FROM animals a
+                 WHERE a.status = 'ativo' AND " . client_animal_access_sql('a')
+            );
+            $params = [];
+            bind_client_animal_access($params, $cid);
+            $stmt->execute($params);
+            $activeAnimals = (int)$stmt->fetch()['total'];
 
-        $stmt = $pdo->prepare(
-            "SELECT COUNT(*) AS total FROM contracts
-             WHERE (buyer_id = ? OR seller_id = ? OR assessor_id = ?) AND status != 'cancelado'"
-        );
-        $stmt->execute([$cid, $cid, $cid]);
-        $contracts = (int)$stmt->fetch()['total'];
+            $stmt = $pdo->prepare(
+                "SELECT COUNT(*) AS total FROM contracts c
+                 WHERE " . client_contract_access_sql() . " AND c.status != 'cancelado'"
+            );
+            $params = [];
+            bind_client_contract_access($params, $cid);
+            $stmt->execute($params);
+            $contracts = (int)$stmt->fetch()['total'];
 
-        $stmt = $pdo->prepare(
-            "SELECT COUNT(*) AS total FROM contracts
-             WHERE (buyer_id = ? OR seller_id = ? OR assessor_id = ?) AND status = 'ativo'"
-        );
-        $stmt->execute([$cid, $cid, $cid]);
-        $contractsActive = (int)$stmt->fetch()['total'];
+            $stmt = $pdo->prepare(
+                "SELECT COUNT(*) AS total FROM contracts c
+                 WHERE " . client_contract_access_sql() . " AND c.status = 'ativo'"
+            );
+            $params = [];
+            bind_client_contract_access($params, $cid);
+            $stmt->execute($params);
+            $contractsActive = (int)$stmt->fetch()['total'];
 
-        $stmt = $pdo->prepare(
-            "SELECT COUNT(*) AS total FROM contracts
-             WHERE (buyer_id = ? OR seller_id = ? OR assessor_id = ?) AND status = 'aguardando_assinatura'"
-        );
-        $stmt->execute([$cid, $cid, $cid]);
-        $contractsAwaiting = (int)$stmt->fetch()['total'];
+            $stmt = $pdo->prepare(
+                "SELECT COUNT(*) AS total FROM contracts c
+                 WHERE " . client_contract_access_sql() . " AND c.status = 'aguardando_assinatura'"
+            );
+            $params = [];
+            bind_client_contract_access($params, $cid);
+            $stmt->execute($params);
+            $contractsAwaiting = (int)$stmt->fetch()['total'];
 
-        $stmt = $pdo->prepare(
-            "SELECT COUNT(*) AS total FROM charges ch
-             INNER JOIN contracts c ON c.id = ch.contract_id
-             WHERE ch.client_id = ? AND ch.status = 'pendente' AND c.status != 'cancelado'"
-        );
-        $stmt->execute([$cid]);
-        $chargesPending = (int)$stmt->fetch()['total'];
+            $stmt = $pdo->prepare(
+                "SELECT COUNT(*) AS total FROM charges ch
+                 INNER JOIN contracts c ON c.id = ch.contract_id
+                 WHERE ch.client_id = ? AND ch.status = 'pendente' AND c.status != 'cancelado'"
+            );
+            $stmt->execute([$cid]);
+            $chargesPending = (int)$stmt->fetch()['total'];
 
-        $stmt = $pdo->prepare(
-            "SELECT COUNT(*) AS total FROM charges ch
-             INNER JOIN contracts c ON c.id = ch.contract_id
-             WHERE ch.client_id = ? AND c.status != 'cancelado'
-               AND (ch.status = 'atrasado' OR (ch.status = 'pendente' AND ch.due_date < CURDATE()))"
-        );
-        $stmt->execute([$cid]);
-        $chargesOverdue = (int)$stmt->fetch()['total'];
+            $stmt = $pdo->prepare(
+                "SELECT COUNT(*) AS total FROM charges ch
+                 INNER JOIN contracts c ON c.id = ch.contract_id
+                 WHERE ch.client_id = ? AND c.status != 'cancelado'
+                   AND (ch.status = 'atrasado' OR (ch.status = 'pendente' AND ch.due_date < CURDATE()))"
+            );
+            $stmt->execute([$cid]);
+            $chargesOverdue = (int)$stmt->fetch()['total'];
 
-        $stmt = $pdo->prepare(
-            "SELECT COUNT(*) AS total FROM charges ch
-             INNER JOIN contracts c ON c.id = ch.contract_id
-             WHERE ch.client_id = ? AND ch.status = 'pago' AND c.status != 'cancelado'"
-        );
-        $stmt->execute([$cid]);
-        $chargesPaid = (int)$stmt->fetch()['total'];
+            $stmt = $pdo->prepare(
+                "SELECT COUNT(*) AS total FROM charges ch
+                 INNER JOIN contracts c ON c.id = ch.contract_id
+                 WHERE ch.client_id = ? AND ch.status = 'pago' AND c.status != 'cancelado'"
+            );
+            $stmt->execute([$cid]);
+            $chargesPaid = (int)$stmt->fetch()['total'];
 
-        json_out([
-            'clients' => 1,
-            'buyers' => 0,
-            'sellers' => 0,
-            'assessors' => 0,
-            'witnesses' => 0,
-            'avalistas' => 0,
-            'animals' => $animals,
-            'activeAnimals' => $activeAnimals,
-            'contracts' => $contracts,
-            'contractsActive' => $contractsActive,
-            'contractsAwaiting' => $contractsAwaiting,
-            'chargesPending' => $chargesPending,
-            'chargesOverdue' => $chargesOverdue,
-            'chargesPaid' => $chargesPaid,
-            'users' => 0,
-        ]);
+            json_out([
+                'clients' => 1,
+                'buyers' => 0,
+                'sellers' => 0,
+                'assessors' => 0,
+                'witnesses' => 0,
+                'avalistas' => 0,
+                'animals' => $animals,
+                'activeAnimals' => $activeAnimals,
+                'contracts' => $contracts,
+                'contractsActive' => $contractsActive,
+                'contractsAwaiting' => $contractsAwaiting,
+                'chargesPending' => $chargesPending,
+                'chargesOverdue' => $chargesOverdue,
+                'chargesPaid' => $chargesPaid,
+                'users' => 0,
+            ]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao carregar dashboard', 'detail' => $e->getMessage()], 500);
+        }
     }
 
     $clients = (int)$pdo->query('SELECT COUNT(*) AS t FROM clients WHERE active = 1')->fetch()['t'];
@@ -1756,6 +1875,69 @@ if ($resource === 'clients') {
         }
     }
 
+    if ($id && $action === 'access-user') {
+        $auth = require_auth($config['jwt_secret']);
+        $cid = (int)$id;
+        if ($auth['role'] === 'cliente' && (int)$auth['clientId'] !== $cid) {
+            json_out(['error' => 'Sem permissão'], 403);
+        }
+
+        if ($method === 'GET' && !$subId) {
+            $user = get_client_access_user($pdo, $cid);
+            json_out(['user' => $user]);
+        }
+
+        if ($method === 'POST' && !$subId) {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $stmt = $pdo->prepare('SELECT * FROM clients WHERE id = ?');
+            $stmt->execute([$cid]);
+            $client = $stmt->fetch();
+            if (!$client) json_out(['error' => 'Pessoa não encontrada'], 404);
+            if (get_client_access_user($pdo, $cid)) {
+                json_out(['error' => 'Esta pessoa já possui usuário de acesso'], 409);
+            }
+            $name = trim((string)$client['name']);
+            if ($name === '') json_out(['error' => 'Nome é obrigatório para criar usuário'], 400);
+            $username = generate_username_from_name($pdo, $name);
+            $email = trim((string)($client['email'] ?? '')) ?: null;
+            $hash = password_hash(DEFAULT_CLIENT_ACCESS_PASSWORD, PASSWORD_BCRYPT, ['cost' => 12]);
+            try {
+                $ins = $pdo->prepare(
+                    'INSERT INTO users (username, email, password_hash, name, role, client_id, active, must_change_password)
+                     VALUES (?, ?, ?, ?, ?, ?, 1, 0)'
+                );
+                $ins->execute([$username, $email, $hash, $name, 'cliente', $cid]);
+                $userId = (int)$pdo->lastInsertId();
+                $stmt = $pdo->prepare(
+                    'SELECT id, username, email, name, avatar_url, role, client_id, active, must_change_password, created_at
+                     FROM users WHERE id = ?'
+                );
+                $stmt->execute([$userId]);
+                json_out([
+                    'success' => true,
+                    'user' => map_user($stmt->fetch()),
+                    'defaultPassword' => DEFAULT_CLIENT_ACCESS_PASSWORD,
+                    'message' => 'Usuário de acesso criado com sucesso',
+                ]);
+            } catch (PDOException $e) {
+                if ($e->getCode() == 23000) json_out(['error' => 'Usuário ou e-mail já existe'], 409);
+                json_out(['error' => 'Erro ao criar usuário de acesso'], 500);
+            }
+        }
+
+        if ($method === 'PUT' && $subId === 'password') {
+            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $password = (string)($body['password'] ?? '');
+            if (strlen($password) < 6) json_out(['error' => 'A senha deve ter pelo menos 6 caracteres'], 400);
+            $user = get_client_access_user($pdo, $cid);
+            if (!$user) json_out(['error' => 'Esta pessoa ainda não possui usuário de acesso'], 404);
+            $hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
+            $pdo->prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?')
+                ->execute([$hash, (int)$user['id']]);
+            json_out(['success' => true, 'message' => 'Senha atualizada']);
+        }
+    }
+
     if ($method === 'GET' && $id && !$action) {
         $auth = require_auth($config['jwt_secret']);
         if ($auth['role'] === 'cliente' && (int)$auth['clientId'] !== (int)$id) {
@@ -1933,8 +2115,8 @@ if ($resource === 'animals') {
         $params = [];
         if ($auth['role'] === 'cliente') {
             if (!$auth['clientId']) json_out([]);
-            $sql .= ' AND EXISTS (SELECT 1 FROM animal_owners ao2 WHERE ao2.animal_id = a.id AND ao2.client_id = ?)';
-            $params[] = $auth['clientId'];
+            $sql .= ' AND ' . client_animal_access_sql('a');
+            bind_client_animal_access($params, (int)$auth['clientId']);
         }
         if ($q !== '') {
             $sql .= ' AND (a.name LIKE ? OR a.registration_no LIKE ? OR a.chip_no LIKE ? OR a.breed LIKE ?)';
@@ -1960,9 +2142,9 @@ if ($resource === 'animals') {
         if (!$animal) json_out(['error' => 'Animal não encontrado'], 404);
 
         if ($auth['role'] === 'cliente') {
-            $chk = $pdo->prepare('SELECT 1 FROM animal_owners WHERE animal_id = ? AND client_id = ?');
-            $chk->execute([(int)$id, $auth['clientId']]);
-            if (!$chk->fetch()) json_out(['error' => 'Sem permissão'], 403);
+            if (!client_can_view_animal($pdo, (int)$id, (int)$auth['clientId'])) {
+                json_out(['error' => 'Sem permissão'], 403);
+            }
         }
 
         $ownersStmt = $pdo->prepare(
@@ -2242,8 +2424,8 @@ if ($resource === 'contracts') {
         $params = [];
         if ($auth['role'] === 'cliente') {
             if (!$auth['clientId']) json_out([]);
-            $sql .= ' AND (c.buyer_id = ? OR c.seller_id = ? OR c.assessor_id = ?)';
-            array_push($params, $auth['clientId'], $auth['clientId'], $auth['clientId']);
+            $sql .= ' AND ' . client_contract_access_sql();
+            bind_client_contract_access($params, (int)$auth['clientId']);
         }
         if (!empty($_GET['animalId'])) {
             $sql .= ' AND c.animal_id = ?';
@@ -2267,7 +2449,11 @@ if ($resource === 'contracts') {
         if (!$r) json_out(['error' => 'Contrato não encontrado'], 404);
         if ($auth['role'] === 'cliente') {
             $cid = (int)$auth['clientId'];
-            if ((int)$r['buyer_id'] !== $cid && (int)$r['seller_id'] !== $cid && (int)($r['assessor_id'] ?? 0) !== $cid) {
+            if ((int)$r['buyer_id'] !== $cid
+                && (int)$r['seller_id'] !== $cid
+                && (int)($r['assessor_id'] ?? 0) !== $cid
+                && (int)($r['witness1_id'] ?? 0) !== $cid
+                && (int)($r['witness2_id'] ?? 0) !== $cid) {
                 json_out(['error' => 'Sem permissão'], 403);
             }
         }

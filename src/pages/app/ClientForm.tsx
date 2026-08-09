@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   createClient,
+  createClientAccessUser,
   createClientBankAccount,
   createClientContact,
   createClientDocument,
@@ -11,13 +12,16 @@ import {
   deleteClientDocument,
   deleteClientProperty,
   getClient,
+  getClientAccessUser,
   getClientBankAccounts,
   getClientContacts,
   getClientDocuments,
   getClientProperties,
   mediaUrl,
+  resetClientAccessPassword,
   updateClient,
   uploadPersonDocument,
+  type AuthUser,
   type Client,
   type ClientBankAccount,
   type ClientContact,
@@ -158,6 +162,12 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
   });
   const [cepLoading, setCepLoading] = useState(false);
   const [propCepLoading, setPropCepLoading] = useState(false);
+  const [accessUser, setAccessUser] = useState<AuthUser | null>(null);
+  const [loadingAccessUser, setLoadingAccessUser] = useState(false);
+  const [creatingAccessUser, setCreatingAccessUser] = useState(false);
+  const [newAccessPassword, setNewAccessPassword] = useState('');
+  const [confirmAccessPassword, setConfirmAccessPassword] = useState('');
+  const [savingAccessPassword, setSavingAccessPassword] = useState(false);
 
   const applyPersonCep = async (raw: string) => {
     const digits = raw.replace(/\D/g, '');
@@ -202,9 +212,81 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
     }
   };
 
+  const loadAccessUser = async (id: string) => {
+    setLoadingAccessUser(true);
+    try {
+      const res = await getClientAccessUser(id);
+      setAccessUser(res.user);
+    } catch {
+      setAccessUser(null);
+    } finally {
+      setLoadingAccessUser(false);
+    }
+  };
+
+  const onCreateAccessUser = async () => {
+    if (!currentId || !canWrite) return;
+    if (
+      !confirm(
+        'Criar usuário de acesso para esta pessoa?\n\nLogin: primeiro nome + sobrenome\nSenha inicial: ariane2026\n\nA pessoa verá contratos e dados conforme os papéis marcados (comprador, vendedor, assessor, testemunha).'
+      )
+    ) {
+      return;
+    }
+    setCreatingAccessUser(true);
+    try {
+      const res = await createClientAccessUser(currentId);
+      setAccessUser(res.user);
+      success(`Usuário ${res.user.username} criado · senha: ${res.defaultPassword}`);
+    } catch (e: any) {
+      toastError(e.message || 'Erro ao criar usuário de acesso');
+    } finally {
+      setCreatingAccessUser(false);
+    }
+  };
+
+  const onResetAccessPassword = async () => {
+    if (!currentId || !canWrite || !accessUser) return;
+    if (newAccessPassword.length < 6) {
+      toastError('A senha deve ter pelo menos 6 caracteres');
+      return;
+    }
+    if (newAccessPassword !== confirmAccessPassword) {
+      toastError('A confirmação não confere com a nova senha');
+      return;
+    }
+    setSavingAccessPassword(true);
+    try {
+      const res = await resetClientAccessPassword(currentId, newAccessPassword);
+      success(res.message || 'Senha atualizada');
+      setNewAccessPassword('');
+      setConfirmAccessPassword('');
+    } catch (e: any) {
+      toastError(e.message || 'Erro ao alterar senha');
+    } finally {
+      setSavingAccessPassword(false);
+    }
+  };
+
+  const partyRoleLabels = [
+    form.is_buyer && 'Comprador',
+    form.is_seller && 'Vendedor',
+    form.is_assessor && 'Assessor',
+    form.is_witness && 'Testemunha',
+    form.is_avalista && 'Avalista',
+  ].filter(Boolean) as string[];
+
   useEffect(() => {
     setCurrentId(clientId);
   }, [clientId]);
+
+  useEffect(() => {
+    if (!currentId) {
+      setAccessUser(null);
+      return;
+    }
+    loadAccessUser(currentId);
+  }, [currentId]);
 
   useEffect(() => {
     if (!currentId) {
@@ -497,6 +579,85 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
                   <input type="checkbox" checked={form.active !== false} onChange={(e) => set('active', e.target.checked)} />
                   Pessoa ativa
                 </label>
+              )}
+            </Section>
+          )}
+
+          {!isNew && canWrite && (
+            <Section title="Acesso ao sistema">
+              <p className="text-sm text-brand-olive">
+                Crie um login para a pessoa acompanhar contratos, animais e cobranças relacionados aos papéis
+                selecionados acima.
+              </p>
+              {partyRoleLabels.length > 0 ? (
+                <p className="mt-2 text-xs text-brand-dark-brown/80">
+                  Papéis ativos: {partyRoleLabels.join(' · ')}
+                </p>
+              ) : (
+                <p className="mt-2 text-xs text-amber-700">
+                  Marque ao menos um papel (comprador, vendedor, assessor ou testemunha) para orientar o acesso.
+                </p>
+              )}
+              {loadingAccessUser ? (
+                <p className="mt-3 text-sm text-brand-olive">Verificando usuário de acesso...</p>
+              ) : accessUser ? (
+                <div className="mt-4 space-y-4 rounded-xl border border-brand-beige bg-white p-4">
+                  <div className="grid gap-2 text-sm sm:grid-cols-2">
+                    <p>
+                      <span className="font-medium text-brand-dark-brown">Usuário:</span>{' '}
+                      <code className="rounded bg-brand-off-white px-1.5 py-0.5">{accessUser.username}</code>
+                    </p>
+                    <p>
+                      <span className="font-medium text-brand-dark-brown">Perfil:</span> Portal do cliente
+                    </p>
+                    <p>
+                      <span className="font-medium text-brand-dark-brown">Status:</span>{' '}
+                      {accessUser.active === false ? 'Inativo' : 'Ativo'}
+                    </p>
+                    <p className="text-brand-olive">
+                      Senha inicial padrão: <strong>ariane2026</strong> (se ainda não alterada)
+                    </p>
+                  </div>
+                  <div className="grid gap-3 border-t border-brand-beige pt-4 sm:grid-cols-2">
+                    <Field label="Nova senha">
+                      <input
+                        type="password"
+                        value={newAccessPassword}
+                        onChange={(e) => setNewAccessPassword(e.target.value)}
+                        className={inputClass}
+                        placeholder="Mínimo 6 caracteres"
+                        autoComplete="new-password"
+                      />
+                    </Field>
+                    <Field label="Confirmar nova senha">
+                      <input
+                        type="password"
+                        value={confirmAccessPassword}
+                        onChange={(e) => setConfirmAccessPassword(e.target.value)}
+                        className={inputClass}
+                        placeholder="Repita a senha"
+                        autoComplete="new-password"
+                      />
+                    </Field>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={savingAccessPassword || !newAccessPassword}
+                    onClick={onResetAccessPassword}
+                    className="rounded-xl border border-brand-beige bg-white px-4 py-2 text-sm font-medium text-brand-brown hover:bg-brand-beige/40 disabled:opacity-50"
+                  >
+                    {savingAccessPassword ? 'Salvando...' : 'Alterar senha de acesso'}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={creatingAccessUser}
+                  onClick={onCreateAccessUser}
+                  className="mt-4 rounded-xl bg-brand-brown px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-50"
+                >
+                  {creatingAccessUser ? 'Criando...' : 'Criar usuário de acesso'}
+                </button>
               )}
             </Section>
           )}
