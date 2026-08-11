@@ -10,12 +10,14 @@ import {
   updateContract,
   type Animal,
   type CatalogItem,
+  type ChargeCollector,
   type Client,
   type ContractTemplate,
   type PaymentMethod,
   type PayoutRole,
   type SaleType,
 } from '../../services/apiService';
+import { CHARGE_COLLECTOR_LABELS } from '../../constants/chargeCollectors';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
@@ -66,6 +68,7 @@ const newRule = (partial?: Partial<PayoutRuleInput>): PayoutRuleInput => ({
 interface ScheduleRow {
   amount: string;
   dueDate: string;
+  collector: ChargeCollector;
 }
 
 const money = (v: number) =>
@@ -85,7 +88,7 @@ function buildEqualSchedule(total: number, n: number, firstDue: string): Schedul
     const y = due.getFullYear();
     const m = String(due.getMonth() + 1).padStart(2, '0');
     const d = String(due.getDate()).padStart(2, '0');
-    rows.push({ amount: amount.toFixed(2), dueDate: `${y}-${m}-${d}` });
+    rows.push({ amount: amount.toFixed(2), dueDate: `${y}-${m}-${d}`, collector: 'assessoria' });
     due.setMonth(due.getMonth() + 1);
   }
   return rows;
@@ -104,7 +107,9 @@ export default function ContractForm({
   onSaved,
 }: ContractFormProps) {
   const isEdit = !!contractId;
-  const { canWrite } = useAuth();
+  const { canCreate, canUpdate } = useAuth();
+  const canSave = isEdit ? canUpdate : canCreate;
+  const canEditFields = canSave;
   const { success, error: toastError } = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -274,6 +279,7 @@ export default function ContractForm({
               .map((c) => ({
                 amount: Number(c.amount).toFixed(2),
                 dueDate: String(c.due_date).slice(0, 10),
+                collector: c.collector === 'seller' ? 'seller' : 'assessoria',
               }));
             const equal = buildEqualSchedule(
               Number(contract.total_amount),
@@ -346,7 +352,12 @@ export default function ContractForm({
     setSchedule((prev) => {
       if (prev.length === n) return prev;
       const base = buildEqualSchedule(total, n, form.firstDueDate);
-      return base.map((row, i) => prev[i] ?? row);
+      return base.map((row, i) => ({
+        ...(prev[i] ?? row),
+        amount: prev[i]?.amount ?? row.amount,
+        dueDate: prev[i]?.dueDate ?? row.dueDate,
+        collector: prev[i]?.collector ?? row.collector,
+      }));
     });
   }, [customSchedule, form.installments, form.totalAmount, form.firstDueDate]);
 
@@ -366,39 +377,39 @@ export default function ContractForm({
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canWrite) return;
+    if (!canSave) return;
     if (!isEdit && rules.length > 0 && pctSum > 100.01) {
       toastError('A soma dos % de repasse não pode passar de 100%');
       return;
     }
 
     let schedulePayload:
-      | Array<{ installmentNo: number; amount: number; dueDate: string }>
+      | Array<{ installmentNo: number; amount: number; dueDate: string; collector: ChargeCollector }>
       | undefined;
-    if (customSchedule) {
-      const rows = schedule.map((r, i) => ({
-        installmentNo: i + 1,
-        amount: Number(r.amount),
-        dueDate: r.dueDate,
-      }));
-      if (rows.length !== Number(form.installments)) {
-        toastError('O cronograma não bate com a quantidade de parcelas');
-        return;
-      }
-      if (rows.some((r) => !(r.amount > 0) || !r.dueDate)) {
-        toastError('Informe valor e vencimento em todas as parcelas');
-        return;
-      }
-      const total = Number(form.totalAmount) || 0;
-      const sum = rows.reduce((s, r) => s + r.amount, 0);
-      if (Math.abs(sum - total) > 0.02) {
-        toastError(
-          `A soma das parcelas (${money(sum)}) precisa ser igual ao total do contrato (${money(total)})`
-        );
-        return;
-      }
-      schedulePayload = rows;
+
+    const rows = schedule.map((r, i) => ({
+      installmentNo: i + 1,
+      amount: Number(r.amount),
+      dueDate: r.dueDate,
+      collector: r.collector,
+    }));
+    if (rows.length !== Number(form.installments)) {
+      toastError('O cronograma não bate com a quantidade de parcelas');
+      return;
     }
+    if (rows.some((r) => !(r.amount > 0) || !r.dueDate)) {
+      toastError('Informe valor e vencimento em todas as parcelas');
+      return;
+    }
+    const total = Number(form.totalAmount) || 0;
+    const sum = rows.reduce((s, r) => s + r.amount, 0);
+    if (Math.abs(sum - total) > 0.02) {
+      toastError(
+        `A soma das parcelas (${money(sum)}) precisa ser igual ao total do contrato (${money(total)})`
+      );
+      return;
+    }
+    schedulePayload = rows;
 
     setSaving(true);
     try {
@@ -429,7 +440,7 @@ export default function ContractForm({
         paymentMethod: form.paymentMethod,
         firstDueDate: form.firstDueDate,
         notes: form.notes || null,
-        ...(schedulePayload ? { schedule: schedulePayload } : {}),
+        schedule: schedulePayload,
       };
 
       if (isEdit && contractId) {
@@ -499,7 +510,7 @@ export default function ContractForm({
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Animal *</span>
           <select
             required
-            disabled={isEdit || !!animalId || !canWrite}
+            disabled={isEdit || !!animalId || !canEditFields}
             value={form.animalId}
             onChange={(e) => set('animalId', e.target.value)}
             className={inputClass}
@@ -516,7 +527,7 @@ export default function ContractForm({
           <div className="flex gap-2">
             <select
               required
-              disabled={!canWrite}
+              disabled={!canEditFields}
               value={form.saleType}
               onChange={(e) => set('saleType', e.target.value as SaleType)}
               className={inputClass}
@@ -528,7 +539,7 @@ export default function ContractForm({
                 <option value={form.saleType}>{form.saleType}</option>
               )}
             </select>
-            {canWrite && (
+            {canEditFields && (
               <button
                 type="button"
                 title="Cadastrar tipo de venda"
@@ -539,7 +550,7 @@ export default function ContractForm({
               </button>
             )}
           </div>
-          {addingSaleType && canWrite && (
+          {addingSaleType && canEditFields && (
             <div className="flex gap-2 pt-1">
               <input
                 value={newSaleTypeName}
@@ -576,7 +587,7 @@ export default function ContractForm({
           <div className="flex gap-2">
             <select
               required
-              disabled={!canWrite}
+              disabled={!canEditFields}
               value={String(form.sharePct)}
               onChange={(e) => set('sharePct', Number(e.target.value))}
               className={inputClass}
@@ -588,7 +599,7 @@ export default function ContractForm({
                 <option value={form.sharePct}>{form.sharePct}%</option>
               )}
             </select>
-            {canWrite && (
+            {canEditFields && (
               <button
                 type="button"
                 title="Cadastrar cota"
@@ -599,7 +610,7 @@ export default function ContractForm({
               </button>
             )}
           </div>
-          {addingQuota && canWrite && (
+          {addingQuota && canEditFields && (
             <div className="flex gap-2 pt-1">
               <input
                 value={newQuota}
@@ -640,7 +651,7 @@ export default function ContractForm({
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Vendedor *</span>
           <select
             required
-            disabled={((!sellerIds || sellerIds.length <= 1) && !!sellerId) || !canWrite}
+            disabled={((!sellerIds || sellerIds.length <= 1) && !!sellerId) || !canEditFields}
             value={form.sellerId}
             onChange={(e) => set('sellerId', e.target.value)}
             className={inputClass}
@@ -659,7 +670,7 @@ export default function ContractForm({
 
         <label className="block space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Comprador *</span>
-          <select required disabled={!canWrite} value={form.buyerId} onChange={(e) => set('buyerId', e.target.value)} className={inputClass}>
+          <select required disabled={!canEditFields} value={form.buyerId} onChange={(e) => set('buyerId', e.target.value)} className={inputClass}>
             <option value="">— Selecionar —</option>
             {buyers.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
@@ -669,7 +680,7 @@ export default function ContractForm({
 
         <label className="block space-y-1.5 sm:col-span-2">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Assessor (opcional)</span>
-          <select disabled={!canWrite} value={form.assessorId} onChange={(e) => set('assessorId', e.target.value)} className={inputClass}>
+          <select disabled={!canEditFields} value={form.assessorId} onChange={(e) => set('assessorId', e.target.value)} className={inputClass}>
             <option value="">— Nenhum —</option>
             {assessors.map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
@@ -679,13 +690,13 @@ export default function ContractForm({
 
         <label className="block space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Nº do lote</span>
-          <input disabled={!canWrite} value={form.lotLabel} onChange={(e) => set('lotLabel', e.target.value)} className={inputClass} placeholder="06" />
+          <input disabled={!canEditFields} value={form.lotLabel} onChange={(e) => set('lotLabel', e.target.value)} className={inputClass} placeholder="06" />
         </label>
         <div className="space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Categoria</span>
           <div className="flex gap-2">
             <select
-              disabled={!canWrite}
+              disabled={!canEditFields}
               value={form.animalCategory}
               onChange={(e) => set('animalCategory', e.target.value)}
               className={inputClass}
@@ -698,7 +709,7 @@ export default function ContractForm({
                 <option value={form.animalCategory}>{form.animalCategory}</option>
               )}
             </select>
-            {canWrite && (
+            {canEditFields && (
               <button
                 type="button"
                 title="Cadastrar categoria"
@@ -709,7 +720,7 @@ export default function ContractForm({
               </button>
             )}
           </div>
-          {addingCategory && canWrite && (
+          {addingCategory && canEditFields && (
             <div className="flex gap-2 pt-1">
               <input
                 value={newCategory}
@@ -742,13 +753,13 @@ export default function ContractForm({
         </div>
         <label className="block space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Quantidade</span>
-          <input type="number" min={0.01} step={0.01} disabled={!canWrite} value={form.quantity} onChange={(e) => set('quantity', e.target.value)} className={inputClass} />
+          <input type="number" min={0.01} step={0.01} disabled={!canEditFields} value={form.quantity} onChange={(e) => set('quantity', e.target.value)} className={inputClass} />
         </label>
 
         <label className="flex items-center gap-3 sm:col-span-2 rounded-xl border border-brand-beige bg-brand-off-white/50 px-3 py-3">
           <input
             type="checkbox"
-            disabled={!canWrite}
+            disabled={!canEditFields}
             checked={hasCommission}
             onChange={(e) => {
               const on = e.target.checked;
@@ -776,22 +787,22 @@ export default function ContractForm({
           <>
             <label className="block space-y-1.5">
               <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Comissão total %</span>
-              <input type="number" min={0} step={0.01} disabled={!canWrite} value={form.commissionTotalPct} onChange={(e) => set('commissionTotalPct', e.target.value)} className={inputClass} />
+              <input type="number" min={0} step={0.01} disabled={!canEditFields} value={form.commissionTotalPct} onChange={(e) => set('commissionTotalPct', e.target.value)} className={inputClass} />
             </label>
             <label className="block space-y-1.5">
               <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Comissão comprador %</span>
-              <input type="number" min={0} step={0.01} disabled={!canWrite} value={form.commissionBuyerPct} onChange={(e) => set('commissionBuyerPct', e.target.value)} className={inputClass} />
+              <input type="number" min={0} step={0.01} disabled={!canEditFields} value={form.commissionBuyerPct} onChange={(e) => set('commissionBuyerPct', e.target.value)} className={inputClass} />
             </label>
             <label className="block space-y-1.5">
               <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Comissão vendedor %</span>
-              <input type="number" min={0} step={0.01} disabled={!canWrite} value={form.commissionSellerPct} onChange={(e) => set('commissionSellerPct', e.target.value)} className={inputClass} />
+              <input type="number" min={0} step={0.01} disabled={!canEditFields} value={form.commissionSellerPct} onChange={(e) => set('commissionSellerPct', e.target.value)} className={inputClass} />
             </label>
           </>
         )}
 
         <label className="block space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Testemunha 1</span>
-          <select disabled={!canWrite} value={form.witness1Id} onChange={(e) => set('witness1Id', e.target.value)} className={inputClass}>
+          <select disabled={!canEditFields} value={form.witness1Id} onChange={(e) => set('witness1Id', e.target.value)} className={inputClass}>
             <option value="">— Nenhuma —</option>
             {(witnesses.length ? witnesses : allClients).map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
@@ -800,7 +811,7 @@ export default function ContractForm({
         </label>
         <label className="block space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Testemunha 2</span>
-          <select disabled={!canWrite} value={form.witness2Id} onChange={(e) => set('witness2Id', e.target.value)} className={inputClass}>
+          <select disabled={!canEditFields} value={form.witness2Id} onChange={(e) => set('witness2Id', e.target.value)} className={inputClass}>
             <option value="">— Nenhuma —</option>
             {(witnesses.length ? witnesses : allClients).map((c) => (
               <option key={c.id} value={c.id}>{c.name}</option>
@@ -815,7 +826,7 @@ export default function ContractForm({
             min={0.01}
             step={0.01}
             required
-            disabled={!canWrite}
+            disabled={!canEditFields}
             value={form.totalAmount}
             onChange={(e) => set('totalAmount', e.target.value)}
             className={inputClass}
@@ -825,7 +836,7 @@ export default function ContractForm({
         <label className="block space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Forma de pagamento *</span>
           <select
-            disabled={!canWrite}
+            disabled={!canEditFields}
             value={form.paymentMethod}
             onChange={(e) => set('paymentMethod', e.target.value as PaymentMethod)}
             className={inputClass}
@@ -838,13 +849,13 @@ export default function ContractForm({
         </label>
 
         <label className="block space-y-1.5">
-          <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Parcelas (1–40) *</span>
+          <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Parcelas (1–50) *</span>
           <input
             type="number"
             min={1}
-            max={40}
+            max={50}
             required
-            disabled={!canWrite}
+            disabled={!canEditFields}
             value={form.installments}
             onChange={(e) => set('installments', Number(e.target.value))}
             className={inputClass}
@@ -856,7 +867,7 @@ export default function ContractForm({
           <input
             type="date"
             required
-            disabled={!canWrite}
+            disabled={!canEditFields}
             value={form.firstDueDate}
             onChange={(e) => set('firstDueDate', e.target.value)}
             className={inputClass}
@@ -877,7 +888,7 @@ export default function ContractForm({
             <label className="flex items-center gap-2 text-xs text-brand-dark-brown">
               <input
                 type="checkbox"
-                disabled={!canWrite}
+                disabled={!canEditFields}
                 checked={customSchedule}
                 onChange={(e) => setCustomSchedule(e.target.checked)}
                 className="h-4 w-4 rounded border-brand-beige text-brand-brown focus:ring-brand-beige"
@@ -898,7 +909,7 @@ export default function ContractForm({
                       type="number"
                       step="0.01"
                       min={0}
-                      disabled={!canWrite}
+                      disabled={!canEditFields}
                       value={row.amount}
                       onChange={(e) => updateScheduleRow(index, { amount: e.target.value })}
                       className={`${inputClass} py-1.5`}
@@ -906,7 +917,7 @@ export default function ContractForm({
                     />
                     <input
                       type="date"
-                      disabled={!canWrite}
+                      disabled={!canEditFields}
                       value={row.dueDate}
                       onChange={(e) => updateScheduleRow(index, { dueDate: e.target.value })}
                       className={`${inputClass} py-1.5`}
@@ -925,16 +936,16 @@ export default function ContractForm({
                     </span>
                   )}
                 </p>
-                {canWrite && (
+                {canEditFields && (
                   <button
                     type="button"
                     onClick={() =>
-                      setSchedule(
+                      setSchedule((prev) =>
                         buildEqualSchedule(
                           Number(form.totalAmount) || 0,
                           Number(form.installments) || 0,
                           form.firstDueDate
-                        )
+                        ).map((row, i) => ({ ...row, collector: prev[i]?.collector ?? row.collector }))
                       )
                     }
                     className="rounded-lg border border-brand-beige bg-white px-2.5 py-1 text-xs font-medium text-brand-brown hover:bg-brand-beige/40"
@@ -945,11 +956,58 @@ export default function ContractForm({
               </div>
             </div>
           )}
+
+          <div className="space-y-2 rounded-xl border border-brand-beige bg-brand-off-white/40 p-3">
+            <div>
+              <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">
+                Quem cobra cada parcela?
+              </span>
+              <p className="mt-0.5 text-[11px] text-brand-olive/80">
+                Defina quais parcelas a assessoria fatura e quais ficam com o vendedor. Só as parcelas
+                da assessoria entram nas cobranças e no dashboard.
+              </p>
+            </div>
+            <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+              {schedule.map((row, index) => (
+                <div
+                  key={index}
+                  className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] items-center gap-2 sm:grid-cols-[140px_1fr]"
+                >
+                  <span className="text-xs text-brand-brown">
+                    Parcela {index + 1} · {form.paymentMethod.toUpperCase()}
+                  </span>
+                  <select
+                    disabled={!canEditFields}
+                    value={row.collector}
+                    onChange={(e) =>
+                      updateScheduleRow(index, { collector: e.target.value as ChargeCollector })
+                    }
+                    className={`${inputClass} py-1.5`}
+                  >
+                    {(Object.entries(CHARGE_COLLECTOR_LABELS) as [ChargeCollector, string][]).map(
+                      ([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <p className="border-t border-brand-beige/70 pt-2 text-xs text-brand-olive">
+              Assessoria cobra{' '}
+              <strong className="text-brand-dark-brown">
+                {schedule.filter((r) => r.collector === 'assessoria').length}
+              </strong>{' '}
+              de {schedule.length} parcelas
+            </p>
+          </div>
         </div>
 
         <label className="block space-y-1.5 sm:col-span-2">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Observações</span>
-          <textarea disabled={!canWrite} rows={2} value={form.notes} onChange={(e) => set('notes', e.target.value)} className={inputClass} />
+          <textarea disabled={!canEditFields} rows={2} value={form.notes} onChange={(e) => set('notes', e.target.value)} className={inputClass} />
         </label>
       </div>
 
@@ -964,7 +1022,7 @@ export default function ContractForm({
         <label className="block space-y-1.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Modelo do verso *</span>
-            {canWrite && (
+            {canEditFields && (
               <button
                 type="button"
                 onClick={() => {
@@ -988,7 +1046,7 @@ export default function ContractForm({
           </div>
           <select
             required
-            disabled={!canWrite}
+            disabled={!canEditFields}
             value={form.templateId}
             onChange={(e) => {
               const id = e.target.value;
@@ -1017,7 +1075,7 @@ export default function ContractForm({
         <label className="block space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Título do verso</span>
           <input
-            disabled={!canWrite}
+            disabled={!canEditFields}
             value={form.versoTitle}
             onChange={(e) => set('versoTitle', e.target.value)}
             className={inputClass}
@@ -1027,7 +1085,7 @@ export default function ContractForm({
         <label className="block space-y-1.5">
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Texto do verso (cláusulas)</span>
           <textarea
-            disabled={!canWrite}
+            disabled={!canEditFields}
             rows={10}
             value={form.versoBody}
             onChange={(e) => set('versoBody', e.target.value)}
@@ -1049,7 +1107,7 @@ export default function ContractForm({
               </span>
             </p>
           </div>
-          {canWrite && (
+          {canEditFields && (
             <button
               type="button"
               onClick={() => setRules((r) => [...r, newRule({ beneficiaryRole: 'assessor', pct: '5' })])}
@@ -1066,7 +1124,7 @@ export default function ContractForm({
               <label className="sm:col-span-3">
                 <span className="mb-1 block text-[10px] uppercase text-brand-olive">Papel</span>
                 <select
-                  disabled={!canWrite}
+                  disabled={!canEditFields}
                   value={r.beneficiaryRole}
                   onChange={(e) => {
                     const role = e.target.value as PayoutRole;
@@ -1095,7 +1153,7 @@ export default function ContractForm({
               <label className="sm:col-span-4">
                 <span className="mb-1 block text-[10px] uppercase text-brand-olive">Pessoa</span>
                 <select
-                  disabled={!canWrite}
+                  disabled={!canEditFields}
                   value={r.beneficiaryClientId}
                   onChange={(e) =>
                     setRules((list) =>
@@ -1118,7 +1176,7 @@ export default function ContractForm({
                   max={100}
                   step={0.01}
                   required
-                  disabled={!canWrite}
+                  disabled={!canEditFields}
                   value={r.pct}
                   onChange={(e) =>
                     setRules((list) => list.map((x, i) => (i === idx ? { ...x, pct: e.target.value } : x)))
@@ -1129,7 +1187,7 @@ export default function ContractForm({
               <label className="sm:col-span-2">
                 <span className="mb-1 block text-[10px] uppercase text-brand-olive">Rótulo</span>
                 <input
-                  disabled={!canWrite}
+                  disabled={!canEditFields}
                   value={r.label}
                   onChange={(e) =>
                     setRules((list) => list.map((x, i) => (i === idx ? { ...x, label: e.target.value } : x)))
@@ -1138,7 +1196,7 @@ export default function ContractForm({
                 />
               </label>
               <div className="flex items-end sm:col-span-1">
-                {canWrite && rules.length > 1 && (
+                {canEditFields && rules.length > 1 && (
                   <button
                     type="button"
                     onClick={() => setRules((list) => list.filter((_, i) => i !== idx))}
@@ -1155,7 +1213,7 @@ export default function ContractForm({
       )}
 
       <div className="flex flex-wrap gap-2 border-t border-brand-beige pt-4">
-        {canWrite && (
+        {canEditFields && (
           <button type="submit" disabled={saving} className="rounded-xl bg-brand-brown px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-60">
             {saving
               ? (isEdit ? 'Salvando...' : 'Gerando...')

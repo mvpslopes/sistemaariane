@@ -120,6 +120,7 @@ function mapUser(row) {
     clientId: row.client_id ? String(row.client_id) : null,
     active: Boolean(row.active),
     mustChangePassword: Boolean(row.must_change_password),
+    permissions: permissionsForRole(row.role),
   };
 }
 
@@ -222,8 +223,78 @@ function canManageUsers(role) {
   return role === 'root' || role === 'admin';
 }
 
-function canWriteData(role) {
+function canCreate(role) {
   return ['root', 'admin', 'user'].includes(role);
+}
+
+function canUpdate(role) {
+  return role === 'root' || role === 'admin';
+}
+
+function canDelete(role) {
+  return role === 'root' || role === 'admin';
+}
+
+function canViewAudit(role) {
+  return role === 'root' || role === 'admin';
+}
+
+function permissionsForRole(role) {
+  return {
+    canCreate: canCreate(role),
+    canUpdate: canUpdate(role),
+    canDelete: canDelete(role),
+    canManageUsers: canManageUsers(role),
+    canViewAudit: canViewAudit(role),
+  };
+}
+
+function clientIp(req) {
+  return String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').slice(0, 64);
+}
+
+async function auditLog(req, auth, action, resource, resourceId = null, summary = null, success = true, meta = null) {
+  try {
+    await pool.execute(
+      `INSERT INTO audit_logs (user_id, username, role, action, resource, resource_id, summary, ip, user_agent, success, meta)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        auth?.id ?? null,
+        auth?.username ?? null,
+        auth?.role ?? null,
+        action,
+        resource,
+        resourceId,
+        summary,
+        clientIp(req),
+        String(req.headers['user-agent'] || '').slice(0, 500),
+        success ? 1 : 0,
+        meta ? JSON.stringify(meta) : null,
+      ]
+    );
+  } catch {
+    /* não interrompe operação principal */
+  }
+}
+
+function mapAuditRow(r) {
+  return {
+    id: String(r.id),
+    createdAt: r.created_at,
+    userId: r.user_id ? String(r.user_id) : null,
+    username: r.username,
+    role: r.role,
+    action: r.action,
+    resource: r.resource,
+    resourceId: r.resource_id,
+    summary: r.summary,
+    ip: r.ip,
+    success: Boolean(r.success),
+  };
+}
+
+function canWriteData(role) {
+  return canCreate(role);
 }
 
 // Health
@@ -264,16 +335,19 @@ app.post('/api/login', async (req, res) => {
     );
 
     if (!rows.length) {
+      await auditLog(req, null, 'login_failed', 'auth', null, `Tentativa: ${login}`, false);
       return res.status(401).json({ error: 'Usuário ou senha incorretos' });
     }
 
     const user = rows[0];
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) {
+      await auditLog(req, null, 'login_failed', 'auth', null, `Tentativa: ${login}`, false);
       return res.status(401).json({ error: 'Usuário ou senha incorretos' });
     }
 
     const token = signToken(user);
+    await auditLog(req, { id: user.id, username: user.username, role: user.role }, 'login', 'auth', String(user.id), 'Login realizado');
     res.json({ success: true, token, user: mapUser(user) });
   } catch (error) {
     console.error('Erro no login:', error);
@@ -499,18 +573,18 @@ app.get('/api/dashboard', auth(), async (req, res) => {
     const [[chargesPending]] = await pool.execute(
       `SELECT COUNT(*) AS total FROM charges ch
        INNER JOIN contracts c ON c.id = ch.contract_id
-       WHERE ch.status = 'pendente' AND c.status != 'cancelado'`
+       WHERE ch.collector = 'assessoria' AND ch.status = 'pendente' AND c.status != 'cancelado'`
     );
     const [[chargesOverdue]] = await pool.execute(
       `SELECT COUNT(*) AS total FROM charges ch
        INNER JOIN contracts c ON c.id = ch.contract_id
-       WHERE c.status != 'cancelado'
+       WHERE ch.collector = 'assessoria' AND c.status != 'cancelado'
          AND (ch.status = 'atrasado' OR (ch.status = 'pendente' AND ch.due_date < CURDATE()))`
     );
     const [[chargesPaid]] = await pool.execute(
       `SELECT COUNT(*) AS total FROM charges ch
        INNER JOIN contracts c ON c.id = ch.contract_id
-       WHERE ch.status = 'pago' AND c.status != 'cancelado'`
+       WHERE ch.collector = 'assessoria' AND ch.status = 'pago' AND c.status != 'cancelado'`
     );
     const [[users]] = await pool.execute('SELECT COUNT(*) AS total FROM users WHERE active = 1');
 
@@ -621,6 +695,30 @@ function buildEqualSchedule(total, n, firstDue) {
   return rows;
 }
 
+function normalizeCollector(value) {
+  return value === 'seller' ? 'seller' : 'assessoria';
+}
+
+function mapChargeRow(c, today = new Date().toISOString().slice(0, 10)) {
+  let status = c.status;
+  if (status === 'pendente' && c.due_date < today) status = 'atrasado';
+  return {
+    id: String(c.id),
+    contract_id: String(c.contract_id),
+    client_id: String(c.client_id),
+    client_name: c.client_name ?? null,
+    animal_name: c.animal_name ?? null,
+    installment_no: Number(c.installment_no),
+    amount: Number(c.amount),
+    due_date: c.due_date,
+    payment_method: c.payment_method,
+    collector: normalizeCollector(c.collector),
+    status,
+    paid_at: c.paid_at,
+    notes: c.notes,
+  };
+}
+
 /** Cronograma manual vindo do formulário. Retorna null quando não foi informado. */
 function normalizeSchedule(raw, n, total) {
   if (!Array.isArray(raw) || !raw.length) return null;
@@ -634,6 +732,7 @@ function normalizeSchedule(raw, n, total) {
       order: Number(r.installmentNo ?? i + 1),
       amount: Math.round(Number(r.amount) * 100) / 100,
       dueDate: String(r.dueDate || '').slice(0, 10),
+      collector: normalizeCollector(r.collector),
     }))
     .sort((a, b) => a.order - b.order);
 
@@ -648,20 +747,28 @@ function normalizeSchedule(raw, n, total) {
     err.status = 400;
     throw err;
   }
-  return rows.map(({ amount, dueDate }) => ({ amount, dueDate }));
+  return rows.map(({ amount, dueDate, collector }) => ({ amount, dueDate, collector }));
 }
 
 async function generateCharges(conn, contractId, buyerId, total, n, firstDue, method, schedule = null) {
-  n = Math.max(1, Math.min(40, n));
+  n = Math.max(1, Math.min(50, n));
   const rows = schedule || buildEqualSchedule(total, n, firstDue);
   // Repasses dependem das cobranças — remove antes para evitar falha de FK
   await conn.execute('DELETE FROM payouts WHERE contract_id = ?', [contractId]);
   await conn.execute('DELETE FROM charges WHERE contract_id = ?', [contractId]);
   for (let i = 0; i < rows.length; i++) {
     await conn.execute(
-      `INSERT INTO charges (contract_id, client_id, installment_no, amount, due_date, payment_method, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'pendente')`,
-      [contractId, buyerId, i + 1, rows[i].amount, rows[i].dueDate, method]
+      `INSERT INTO charges (contract_id, client_id, installment_no, amount, due_date, payment_method, collector, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pendente')`,
+      [
+        contractId,
+        buyerId,
+        i + 1,
+        rows[i].amount,
+        rows[i].dueDate,
+        method,
+        normalizeCollector(rows[i].collector),
+      ]
     );
   }
 }
@@ -1119,7 +1226,7 @@ app.post('/api/clients/:id/access-user', auth(['root', 'admin', 'user']), async 
   }
 });
 
-app.put('/api/clients/:id/access-user/password', auth(['root', 'admin', 'user']), async (req, res) => {
+app.put('/api/clients/:id/access-user/password', auth(['root', 'admin']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const password = String(req.body?.password || '');
@@ -1208,7 +1315,7 @@ app.post('/api/clients', auth(['root', 'admin', 'user']), async (req, res) => {
   }
 });
 
-app.put('/api/clients/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+app.put('/api/clients/:id', auth(['root', 'admin']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const {
@@ -1263,7 +1370,7 @@ app.put('/api/clients/:id', auth(['root', 'admin', 'user']), async (req, res) =>
   }
 });
 
-app.delete('/api/clients/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+app.delete('/api/clients/:id', auth(['root', 'admin']), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const id = Number(req.params.id);
@@ -1333,7 +1440,7 @@ app.post('/api/clients/:id/documents', auth(['root', 'admin', 'user']), async (r
   }
 });
 
-app.delete('/api/clients/:id/documents/:docId', auth(['root', 'admin', 'user']), async (req, res) => {
+app.delete('/api/clients/:id/documents/:docId', auth(['root', 'admin']), async (req, res) => {
   try {
     const [result] = await pool.execute(
       'DELETE FROM client_documents WHERE id = ? AND client_id = ?',
@@ -1385,7 +1492,7 @@ app.post('/api/clients/:id/properties', auth(['root', 'admin', 'user']), async (
   }
 });
 
-app.put('/api/clients/:id/properties/:propId', auth(['root', 'admin', 'user']), async (req, res) => {
+app.put('/api/clients/:id/properties/:propId', auth(['root', 'admin']), async (req, res) => {
   try {
     const b = req.body;
     if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome da propriedade é obrigatório' });
@@ -1407,7 +1514,7 @@ app.put('/api/clients/:id/properties/:propId', auth(['root', 'admin', 'user']), 
   }
 });
 
-app.delete('/api/clients/:id/properties/:propId', auth(['root', 'admin', 'user']), async (req, res) => {
+app.delete('/api/clients/:id/properties/:propId', auth(['root', 'admin']), async (req, res) => {
   try {
     const [result] = await pool.execute(
       'DELETE FROM client_properties WHERE id = ? AND client_id = ?',
@@ -1461,7 +1568,7 @@ app.post('/api/clients/:id/bank-accounts', auth(['root', 'admin', 'user']), asyn
   }
 });
 
-app.put('/api/clients/:id/bank-accounts/:accId', auth(['root', 'admin', 'user']), async (req, res) => {
+app.put('/api/clients/:id/bank-accounts/:accId', auth(['root', 'admin']), async (req, res) => {
   try {
     const b = req.body;
     if (!String(b.bank_name || '').trim()) return res.status(400).json({ error: 'Banco é obrigatório' });
@@ -1484,7 +1591,7 @@ app.put('/api/clients/:id/bank-accounts/:accId', auth(['root', 'admin', 'user'])
   }
 });
 
-app.delete('/api/clients/:id/bank-accounts/:accId', auth(['root', 'admin', 'user']), async (req, res) => {
+app.delete('/api/clients/:id/bank-accounts/:accId', auth(['root', 'admin']), async (req, res) => {
   try {
     const [result] = await pool.execute(
       'DELETE FROM client_bank_accounts WHERE id = ? AND client_id = ?',
@@ -1531,7 +1638,7 @@ app.post('/api/clients/:id/contacts', auth(['root', 'admin', 'user']), async (re
   }
 });
 
-app.put('/api/clients/:id/contacts/:contactId', auth(['root', 'admin', 'user']), async (req, res) => {
+app.put('/api/clients/:id/contacts/:contactId', auth(['root', 'admin']), async (req, res) => {
   try {
     const b = req.body;
     if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome do contato é obrigatório' });
@@ -1549,7 +1656,7 @@ app.put('/api/clients/:id/contacts/:contactId', auth(['root', 'admin', 'user']),
   }
 });
 
-app.delete('/api/clients/:id/contacts/:contactId', auth(['root', 'admin', 'user']), async (req, res) => {
+app.delete('/api/clients/:id/contacts/:contactId', auth(['root', 'admin']), async (req, res) => {
   try {
     const [result] = await pool.execute(
       'DELETE FROM client_contacts WHERE id = ? AND client_id = ?',
@@ -1746,7 +1853,7 @@ app.post('/api/animals', auth(['root', 'admin', 'user']), async (req, res) => {
   }
 });
 
-app.put('/api/animals/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+app.put('/api/animals/:id', auth(['root', 'admin']), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const id = Number(req.params.id);
@@ -1806,7 +1913,7 @@ app.put('/api/animals/:id', auth(['root', 'admin', 'user']), async (req, res) =>
   }
 });
 
-app.delete('/api/animals/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+app.delete('/api/animals/:id', auth(['root', 'admin']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const [[row]] = await pool.execute('SELECT photo_url FROM animals WHERE id = ?', [id]);
@@ -1943,6 +2050,28 @@ app.put('/api/users/:id', auth(['root', 'admin']), async (req, res) => {
   }
 });
 
+app.delete('/api/users/:id', auth(['root', 'admin']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [existing] = await pool.execute('SELECT id, role, username, name FROM users WHERE id = ?', [id]);
+    if (!existing.length) return res.status(404).json({ error: 'Usuário não encontrado' });
+
+    const target = existing[0];
+    if (target.id === req.user.id) {
+      return res.status(403).json({ error: 'Você não pode excluir o próprio usuário' });
+    }
+    if (req.user.role === 'admin' && (target.role === 'root' || target.role === 'admin')) {
+      return res.status(403).json({ error: 'Sem permissão para excluir este usuário' });
+    }
+
+    await pool.execute('DELETE FROM users WHERE id = ?', [id]);
+    res.json({ success: true, message: 'Usuário excluído' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir usuário' });
+  }
+});
+
 const contractSelect = `SELECT c.*,
     a.name AS animal_name, a.chip_no AS animal_chip, a.color AS animal_color,
     a.birth_date AS animal_birth_date, a.sex AS animal_sex,
@@ -2046,18 +2175,7 @@ app.get('/api/contracts/:id', auth(), async (req, res) => {
         signed_at: s.signed_at,
         ip: s.ip,
       })),
-      charges: charges.map((c) => ({
-        id: String(c.id),
-        contract_id: String(c.contract_id),
-        client_id: String(c.client_id),
-        installment_no: Number(c.installment_no),
-        amount: Number(c.amount),
-        due_date: c.due_date,
-        payment_method: c.payment_method,
-        status: c.status,
-        paid_at: c.paid_at,
-        notes: c.notes,
-      })),
+      charges: charges.map((c) => mapChargeRow(c)),
       payoutRules: rules.map((x) => ({
         id: String(x.id),
         beneficiary_role: x.beneficiary_role,
@@ -2084,7 +2202,7 @@ app.post('/api/contracts', auth(['root', 'admin', 'user']), async (req, res) => 
       commissionTotalPct, commissionBuyerPct, commissionSellerPct,
       witness1Id, witness2Id, viaLabel,
     } = req.body;
-    const n = Math.max(1, Math.min(40, Number(installments) || 1));
+    const n = Math.max(1, Math.min(50, Number(installments) || 1));
     const total = Number(totalAmount);
     if (!animalId || !sellerId || !buyerId || !(total > 0) || !firstDueDate) {
       return res.status(400).json({ error: 'Animal, vendedor, comprador, valor e 1º vencimento são obrigatórios' });
@@ -2163,7 +2281,7 @@ app.post('/api/contracts', auth(['root', 'admin', 'user']), async (req, res) => 
   }
 });
 
-app.put('/api/contracts/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+app.put('/api/contracts/:id', auth(['root', 'admin']), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const id = Number(req.params.id);
@@ -2242,7 +2360,7 @@ app.put('/api/contracts/:id', auth(['root', 'admin', 'user']), async (req, res) 
     }
     if (b.firstDueDate != null) set('first_due_date', b.firstDueDate);
     if (b.installments != null) {
-      const n = Math.max(1, Math.min(40, Number(b.installments) || 1));
+      const n = Math.max(1, Math.min(50, Number(b.installments) || 1));
       set('installments', n);
     }
 
@@ -2257,7 +2375,7 @@ app.put('/api/contracts/:id', auth(['root', 'admin', 'user']), async (req, res) 
     const nextFirstDue = b.firstDueDate != null ? b.firstDueDate : existing.first_due_date;
     const nextInstallments =
       b.installments != null
-        ? Math.max(1, Math.min(40, Number(b.installments) || 1))
+        ? Math.max(1, Math.min(50, Number(b.installments) || 1))
         : Number(existing.installments);
 
     const existingFirstDue = existing.first_due_date
@@ -2907,7 +3025,7 @@ app.get('/api/contracts/:id/clicksign/signed-pdf', auth(['root', 'admin', 'user'
   }
 });
 
-app.post('/api/contracts/:id/clicksign/cancel', auth(['root', 'admin', 'user']), async (req, res) => {
+app.post('/api/contracts/:id/clicksign/cancel', auth(['root', 'admin']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const [rows] = await pool.execute(`${contractSelect} AND c.id = ?`, [id]);
@@ -2939,7 +3057,7 @@ app.post('/api/contracts/:id/clicksign/cancel', auth(['root', 'admin', 'user']),
   }
 });
 
-app.post('/api/contracts/:id/clicksign/notify', auth(['root', 'admin', 'user']), async (req, res) => {
+app.post('/api/contracts/:id/clicksign/notify', auth(['root', 'admin']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const [rows] = await pool.execute(`${contractSelect} AND c.id = ?`, [id]);
@@ -2960,7 +3078,7 @@ app.post('/api/contracts/:id/clicksign/notify', auth(['root', 'admin', 'user']),
   }
 });
 
-app.post('/api/contracts/:id/clicksign', auth(['root', 'admin', 'user']), async (req, res) => {
+app.post('/api/contracts/:id/clicksign', auth(['root', 'admin']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const [rows] = await pool.execute(`${contractSelect} AND c.id = ?`, [id]);
@@ -3078,64 +3196,64 @@ app.get('/api/charges', auth(), async (req, res) => {
       sql += ' AND ch.client_id = ?';
       params.push(Number(req.query.clientId));
     }
+    if (req.query.collector && ['assessoria', 'seller'].includes(String(req.query.collector))) {
+      sql += ' AND ch.collector = ?';
+      params.push(String(req.query.collector));
+    }
     sql += ' ORDER BY ch.due_date ASC, ch.installment_no ASC';
     const [rows] = await pool.execute(sql, params);
-    const today = new Date().toISOString().slice(0, 10);
-    res.json(
-      rows.map((c) => {
-        let status = c.status;
-        if (status === 'pendente' && c.due_date < today) status = 'atrasado';
-        return {
-          id: String(c.id),
-          contract_id: String(c.contract_id),
-          client_id: String(c.client_id),
-          client_name: c.client_name,
-          animal_name: c.animal_name,
-          installment_no: Number(c.installment_no),
-          amount: Number(c.amount),
-          due_date: c.due_date,
-          payment_method: c.payment_method,
-          status,
-          paid_at: c.paid_at,
-          notes: c.notes,
-        };
-      })
-    );
+    res.json(rows.map((c) => mapChargeRow(c)));
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao listar cobranças' });
   }
 });
 
-app.put('/api/charges/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+app.put('/api/charges/:id', auth(['root', 'admin']), async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { status, notes } = req.body;
-    if (!['pendente', 'pago', 'atrasado', 'cancelado'].includes(status)) {
-      return res.status(400).json({ error: 'Status inválido' });
+    const { status, collector, notes } = req.body;
+    const sets = [];
+    const params = [];
+
+    if (status !== undefined) {
+      if (!['pendente', 'pago', 'atrasado', 'cancelado'].includes(status)) {
+        return res.status(400).json({ error: 'Status inválido' });
+      }
+      sets.push('status=?', 'paid_at=?');
+      params.push(status, status === 'pago' ? new Date() : null);
     }
-    const paidAt = status === 'pago' ? new Date() : null;
-    await pool.execute('UPDATE charges SET status=?, paid_at=?, notes=? WHERE id=?', [
-      status,
-      paidAt,
-      notes || null,
-      id,
-    ]);
-    if (status === 'pago') {
-      await pool.execute(
-        `UPDATE payouts SET status = 'pendente' WHERE charge_id = ? AND status = 'aguardando'`,
-        [id]
-      );
-    } else if (status === 'pendente' || status === 'atrasado') {
-      await pool.execute(
-        `UPDATE payouts SET status = 'aguardando', paid_at = NULL WHERE charge_id = ? AND status IN ('pendente','aguardando')`,
-        [id]
-      );
-    } else if (status === 'cancelado') {
-      await pool.execute(
-        `UPDATE payouts SET status = 'cancelado' WHERE charge_id = ? AND status != 'pago'`,
-        [id]
-      );
+    if (collector !== undefined) {
+      sets.push('collector=?');
+      params.push(normalizeCollector(collector));
+    }
+    if (notes !== undefined) {
+      sets.push('notes=?');
+      params.push(notes || null);
+    }
+    if (!sets.length) {
+      return res.status(400).json({ error: 'Nenhum campo para atualizar' });
+    }
+    params.push(id);
+    await pool.execute(`UPDATE charges SET ${sets.join(', ')} WHERE id=?`, params);
+
+    if (status !== undefined) {
+      if (status === 'pago') {
+        await pool.execute(
+          `UPDATE payouts SET status = 'pendente' WHERE charge_id = ? AND status = 'aguardando'`,
+          [id]
+        );
+      } else if (status === 'pendente' || status === 'atrasado') {
+        await pool.execute(
+          `UPDATE payouts SET status = 'aguardando', paid_at = NULL WHERE charge_id = ? AND status IN ('pendente','aguardando')`,
+          [id]
+        );
+      } else if (status === 'cancelado') {
+        await pool.execute(
+          `UPDATE payouts SET status = 'cancelado' WHERE charge_id = ? AND status != 'pago'`,
+          [id]
+        );
+      }
     }
     res.json({ success: true });
   } catch (error) {
@@ -3204,7 +3322,7 @@ app.post('/api/auctions', auth(['root', 'admin', 'user']), async (req, res) => {
   }
 });
 
-app.put('/api/auctions/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+app.put('/api/auctions/:id', auth(['root', 'admin']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { name, auctionDate, location, organizer, status, notes } = req.body;
@@ -3310,7 +3428,7 @@ app.post('/api/auction-lots', auth(['root', 'admin', 'user']), async (req, res) 
   }
 });
 
-app.put('/api/auction-lots/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+app.put('/api/auction-lots/:id', auth(['root', 'admin']), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const id = Number(req.params.id);
@@ -3407,7 +3525,7 @@ app.get('/api/payouts', auth(), async (req, res) => {
   }
 });
 
-app.put('/api/payouts/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+app.put('/api/payouts/:id', auth(['root', 'admin']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { status, notes } = req.body;
@@ -3492,7 +3610,7 @@ app.post('/api/contract-templates', auth(['root', 'admin', 'user']), async (req,
   }
 });
 
-app.put('/api/contract-templates/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+app.put('/api/contract-templates/:id', auth(['root', 'admin']), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const id = Number(req.params.id);
@@ -3619,6 +3737,40 @@ app.post('/api/catalogs', auth(['root', 'admin', 'user']), async (req, res) => {
       return res.status(409).json({ error: 'Este item já existe no catálogo' });
     }
     res.status(500).json({ error: 'Erro ao criar item do catálogo' });
+  }
+});
+
+app.get('/api/audit-logs', auth(['root', 'admin']), async (req, res) => {
+  try {
+    let sql = 'SELECT * FROM audit_logs WHERE 1=1';
+    const params = [];
+    if (req.query.userId) {
+      sql += ' AND user_id = ?';
+      params.push(Number(req.query.userId));
+    }
+    if (req.query.action) {
+      sql += ' AND action = ?';
+      params.push(String(req.query.action));
+    }
+    if (req.query.resource) {
+      sql += ' AND resource = ?';
+      params.push(String(req.query.resource));
+    }
+    if (req.query.from) {
+      sql += ' AND created_at >= ?';
+      params.push(`${String(req.query.from)} 00:00:00`);
+    }
+    if (req.query.to) {
+      sql += ' AND created_at <= ?';
+      params.push(`${String(req.query.to)} 23:59:59`);
+    }
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
+    sql += ` ORDER BY created_at DESC LIMIT ${limit}`;
+    const [rows] = await pool.execute(sql, params);
+    res.json(rows.map(mapAuditRow));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao listar auditoria' });
   }
 });
 

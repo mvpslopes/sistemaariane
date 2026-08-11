@@ -78,6 +78,14 @@ async function request<T>(
 
 export type Role = 'root' | 'admin' | 'user' | 'cliente';
 
+export interface UserPermissions {
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+  canManageUsers: boolean;
+  canViewAudit: boolean;
+}
+
 export interface AuthUser {
   id: string;
   username: string;
@@ -88,6 +96,21 @@ export interface AuthUser {
   clientId: string | null;
   active?: boolean;
   mustChangePassword?: boolean;
+  permissions?: UserPermissions;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  createdAt: string;
+  userId: string | null;
+  username: string | null;
+  role: string | null;
+  action: string;
+  resource: string;
+  resourceId: string | null;
+  summary: string | null;
+  ip: string | null;
+  success: boolean;
 }
 
 export interface Client {
@@ -184,6 +207,7 @@ export type SaleType = string;
 export type PaymentMethod = 'pix' | 'boleto' | 'transferencia' | 'outro';
 export type ContractStatus = 'rascunho' | 'aguardando_assinatura' | 'ativo' | 'concluido' | 'cancelado';
 export type ChargeStatus = 'pendente' | 'pago' | 'atrasado' | 'cancelado';
+export type ChargeCollector = 'assessoria' | 'seller';
 export type PayoutStatus = 'aguardando' | 'pendente' | 'pago' | 'cancelado';
 export type PayoutRole = 'assessoria' | 'seller' | 'assessor' | 'outro';
 export type AuctionStatus = 'rascunho' | 'agendado' | 'em_andamento' | 'encerrado' | 'cancelado';
@@ -357,6 +381,7 @@ export interface Charge {
   amount: number;
   due_date: string;
   payment_method: PaymentMethod;
+  collector?: ChargeCollector;
   status: ChargeStatus;
   paid_at: string | null;
   notes: string | null;
@@ -683,6 +708,12 @@ export async function updateUser(id: string, data: Record<string, unknown>) {
   });
 }
 
+export async function deleteUser(id: string) {
+  return request<{ success: boolean; message?: string }>(`/users/${id}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function getContracts(filters?: { animalId?: string; status?: string }) {
   const params = new URLSearchParams();
   if (filters?.animalId) params.set('animalId', filters.animalId);
@@ -780,20 +811,48 @@ export async function notifyClicksign(id: string, signerId?: string | null) {
   });
 }
 
-export async function getCharges(filters?: { status?: string; contractId?: string; clientId?: string }) {
+export async function getCharges(filters?: {
+  status?: string;
+  contractId?: string;
+  clientId?: string;
+  collector?: ChargeCollector;
+}) {
   const params = new URLSearchParams();
   if (filters?.status) params.set('status', filters.status);
   if (filters?.contractId) params.set('contractId', filters.contractId);
   if (filters?.clientId) params.set('clientId', filters.clientId);
+  if (filters?.collector) params.set('collector', filters.collector);
   const qs = params.toString() ? `?${params}` : '';
   return request<Charge[]>(`/charges${qs}`);
 }
 
-export async function updateCharge(id: string, data: { status: ChargeStatus; notes?: string }) {
+export async function updateCharge(
+  id: string,
+  data: { status?: ChargeStatus; collector?: ChargeCollector; notes?: string }
+) {
   return request<{ success: boolean }>(`/charges/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });
+}
+
+export async function getAuditLogs(filters?: {
+  userId?: string;
+  action?: string;
+  resource?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (filters?.userId) params.set('userId', filters.userId);
+  if (filters?.action) params.set('action', filters.action);
+  if (filters?.resource) params.set('resource', filters.resource);
+  if (filters?.from) params.set('from', filters.from);
+  if (filters?.to) params.set('to', filters.to);
+  if (filters?.limit) params.set('limit', String(filters.limit));
+  const qs = params.toString() ? `?${params}` : '';
+  return request<AuditLogEntry[]>(`/audit-logs${qs}`);
 }
 
 export interface CatalogItem {

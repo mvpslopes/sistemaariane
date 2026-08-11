@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search } from 'lucide-react';
+import { Search, Trash2 } from 'lucide-react';
 import {
   createUser,
+  deleteUser,
   getClients,
   getUsers,
   updateUser,
@@ -71,6 +72,7 @@ export default function UsersPage() {
     active: true,
   });
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -163,6 +165,33 @@ export default function UsersPage() {
       toastError(err.message || 'Erro ao salvar usuário');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const canDelete = (u: AuthUser) => {
+    if (me?.id === u.id) return false;
+    if (me?.role === 'admin' && (u.role === 'root' || u.role === 'admin')) return false;
+    return true;
+  };
+
+  const onDelete = async (u: AuthUser) => {
+    if (!canDelete(u)) return;
+    if (
+      !confirm(
+        `Excluir o usuário "${u.name}" (@${u.username})?\n\nEsta ação não pode ser desfeita.`
+      )
+    ) {
+      return;
+    }
+    setDeletingId(u.id);
+    try {
+      await deleteUser(u.id);
+      success('Usuário excluído');
+      await load();
+    } catch (err: any) {
+      toastError(err.message || 'Erro ao excluir usuário');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -431,9 +460,27 @@ export default function UsersPage() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <button type="button" onClick={() => openEdit(u)} className="rounded-lg px-2 py-1 text-brand-brown hover:bg-brand-beige/50 hover:underline">
-                    Editar
-                  </button>
+                  <div className="inline-flex items-center gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => openEdit(u)}
+                      className="rounded-lg px-2 py-1 text-brand-brown hover:bg-brand-beige/50 hover:underline"
+                    >
+                      Editar
+                    </button>
+                    {canDelete(u) && (
+                      <button
+                        type="button"
+                        onClick={() => onDelete(u)}
+                        disabled={deletingId === u.id}
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-50"
+                        title="Excluir"
+                        aria-label="Excluir"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

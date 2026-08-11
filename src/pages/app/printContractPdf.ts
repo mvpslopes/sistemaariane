@@ -163,13 +163,6 @@ export function buildContractHtml(contract: Contract): string {
     ? `${contract.auction_name}${contract.auction_date ? ` — ${fmtDate(contract.auction_date)}` : ''}`
     : 'Negociação / Assessoria';
 
-  const installmentHint =
-    contract.charges && contract.charges.length > 0
-      ? `${money(contract.total_amount)} em ${contract.installments} parcela(s) de ${money(
-          contract.charges[0].amount
-        )}`
-      : `${money(contract.total_amount)} em ${contract.installments} parcela(s)`;
-
   const schedule =
     contract.charges && contract.charges.length > 0
       ? (() => {
@@ -568,7 +561,7 @@ export function buildContractHtml(contract: Contract): string {
 
     <div class="section">
       <div class="section-h">Cronograma de Pagamento das Parcelas</div>
-      <div class="pay-summary">Forma de Pagamento: ${esc(installmentHint)}</div>
+      <div class="pay-summary">Forma de pagamento discriminada no cronograma de parcelas abaixo.</div>
       ${schedule}
     </div>
 

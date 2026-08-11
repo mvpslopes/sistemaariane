@@ -150,6 +150,96 @@ function require_auth(string $secret, array $roles = []): array {
     return $user;
 }
 
+function can_create(string $role): bool {
+    return in_array($role, ['root', 'admin', 'user'], true);
+}
+
+function can_update(string $role): bool {
+    return in_array($role, ['root', 'admin'], true);
+}
+
+function can_delete(string $role): bool {
+    return in_array($role, ['root', 'admin'], true);
+}
+
+function can_manage_users(string $role): bool {
+    return in_array($role, ['root', 'admin'], true);
+}
+
+function can_view_audit(string $role): bool {
+    return in_array($role, ['root', 'admin'], true);
+}
+
+function permissions_for_role(string $role): array {
+    return [
+        'canCreate' => can_create($role),
+        'canUpdate' => can_update($role),
+        'canDelete' => can_delete($role),
+        'canManageUsers' => can_manage_users($role),
+        'canViewAudit' => can_view_audit($role),
+    ];
+}
+
+function require_create(string $secret): array {
+    return require_auth($secret, ['root', 'admin', 'user']);
+}
+
+function require_update(string $secret): array {
+    return require_auth($secret, ['root', 'admin']);
+}
+
+function require_delete(string $secret): array {
+    return require_auth($secret, ['root', 'admin']);
+}
+
+function audit_log(
+    PDO $pdo,
+    ?array $auth,
+    string $action,
+    string $resource,
+    ?string $resourceId = null,
+    ?string $summary = null,
+    bool $success = true,
+    ?array $meta = null
+): void {
+    try {
+        $pdo->prepare(
+            'INSERT INTO audit_logs (user_id, username, role, action, resource, resource_id, summary, ip, user_agent, success, meta)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([
+            $auth ? ($auth['id'] ?? null) : null,
+            $auth ? ($auth['username'] ?? null) : null,
+            $auth ? ($auth['role'] ?? null) : null,
+            $action,
+            $resource,
+            $resourceId,
+            $summary,
+            client_ip(),
+            substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500),
+            $success ? 1 : 0,
+            $meta ? json_encode($meta, JSON_UNESCAPED_UNICODE) : null,
+        ]);
+    } catch (Throwable $e) {
+        // Não interrompe a operação principal
+    }
+}
+
+function map_audit_row(array $r): array {
+    return [
+        'id' => (string)$r['id'],
+        'createdAt' => $r['created_at'],
+        'userId' => $r['user_id'] ? (string)$r['user_id'] : null,
+        'username' => $r['username'],
+        'role' => $r['role'],
+        'action' => $r['action'],
+        'resource' => $r['resource'],
+        'resourceId' => $r['resource_id'],
+        'summary' => $r['summary'],
+        'ip' => $r['ip'],
+        'success' => (bool)$r['success'],
+    ];
+}
+
 function map_user(array $row): array {
     return [
         'id' => (string)$row['id'],
@@ -161,6 +251,7 @@ function map_user(array $row): array {
         'clientId' => $row['client_id'] ? (string)$row['client_id'] : null,
         'active' => (bool)$row['active'],
         'mustChangePassword' => (bool)$row['must_change_password'],
+        'permissions' => permissions_for_role($row['role']),
     ];
 }
 
@@ -317,6 +408,7 @@ if ($resource === 'login' && $method === 'POST') {
     $stmt->execute([$login, strtolower($login)]);
     $user = $stmt->fetch();
     if (!$user || !password_verify($password, $user['password_hash'])) {
+        audit_log($pdo, null, 'login_failed', 'auth', null, "Tentativa: {$login}", false);
         json_out(['error' => 'Usuário ou senha incorretos'], 401);
     }
 
@@ -327,6 +419,13 @@ if ($resource === 'login' && $method === 'POST') {
         'clientId' => $user['client_id'] ? (int)$user['client_id'] : null,
     ], $config['jwt_secret']);
 
+    $authUser = [
+        'id' => (int)$user['id'],
+        'username' => $user['username'],
+        'role' => $user['role'],
+    ];
+    audit_log($pdo, $authUser, 'login', 'auth', (string)$user['id'], 'Login realizado');
+
     json_out(['success' => true, 'token' => $token, 'user' => map_user($user)]);
 }
 
@@ -336,7 +435,7 @@ if ($resource === 'upload' && $method === 'POST') {
     if ($kind === 'avatar') {
         $auth = require_auth($config['jwt_secret']);
     } else {
-        $auth = require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $auth = require_create($config['jwt_secret']);
         if (!in_array($kind, ['animal', 'person-doc'], true)) {
             $kind = 'animal';
         }
@@ -572,18 +671,18 @@ if ($resource === 'dashboard' && $method === 'GET') {
     $chargesPending = (int)$pdo->query(
         "SELECT COUNT(*) AS t FROM charges ch
          INNER JOIN contracts c ON c.id = ch.contract_id
-         WHERE ch.status = 'pendente' AND c.status != 'cancelado'"
+         WHERE ch.collector = 'assessoria' AND ch.status = 'pendente' AND c.status != 'cancelado'"
     )->fetch()['t'];
     $chargesOverdue = (int)$pdo->query(
         "SELECT COUNT(*) AS t FROM charges ch
          INNER JOIN contracts c ON c.id = ch.contract_id
-         WHERE c.status != 'cancelado'
+         WHERE ch.collector = 'assessoria' AND c.status != 'cancelado'
            AND (ch.status = 'atrasado' OR (ch.status = 'pendente' AND ch.due_date < CURDATE()))"
     )->fetch()['t'];
     $chargesPaid = (int)$pdo->query(
         "SELECT COUNT(*) AS t FROM charges ch
          INNER JOIN contracts c ON c.id = ch.contract_id
-         WHERE ch.status = 'pago' AND c.status != 'cancelado'"
+         WHERE ch.collector = 'assessoria' AND ch.status = 'pago' AND c.status != 'cancelado'"
     )->fetch()['t'];
     $users = in_array($auth['role'], ['root', 'admin'], true)
         ? (int)$pdo->query('SELECT COUNT(*) AS t FROM users WHERE active = 1')->fetch()['t']
@@ -694,6 +793,10 @@ function build_equal_schedule(float $total, int $n, string $firstDue): array {
     return $rows;
 }
 
+function normalize_collector(?string $value): string {
+    return $value === 'seller' ? 'seller' : 'assessoria';
+}
+
 /** Cronograma manual vindo do formulário. Retorna null quando não foi informado. */
 function normalize_schedule($raw, int $n, float $total): ?array {
     if (!is_array($raw) || !count($raw)) return null;
@@ -706,6 +809,7 @@ function normalize_schedule($raw, int $n, float $total): ?array {
             'order' => (int)($r['installmentNo'] ?? $i + 1),
             'amount' => round((float)($r['amount'] ?? 0), 2),
             'dueDate' => substr((string)($r['dueDate'] ?? ''), 0, 10),
+            'collector' => normalize_collector($r['collector'] ?? null),
         ];
     }
     usort($rows, fn($a, $b) => $a['order'] <=> $b['order']);
@@ -720,18 +824,43 @@ function normalize_schedule($raw, int $n, float $total): ?array {
     if (abs($sum - $total) > 0.02) {
         throw new InvalidArgumentException('A soma das parcelas deve ser igual ao valor total do contrato');
     }
-    return array_map(fn($r) => ['amount' => $r['amount'], 'dueDate' => $r['dueDate']], $rows);
+    return array_map(fn($r) => [
+        'amount' => $r['amount'],
+        'dueDate' => $r['dueDate'],
+        'collector' => $r['collector'],
+    ], $rows);
+}
+
+function map_charge_row(array $c, ?string $today = null): array {
+    $today = $today ?? date('Y-m-d');
+    $status = $c['status'];
+    if ($status === 'pendente' && $c['due_date'] < $today) $status = 'atrasado';
+    return [
+        'id' => (string)$c['id'],
+        'contract_id' => (string)$c['contract_id'],
+        'client_id' => (string)$c['client_id'],
+        'client_name' => $c['client_name'] ?? null,
+        'animal_name' => $c['animal_name'] ?? null,
+        'installment_no' => (int)$c['installment_no'],
+        'amount' => (float)$c['amount'],
+        'due_date' => $c['due_date'],
+        'payment_method' => $c['payment_method'],
+        'collector' => normalize_collector($c['collector'] ?? null),
+        'status' => $status,
+        'paid_at' => $c['paid_at'],
+        'notes' => $c['notes'],
+    ];
 }
 
 function generate_charges(PDO $pdo, int $contractId, int $buyerId, float $total, int $n, string $firstDue, string $method, ?array $schedule = null): void {
-    $n = max(1, min(40, $n));
+    $n = max(1, min(50, $n));
     $rows = $schedule ?? build_equal_schedule($total, $n, $firstDue);
     // Repasses dependem das cobranças — remove antes para evitar falha de FK
     $pdo->prepare('DELETE FROM payouts WHERE contract_id = ?')->execute([$contractId]);
     $pdo->prepare('DELETE FROM charges WHERE contract_id = ?')->execute([$contractId]);
     $ins = $pdo->prepare(
-        'INSERT INTO charges (contract_id, client_id, installment_no, amount, due_date, payment_method, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)'
+        'INSERT INTO charges (contract_id, client_id, installment_no, amount, due_date, payment_method, collector, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     );
     foreach (array_values($rows) as $i => $row) {
         $ins->execute([
@@ -741,6 +870,7 @@ function generate_charges(PDO $pdo, int $contractId, int $buyerId, float $total,
             $row['amount'],
             $row['dueDate'],
             $method,
+            normalize_collector($row['collector'] ?? null),
             'pendente',
         ]);
     }
@@ -1696,12 +1826,12 @@ if ($resource === 'clients') {
             }, $stmt->fetchAll()));
         }
         if ($method === 'POST' && !$subId) {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_create($config['jwt_secret']);
             $docType = $body['docType'] ?? 'outro';
             $allowed = ['rg','identidade','cnh','comprovante_residencia','selfie','outro'];
             if (!in_array($docType, $allowed, true)) json_out(['error' => 'Tipo de documento inválido'], 400);
             if (empty($body['fileUrl'])) json_out(['error' => 'Arquivo é obrigatório'], 400);
-            $authW = require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            $authW = require_create($config['jwt_secret']);
             $pdo->prepare(
                 'INSERT INTO client_documents (client_id, doc_type, file_url, file_name, notes, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)'
             )->execute([
@@ -1710,7 +1840,7 @@ if ($resource === 'clients') {
             json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
         }
         if ($method === 'DELETE' && $subId) {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_delete($config['jwt_secret']);
             $stmt = $pdo->prepare('DELETE FROM client_documents WHERE id = ? AND client_id = ?');
             $stmt->execute([(int)$subId, $cid]);
             if ($stmt->rowCount() === 0) json_out(['error' => 'Documento não encontrado'], 404);
@@ -1735,7 +1865,7 @@ if ($resource === 'clients') {
             }, $stmt->fetchAll()));
         }
         if ($method === 'POST' && !$subId) {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_create($config['jwt_secret']);
             $name = trim($body['name'] ?? '');
             if ($name === '') json_out(['error' => 'Nome da propriedade é obrigatório'], 400);
             $pdo->prepare(
@@ -1750,7 +1880,7 @@ if ($resource === 'clients') {
             json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
         }
         if ($method === 'PUT' && $subId) {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_update($config['jwt_secret']);
             $name = trim($body['name'] ?? '');
             if ($name === '') json_out(['error' => 'Nome da propriedade é obrigatório'], 400);
             $pdo->prepare(
@@ -1765,7 +1895,7 @@ if ($resource === 'clients') {
             json_out(['success' => true]);
         }
         if ($method === 'DELETE' && $subId) {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_delete($config['jwt_secret']);
             $stmt = $pdo->prepare('DELETE FROM client_properties WHERE id = ? AND client_id = ?');
             $stmt->execute([(int)$subId, $cid]);
             if ($stmt->rowCount() === 0) json_out(['error' => 'Propriedade não encontrada'], 404);
@@ -1790,7 +1920,7 @@ if ($resource === 'clients') {
             }, $stmt->fetchAll()));
         }
         if ($method === 'POST' && !$subId) {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_create($config['jwt_secret']);
             $bank = trim($body['bank_name'] ?? '');
             if ($bank === '') json_out(['error' => 'Banco é obrigatório'], 400);
             $type = $body['account_type'] ?? 'corrente';
@@ -1805,7 +1935,7 @@ if ($resource === 'clients') {
             json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
         }
         if ($method === 'PUT' && $subId) {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_update($config['jwt_secret']);
             $bank = trim($body['bank_name'] ?? '');
             if ($bank === '') json_out(['error' => 'Banco é obrigatório'], 400);
             $type = $body['account_type'] ?? 'corrente';
@@ -1820,7 +1950,7 @@ if ($resource === 'clients') {
             json_out(['success' => true]);
         }
         if ($method === 'DELETE' && $subId) {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_delete($config['jwt_secret']);
             $stmt = $pdo->prepare('DELETE FROM client_bank_accounts WHERE id = ? AND client_id = ?');
             $stmt->execute([(int)$subId, $cid]);
             if ($stmt->rowCount() === 0) json_out(['error' => 'Conta não encontrada'], 404);
@@ -1844,7 +1974,7 @@ if ($resource === 'clients') {
             }, $stmt->fetchAll()));
         }
         if ($method === 'POST' && !$subId) {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_create($config['jwt_secret']);
             $name = trim($body['name'] ?? '');
             if ($name === '') json_out(['error' => 'Nome do contato é obrigatório'], 400);
             $pdo->prepare(
@@ -1855,7 +1985,7 @@ if ($resource === 'clients') {
             json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
         }
         if ($method === 'PUT' && $subId) {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_update($config['jwt_secret']);
             $name = trim($body['name'] ?? '');
             if ($name === '') json_out(['error' => 'Nome do contato é obrigatório'], 400);
             $pdo->prepare(
@@ -1867,7 +1997,7 @@ if ($resource === 'clients') {
             json_out(['success' => true]);
         }
         if ($method === 'DELETE' && $subId) {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_delete($config['jwt_secret']);
             $stmt = $pdo->prepare('DELETE FROM client_contacts WHERE id = ? AND client_id = ?');
             $stmt->execute([(int)$subId, $cid]);
             if ($stmt->rowCount() === 0) json_out(['error' => 'Contato não encontrado'], 404);
@@ -1888,7 +2018,7 @@ if ($resource === 'clients') {
         }
 
         if ($method === 'POST' && !$subId) {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_create($config['jwt_secret']);
             $stmt = $pdo->prepare('SELECT * FROM clients WHERE id = ?');
             $stmt->execute([$cid]);
             $client = $stmt->fetch();
@@ -1926,7 +2056,7 @@ if ($resource === 'clients') {
         }
 
         if ($method === 'PUT' && $subId === 'password') {
-            require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+            require_update($config['jwt_secret']);
             $password = (string)($body['password'] ?? '');
             if (strlen($password) < 6) json_out(['error' => 'A senha deve ter pelo menos 6 caracteres'], 400);
             $user = get_client_access_user($pdo, $cid);
@@ -1951,7 +2081,7 @@ if ($resource === 'clients') {
     }
 
     if ($method === 'POST' && !$id) {
-        $auth = require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $auth = require_create($config['jwt_secret']);
         $name = trim($body['name'] ?? '');
         $requiredError = validate_required_client($body);
         if ($requiredError) json_out(['error' => $requiredError], 400);
@@ -1992,7 +2122,9 @@ if ($resource === 'clients') {
                 !empty($body['is_avalista']) ? 1 : 0,
                 $auth['id'],
             ]);
-            json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
+            $newId = (string)$pdo->lastInsertId();
+            audit_log($pdo, $auth, 'create', 'clients', $newId, "Pessoa criada: {$name}");
+            json_out(['success' => true, 'id' => $newId]);
         } catch (PDOException $e) {
             if ($e->getCode() == 23000) json_out(['error' => 'Documento já cadastrado'], 409);
             json_out(['error' => 'Erro ao criar cliente'], 500);
@@ -2000,7 +2132,7 @@ if ($resource === 'clients') {
     }
 
     if ($method === 'PUT' && $id && !$action) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $auth = require_update($config['jwt_secret']);
         $name = trim($body['name'] ?? '');
         $requiredError = validate_required_client($body);
         if ($requiredError) json_out(['error' => $requiredError], 400);
@@ -2040,6 +2172,7 @@ if ($resource === 'clients') {
                 !empty($body['is_avalista']) ? 1 : 0,
                 (int)$id,
             ]);
+            audit_log($pdo, $auth, 'update', 'clients', (string)$id, "Pessoa atualizada: {$name}");
             json_out(['success' => true]);
         } catch (PDOException $e) {
             if ($e->getCode() == 23000) json_out(['error' => 'Documento já cadastrado'], 409);
@@ -2048,7 +2181,7 @@ if ($resource === 'clients') {
     }
 
     if ($method === 'DELETE' && $id && !$action) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $auth = require_delete($config['jwt_secret']);
         $clientId = (int)$id;
         try {
             $pdo->beginTransaction();
@@ -2060,6 +2193,7 @@ if ($resource === 'clients') {
                 json_out(['error' => 'Cliente não encontrado'], 404);
             }
             $pdo->commit();
+            audit_log($pdo, $auth, 'delete', 'clients', (string)$clientId, 'Pessoa excluída');
             json_out(['success' => true, 'message' => 'Cliente excluído']);
         } catch (PDOException $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
@@ -2179,7 +2313,7 @@ if ($resource === 'animals') {
     }
 
     if ($method === 'POST') {
-        $auth = require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $auth = require_create($config['jwt_secret']);
         $name = trim($body['name'] ?? '');
         if ($name === '') json_out(['error' => 'Nome é obrigatório'], 400);
         try {
@@ -2217,7 +2351,7 @@ if ($resource === 'animals') {
     }
 
     if ($method === 'PUT' && $id) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        require_update($config['jwt_secret']);
         $name = trim($body['name'] ?? '');
         if ($name === '') json_out(['error' => 'Nome é obrigatório'], 400);
         try {
@@ -2257,7 +2391,7 @@ if ($resource === 'animals') {
     }
 
     if ($method === 'DELETE' && $id) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        require_delete($config['jwt_secret']);
         $animalId = (int)$id;
         try {
             $stmt = $pdo->prepare('SELECT photo_url FROM animals WHERE id = ?');
@@ -2376,6 +2510,22 @@ if ($resource === 'users') {
             json_out(['error' => 'Erro ao atualizar usuário'], 500);
         }
     }
+
+    if ($method === 'DELETE' && $id) {
+        $auth = require_auth($config['jwt_secret'], ['root', 'admin']);
+        $stmt = $pdo->prepare('SELECT id, role, username, name FROM users WHERE id = ?');
+        $stmt->execute([(int)$id]);
+        $target = $stmt->fetch();
+        if (!$target) json_out(['error' => 'Usuário não encontrado'], 404);
+        if ((int)$target['id'] === (int)$auth['id']) {
+            json_out(['error' => 'Você não pode excluir o próprio usuário'], 403);
+        }
+        if ($auth['role'] === 'admin' && in_array($target['role'], ['root', 'admin'], true)) {
+            json_out(['error' => 'Sem permissão para excluir este usuário'], 403);
+        }
+        $pdo->prepare('DELETE FROM users WHERE id = ?')->execute([(int)$id]);
+        json_out(['success' => true, 'message' => 'Usuário excluído']);
+    }
 }
 
 // Contracts
@@ -2471,20 +2621,7 @@ if ($resource === 'contracts') {
         }, $sig->fetchAll());
         $ch = $pdo->prepare('SELECT * FROM charges WHERE contract_id = ? ORDER BY installment_no ASC');
         $ch->execute([(int)$id]);
-        $charges = array_map(function ($c) {
-            return [
-                'id' => (string)$c['id'],
-                'contract_id' => (string)$c['contract_id'],
-                'client_id' => (string)$c['client_id'],
-                'installment_no' => (int)$c['installment_no'],
-                'amount' => (float)$c['amount'],
-                'due_date' => $c['due_date'],
-                'payment_method' => $c['payment_method'],
-                'status' => $c['status'],
-                'paid_at' => $c['paid_at'],
-                'notes' => $c['notes'],
-            ];
-        }, $ch->fetchAll());
+        $charges = array_map('map_charge_row', $ch->fetchAll());
         $out = map_contract_row($r);
         $out['signatures'] = $signatures;
         $out['charges'] = $charges;
@@ -2508,7 +2645,7 @@ if ($resource === 'contracts') {
     }
 
     if ($method === 'POST' && !$id) {
-        $auth = require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $auth = require_create($config['jwt_secret']);
         $animalId = (int)($body['animalId'] ?? 0);
         $sellerId = (int)($body['sellerId'] ?? 0);
         $buyerId = (int)($body['buyerId'] ?? 0);
@@ -2529,7 +2666,7 @@ if ($resource === 'contracts') {
         if (!in_array($methodPay, ['pix', 'boleto', 'transferencia', 'outro'], true)) {
             json_out(['error' => 'Forma de pagamento inválida'], 400);
         }
-        $n = max(1, min(40, $n));
+        $n = max(1, min(50, $n));
         $sharePct = isset($body['sharePct']) ? (float)$body['sharePct'] : (float)($sharePct ?? 0);
         if (!$sharePct || $sharePct <= 0 || $sharePct > 100) {
             json_out(['error' => 'Informe o percentual de cotas (1–100)'], 400);
@@ -2604,7 +2741,7 @@ if ($resource === 'contracts') {
     }
 
     if ($method === 'PUT' && $id && !$action) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        require_update($config['jwt_secret']);
         $stmt = $pdo->prepare('SELECT * FROM contracts WHERE id = ?');
         $stmt->execute([(int)$id]);
         $existing = $stmt->fetch();
@@ -2678,7 +2815,7 @@ if ($resource === 'contracts') {
         }
         if (!empty($body['firstDueDate'])) $set('first_due_date', $body['firstDueDate']);
         if (array_key_exists('installments', $body) && $body['installments'] !== null) {
-            $set('installments', max(1, min(40, (int)$body['installments'])));
+            $set('installments', max(1, min(50, (int)$body['installments'])));
         }
 
         if (!$fields) json_out(['error' => 'Nada para atualizar'], 400);
@@ -2689,7 +2826,7 @@ if ($resource === 'contracts') {
         $nextMethod = !empty($body['paymentMethod']) ? $body['paymentMethod'] : $existing['payment_method'];
         $nextFirstDue = !empty($body['firstDueDate']) ? $body['firstDueDate'] : $existing['first_due_date'];
         $nextInstallments = array_key_exists('installments', $body) && $body['installments'] !== null
-            ? max(1, min(40, (int)$body['installments']))
+            ? max(1, min(50, (int)$body['installments']))
             : (int)$existing['installments'];
 
         $existingFirstDue = substr((string)$existing['first_due_date'], 0, 10);
@@ -2828,7 +2965,7 @@ if ($resource === 'contracts') {
     }
 
     if ($method === 'POST' && $id && $action === 'clicksign' && $subId === 'cancel') {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        require_update($config['jwt_secret']);
         $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
         $stmt->execute([(int)$id]);
         $r = $stmt->fetch();
@@ -2860,7 +2997,7 @@ if ($resource === 'contracts') {
     }
 
     if ($method === 'POST' && $id && $action === 'clicksign' && $subId === 'notify') {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        require_update($config['jwt_secret']);
         $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
         $stmt->execute([(int)$id]);
         $r = $stmt->fetch();
@@ -2882,7 +3019,7 @@ if ($resource === 'contracts') {
     }
 
     if ($method === 'POST' && $id && $action === 'clicksign' && !$subId) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        require_update($config['jwt_secret']);
         $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
         $stmt->execute([(int)$id]);
         $r = $stmt->fetch();
@@ -3011,53 +3148,58 @@ if ($resource === 'charges') {
             $sql .= ' AND ch.client_id = ?';
             $params[] = (int)$_GET['clientId'];
         }
+        if (!empty($_GET['collector']) && in_array($_GET['collector'], ['assessoria', 'seller'], true)) {
+            $sql .= ' AND ch.collector = ?';
+            $params[] = $_GET['collector'];
+        }
         $sql .= ' ORDER BY ch.due_date ASC, ch.installment_no ASC';
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
         $today = date('Y-m-d');
-        $rows = array_map(function ($c) use ($today) {
-            $status = $c['status'];
-            if ($status === 'pendente' && $c['due_date'] < $today) $status = 'atrasado';
-            return [
-                'id' => (string)$c['id'],
-                'contract_id' => (string)$c['contract_id'],
-                'client_id' => (string)$c['client_id'],
-                'client_name' => $c['client_name'],
-                'animal_name' => $c['animal_name'],
-                'installment_no' => (int)$c['installment_no'],
-                'amount' => (float)$c['amount'],
-                'due_date' => $c['due_date'],
-                'payment_method' => $c['payment_method'],
-                'status' => $status,
-                'paid_at' => $c['paid_at'],
-                'notes' => $c['notes'],
-            ];
-        }, $stmt->fetchAll());
+        $rows = array_map(fn($c) => map_charge_row($c, $today), $stmt->fetchAll());
         json_out($rows);
     }
 
     if ($method === 'PUT' && $id) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
-        $status = $body['status'] ?? '';
-        if (!in_array($status, ['pendente', 'pago', 'atrasado', 'cancelado'], true)) {
-            json_out(['error' => 'Status inválido'], 400);
+        require_update($config['jwt_secret']);
+        $sets = [];
+        $params = [];
+        if (array_key_exists('status', $body)) {
+            $status = $body['status'] ?? '';
+            if (!in_array($status, ['pendente', 'pago', 'atrasado', 'cancelado'], true)) {
+                json_out(['error' => 'Status inválido'], 400);
+            }
+            $sets[] = 'status=?';
+            $params[] = $status;
+            $sets[] = 'paid_at=?';
+            $params[] = $status === 'pago' ? date('Y-m-d H:i:s') : null;
         }
-        $paidAt = $status === 'pago' ? date('Y-m-d H:i:s') : null;
-        $pdo->prepare('UPDATE charges SET status=?, paid_at=?, notes=? WHERE id=?')->execute([
-            $status,
-            $paidAt,
-            $body['notes'] ?? null,
-            (int)$id,
-        ]);
-        if ($status === 'pago') {
-            $pdo->prepare("UPDATE payouts SET status = 'pendente' WHERE charge_id = ? AND status = 'aguardando'")
-                ->execute([(int)$id]);
-        } elseif ($status === 'pendente' || $status === 'atrasado') {
-            $pdo->prepare("UPDATE payouts SET status = 'aguardando', paid_at = NULL WHERE charge_id = ? AND status IN ('pendente','aguardando')")
-                ->execute([(int)$id]);
-        } elseif ($status === 'cancelado') {
-            $pdo->prepare("UPDATE payouts SET status = 'cancelado' WHERE charge_id = ? AND status != 'pago'")
-                ->execute([(int)$id]);
+        if (array_key_exists('collector', $body)) {
+            $sets[] = 'collector=?';
+            $params[] = normalize_collector($body['collector'] ?? null);
+        }
+        if (array_key_exists('notes', $body)) {
+            $sets[] = 'notes=?';
+            $params[] = $body['notes'];
+        }
+        if (!$sets) {
+            json_out(['error' => 'Nenhum campo para atualizar'], 400);
+        }
+        $params[] = (int)$id;
+        $pdo->prepare('UPDATE charges SET ' . implode(', ', $sets) . ' WHERE id=?')->execute($params);
+
+        if (array_key_exists('status', $body)) {
+            $status = $body['status'];
+            if ($status === 'pago') {
+                $pdo->prepare("UPDATE payouts SET status = 'pendente' WHERE charge_id = ? AND status = 'aguardando'")
+                    ->execute([(int)$id]);
+            } elseif ($status === 'pendente' || $status === 'atrasado') {
+                $pdo->prepare("UPDATE payouts SET status = 'aguardando', paid_at = NULL WHERE charge_id = ? AND status IN ('pendente','aguardando')")
+                    ->execute([(int)$id]);
+            } elseif ($status === 'cancelado') {
+                $pdo->prepare("UPDATE payouts SET status = 'cancelado' WHERE charge_id = ? AND status != 'pago'")
+                    ->execute([(int)$id]);
+            }
         }
         json_out(['success' => true]);
     }
@@ -3096,7 +3238,7 @@ if ($resource === 'auctions') {
     }
 
     if ($method === 'POST' && !$id) {
-        $auth = require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $auth = require_create($config['jwt_secret']);
         $name = trim($body['name'] ?? '');
         if ($name === '') json_out(['error' => 'Nome do leilão é obrigatório'], 400);
         $status = $body['status'] ?? 'rascunho';
@@ -3119,7 +3261,7 @@ if ($resource === 'auctions') {
     }
 
     if ($method === 'PUT' && $id && !$action) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        require_update($config['jwt_secret']);
         $fields = [];
         $params = [];
         if (array_key_exists('name', $body)) { $fields[] = 'name=?'; $params[] = trim($body['name']); }
@@ -3166,7 +3308,7 @@ if ($resource === 'auction-lots') {
     }
 
     if ($method === 'POST' && !$id) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        require_create($config['jwt_secret']);
         $auctionId = (int)($body['auctionId'] ?? 0);
         $animalId = (int)($body['animalId'] ?? 0);
         $sellers = normalize_lot_sellers($body);
@@ -3206,7 +3348,7 @@ if ($resource === 'auction-lots') {
     }
 
     if ($method === 'PUT' && $id) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        require_update($config['jwt_secret']);
         $fields = [];
         $params = [];
         $sellers = normalize_lot_sellers($body);
@@ -3297,7 +3439,7 @@ if ($resource === 'payouts') {
     }
 
     if ($method === 'PUT' && $id) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        require_update($config['jwt_secret']);
         $status = $body['status'] ?? '';
         if (!in_array($status, ['aguardando', 'pendente', 'pago', 'cancelado'], true)) {
             json_out(['error' => 'Status inválido'], 400);
@@ -3338,7 +3480,7 @@ if ($resource === 'contract-templates') {
     }
 
     if ($method === 'POST' && !$id) {
-        $auth = require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        $auth = require_create($config['jwt_secret']);
         $name = trim($body['name'] ?? '');
         $bodyText = $body['bodyText'] ?? '';
         if ($name === '' || trim((string)$bodyText) === '') {
@@ -3375,7 +3517,7 @@ if ($resource === 'contract-templates') {
     }
 
     if ($method === 'PUT' && $id) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        require_update($config['jwt_secret']);
         try {
             $pdo->beginTransaction();
             if (!empty($body['isDefault'])) {
@@ -3448,7 +3590,7 @@ if ($resource === 'catalogs') {
     }
 
     if ($method === 'POST' && !$id) {
-        require_auth($config['jwt_secret'], ['root', 'admin', 'user']);
+        require_create($config['jwt_secret']);
         $kind = trim($body['kind'] ?? '');
         $name = trim($body['name'] ?? '');
         $code = isset($body['code']) ? trim((string)$body['code']) : null;
@@ -3484,6 +3626,38 @@ if ($resource === 'catalogs') {
             json_out(['error' => 'Erro ao criar item do catálogo'], 500);
         }
     }
+}
+
+// Audit logs (admin/root)
+if ($resource === 'audit-logs' && $method === 'GET') {
+    require_auth($config['jwt_secret'], ['root', 'admin']);
+    $sql = 'SELECT * FROM audit_logs WHERE 1=1';
+    $params = [];
+    if (!empty($_GET['userId'])) {
+        $sql .= ' AND user_id = ?';
+        $params[] = (int)$_GET['userId'];
+    }
+    if (!empty($_GET['action'])) {
+        $sql .= ' AND action = ?';
+        $params[] = (string)$_GET['action'];
+    }
+    if (!empty($_GET['resource'])) {
+        $sql .= ' AND resource = ?';
+        $params[] = (string)$_GET['resource'];
+    }
+    if (!empty($_GET['from'])) {
+        $sql .= ' AND created_at >= ?';
+        $params[] = (string)$_GET['from'] . ' 00:00:00';
+    }
+    if (!empty($_GET['to'])) {
+        $sql .= ' AND created_at <= ?';
+        $params[] = (string)$_GET['to'] . ' 23:59:59';
+    }
+    $limit = min(500, max(1, (int)($_GET['limit'] ?? 200)));
+    $sql .= ' ORDER BY created_at DESC LIMIT ' . $limit;
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    json_out(array_map('map_audit_row', $stmt->fetchAll()));
 }
 
 json_out(['error' => 'Rota não encontrada'], 404);

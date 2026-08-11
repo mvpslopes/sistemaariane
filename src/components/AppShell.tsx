@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Users,
@@ -19,9 +19,14 @@ import {
   FileStack,
   Menu,
   X,
+  Shield,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import UserAvatar from './UserAvatar';
+import ClientBottomNav from './ClientBottomNav';
+import { clientPortalLabels, resolvePageMeta } from '../constants/clientPortalLabels';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { useClientMobile } from '../hooks/useClientMobile';
 
 const roleLabel: Record<string, string> = {
   root: 'Root',
@@ -30,43 +35,18 @@ const roleLabel: Record<string, string> = {
   cliente: 'Cliente',
 };
 
-const pageMeta: Record<string, { title: string; subtitle: string }> = {
-  '/app': { title: 'Dashboard', subtitle: 'Visão geral do plantel e cadastros' },
-  '/app/pessoas': {
-    title: 'Pessoas',
-    subtitle: 'Compradores, vendedores, assessores, testemunhas e avalistas em um só cadastro',
-  },
-  '/app/animais': { title: 'Animais', subtitle: 'Plantel e documentação básica' },
-  '/app/leiloes': {
-    title: 'Leilões',
-    subtitle: 'Eventos, lotes e registro de arremates',
-  },
-  '/app/contratos': { title: 'Contratos', subtitle: 'Vendas e aceites digitais' },
-  '/app/modelos-contrato': {
-    title: 'Modelos de contrato',
-    subtitle: 'Versos (cláusulas) reutilizáveis na nota de leilão',
-  },
-  '/app/cobrancas': { title: 'Cobranças', subtitle: 'Parcelas, PIX e boletos' },
-  '/app/repasses': {
-    title: 'Repasses',
-    subtitle: 'Assessoria, dono do animal e assessores por parcela',
-  },
-  '/app/perfil': { title: 'Meu perfil', subtitle: 'Dados de exibição da conta' },
-  '/app/usuarios': { title: 'Usuários', subtitle: 'Acessos ao sistema' },
-  '/app/alterar-senha': { title: 'Alterar senha', subtitle: 'Segurança da sua conta' },
-};
-
 const cadastroPaths = ['/app/pessoas', '/app/animais'];
 
 const contaPaths = ['/app/perfil', '/app/alterar-senha'];
 
 export default function AppShell() {
-  const { user, logout, canManageUsers, hasRole } = useAuth();
+  const { user, logout, canManageUsers, canViewAudit, hasRole } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
+  const isMobile = useIsMobile();
+  const clientMobile = useClientMobile();
   const [cadastrosOpen, setCadastrosOpen] = useState(true);
   const [contaOpen, setContaOpen] = useState(false);
   const isCliente = hasRole('cliente');
@@ -75,16 +55,7 @@ export default function AppShell() {
   );
   const onConta = contaPaths.some((p) => location.pathname === p);
 
-  // No mobile o menu é drawer (sempre com rótulos). Compacto só no desktop.
   const compact = !isMobile && collapsed;
-
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 767px)');
-    const update = () => setIsMobile(mq.matches);
-    update();
-    mq.addEventListener('change', update);
-    return () => mq.removeEventListener('change', update);
-  }, []);
 
   useEffect(() => {
     if (onCadastros) setCadastrosOpen(true);
@@ -94,14 +65,13 @@ export default function AppShell() {
     if (onConta) setContaOpen(true);
   }, [onConta]);
 
-  // Fecha o drawer ao navegar e libera scroll do body
   useEffect(() => {
     setMobileOpen(false);
     document.body.style.overflow = '';
   }, [location.pathname]);
 
   useEffect(() => {
-    if (!isMobile) {
+    if (clientMobile || !isMobile) {
       setMobileOpen(false);
       document.body.style.overflow = '';
       return;
@@ -110,7 +80,7 @@ export default function AppShell() {
     return () => {
       document.body.style.overflow = '';
     };
-  }, [mobileOpen, isMobile]);
+  }, [mobileOpen, isMobile, clientMobile]);
 
   const handleLogout = () => {
     logout();
@@ -133,7 +103,7 @@ export default function AppShell() {
         : 'text-brand-beige/65 hover:bg-white/5 hover:text-white'
     }`;
 
-  const meta = pageMeta[location.pathname] || pageMeta['/app'];
+  const meta = resolvePageMeta(location.pathname, isCliente);
   const today = new Intl.DateTimeFormat('pt-BR', {
     weekday: 'long',
     day: '2-digit',
@@ -143,9 +113,52 @@ export default function AppShell() {
   const showCadastrosChildren = compact || cadastrosOpen;
   const showContaChildren = compact || contaOpen;
 
+  if (clientMobile) {
+    const firstName = user?.name?.split(' ')[0];
+
+    return (
+      <div className="flex min-h-[100dvh] flex-col bg-brand-off-white text-brand-dark-brown">
+        <header className="sticky top-0 z-20 shrink-0 border-b border-brand-beige/70 bg-white/95 px-4 py-3 backdrop-blur-md pt-[max(0.75rem,env(safe-area-inset-top))]">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-medium text-brand-olive">Portal do cliente</p>
+              <h1 className="truncate text-lg font-semibold text-brand-dark-brown">{meta.title}</h1>
+              {firstName && location.pathname === '/app' && (
+                <p className="truncate text-xs text-brand-olive">Olá, {firstName}</p>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-red-200 bg-white text-red-600 transition hover:bg-red-50"
+                title="Sair"
+                aria-label="Sair da conta"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+              <Link
+                to="/app/perfil"
+                className="shrink-0 rounded-full ring-2 ring-brand-beige/60 transition hover:ring-brand-olive/40"
+                title="Meu perfil"
+              >
+                <UserAvatar name={user?.name || 'U'} size="md" />
+              </Link>
+            </div>
+          </div>
+        </header>
+
+        <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 pb-28">
+          <Outlet />
+        </main>
+
+        <ClientBottomNav />
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-brand-off-white text-brand-dark-brown">
-      {/* Overlay mobile */}
       <div
         className={`fixed inset-0 z-40 bg-black/45 transition-opacity duration-300 md:hidden ${
           mobileOpen ? 'opacity-100' : 'pointer-events-none opacity-0'
@@ -264,14 +277,14 @@ export default function AppShell() {
           )}
 
           {isCliente && (
-            <NavLink to="/app/animais" className={linkClass} title="Animais">
+            <NavLink to="/app/animais" className={linkClass} title={clientPortalLabels.animalsNav}>
               {({ isActive }) => (
                 <>
                   {isActive && (
                     <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
                   )}
                   <PawPrint className="h-[18px] w-[18px] shrink-0" />
-                  {!compact && <span>Animais</span>}
+                  {!compact && <span>{clientPortalLabels.animalsNav}</span>}
                 </>
               )}
             </NavLink>
@@ -352,6 +365,19 @@ export default function AppShell() {
                   )}
                   <UserCog className="h-[18px] w-[18px] shrink-0" />
                   {!compact && <span>Usuários</span>}
+                </>
+              )}
+            </NavLink>
+          )}
+          {canViewAudit && (
+            <NavLink to="/app/auditoria" className={linkClass} title="Auditoria">
+              {({ isActive }) => (
+                <>
+                  {isActive && (
+                    <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
+                  )}
+                  <Shield className="h-[18px] w-[18px] shrink-0" />
+                  {!compact && <span>Auditoria</span>}
                 </>
               )}
             </NavLink>

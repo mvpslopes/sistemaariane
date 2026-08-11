@@ -69,7 +69,8 @@ interface AnimalFormProps {
 
 export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormProps) {
   const isNew = !animalId;
-  const { canWrite } = useAuth();
+  const { canCreate, canUpdate, canDelete } = useAuth();
+  const canEdit = isNew ? canCreate : canUpdate;
   const { success, error: toastError } = useToast();
   const [form, setForm] = useState<FormState>(empty);
   const [clients, setClients] = useState<Client[]>([]);
@@ -228,7 +229,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
   const onPhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (!file || !canWrite) return;
+    if (!file || !canEdit) return;
     if (!file.type.startsWith('image/')) {
       toastError('Selecione uma imagem válida');
       return;
@@ -251,7 +252,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canWrite) return;
+    if (!canEdit) return;
     const filled = form.owners.filter((o) => o.clientId);
     if (filled.length) {
       const ids = filled.map((o) => o.clientId);
@@ -286,7 +287,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
   };
 
   const onDelete = async () => {
-    if (!canWrite || isNew) return;
+    if (!canEdit || isNew) return;
     if (
       !confirm(
         'Excluir este animal definitivamente?\n\nA ficha, vínculos de proprietários e a foto serão removidos. Esta ação não pode ser desfeita.'
@@ -321,7 +322,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
               <Camera className="h-8 w-8 text-brand-olive/50" />
             )}
           </div>
-          {canWrite && (
+          {canEdit && (
             <div className="flex flex-col gap-2">
               <label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-brand-brown px-4 py-2 text-sm font-medium text-white hover:bg-brand-olive">
                 {uploading ? 'Enviando...' : 'Escolher foto'}
@@ -350,16 +351,16 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Nome *" className="sm:col-span-2">
-          <input required disabled={!canWrite} value={form.name} onChange={(e) => set('name', e.target.value)} className={inputClass} />
+          <input required disabled={!canEdit} value={form.name} onChange={(e) => set('name', e.target.value)} className={inputClass} />
         </Field>
         <Field label="Nº registro">
-          <input disabled={!canWrite} value={form.registration_no} onChange={(e) => set('registration_no', e.target.value)} className={inputClass} />
+          <input disabled={!canEdit} value={form.registration_no} onChange={(e) => set('registration_no', e.target.value)} className={inputClass} />
         </Field>
         <Field label="Chip">
-          <input disabled={!canWrite} value={form.chip_no} onChange={(e) => set('chip_no', e.target.value)} className={inputClass} />
+          <input disabled={!canEdit} value={form.chip_no} onChange={(e) => set('chip_no', e.target.value)} className={inputClass} />
         </Field>
         <Field label="Sexo">
-          <select disabled={!canWrite} value={form.sex} onChange={(e) => set('sex', e.target.value as FormState['sex'])} className={inputClass}>
+          <select disabled={!canEdit} value={form.sex} onChange={(e) => set('sex', e.target.value as FormState['sex'])} className={inputClass}>
             <option value="">—</option>
             <option value="M">Macho</option>
             <option value="F">Fêmea</option>
@@ -370,7 +371,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
           <span className="text-xs font-medium uppercase tracking-wide text-brand-olive">Raça / linhagem</span>
           <div className="flex gap-2">
             <select
-              disabled={!canWrite}
+              disabled={!canEdit}
               value={form.breed}
               onChange={(e) => set('breed', e.target.value)}
               className={inputClass}
@@ -383,7 +384,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
                 <option value={form.breed}>{form.breed}</option>
               )}
             </select>
-            {canWrite && (
+            {canEdit && (
               <button
                 type="button"
                 title="Cadastrar raça"
@@ -394,7 +395,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
               </button>
             )}
           </div>
-          {addingBreed && canWrite && (
+          {addingBreed && canEdit && (
             <div className="flex gap-2 pt-1">
               <input
                 value={newBreed}
@@ -426,7 +427,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
           )}
         </div>
         <Field label="Associação">
-          <select disabled={!canWrite} value={form.association} onChange={(e) => set('association', e.target.value as FormState['association'])} className={inputClass}>
+          <select disabled={!canEdit} value={form.association} onChange={(e) => set('association', e.target.value as FormState['association'])} className={inputClass}>
             <option value="NENHUMA">Nenhuma</option>
             <option value="ABCCMM">ABCCMM</option>
             <option value="ABQM">ABQM</option>
@@ -434,13 +435,13 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
           </select>
         </Field>
         <Field label="Nascimento">
-          <input type="date" disabled={!canWrite} value={form.birth_date} onChange={(e) => set('birth_date', e.target.value)} className={inputClass} />
+          <input type="date" disabled={!canEdit} value={form.birth_date} onChange={(e) => set('birth_date', e.target.value)} className={inputClass} />
         </Field>
         <Field label="Pelagem / cor">
-          <input disabled={!canWrite} value={form.color} onChange={(e) => set('color', e.target.value)} className={inputClass} />
+          <input disabled={!canEdit} value={form.color} onChange={(e) => set('color', e.target.value)} className={inputClass} />
         </Field>
         <Field label="Status">
-          <select disabled={!canWrite} value={form.status} onChange={(e) => set('status', e.target.value as FormState['status'])} className={inputClass}>
+          <select disabled={!canEdit} value={form.status} onChange={(e) => set('status', e.target.value as FormState['status'])} className={inputClass}>
             <option value="ativo">Ativo</option>
             <option value="vendido">Vendido</option>
             <option value="falecido">Falecido</option>
@@ -449,7 +450,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
         </Field>
         <Field label="Propriedade">
           <select
-            disabled={!canWrite}
+            disabled={!canEdit}
             value={form.ownership_type}
             onChange={(e) => setOwnershipType(e.target.value as FormState['ownership_type'])}
             className={inputClass}
@@ -468,7 +469,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
                 Opcional no plantel. O vendedor será exigido ao cadastrar o lote no leilão.
               </p>
             </div>
-            {canWrite && (
+            {canEdit && (
               <button
                 type="button"
                 onClick={addOwner}
@@ -487,7 +488,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
                 <label className="block space-y-1">
                   <span className="text-[11px] uppercase text-brand-olive">Pessoa</span>
                   <select
-                    disabled={!canWrite}
+                    disabled={!canEdit}
                     value={owner.clientId}
                     onChange={(e) => updateOwner(index, { clientId: e.target.value })}
                     className={inputClass}
@@ -505,7 +506,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
                     min={0}
                     max={100}
                     step={0.01}
-                    disabled={!canWrite || form.ownership_type === 'unico' || form.owners.length === 1}
+                    disabled={!canEdit || form.ownership_type === 'unico' || form.owners.length === 1}
                     value={owner.sharePct}
                     onChange={(e) => updateOwner(index, { sharePct: Number(e.target.value) })}
                     className={inputClass}
@@ -515,13 +516,13 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
                   <input
                     type="radio"
                     name="primary-owner"
-                    disabled={!canWrite}
+                    disabled={!canEdit}
                     checked={owner.isPrimary}
                     onChange={() => updateOwner(index, { isPrimary: true })}
                   />
                   Principal
                 </label>
-                {canWrite && form.owners.length > 1 && (
+                {canEdit && form.owners.length > 1 && (
                   <button
                     type="button"
                     title="Remover"
@@ -542,26 +543,26 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
           </div>
         </div>
         <Field label="Nome do pai">
-          <input disabled={!canWrite} value={form.sireName} onChange={(e) => set('sireName', e.target.value)} className={inputClass} />
+          <input disabled={!canEdit} value={form.sireName} onChange={(e) => set('sireName', e.target.value)} className={inputClass} />
         </Field>
         <Field label="Nome da mãe">
-          <input disabled={!canWrite} value={form.damName} onChange={(e) => set('damName', e.target.value)} className={inputClass} />
+          <input disabled={!canEdit} value={form.damName} onChange={(e) => set('damName', e.target.value)} className={inputClass} />
         </Field>
         <Field label="Resenha" className="sm:col-span-2">
-          <textarea disabled={!canWrite} rows={3} value={form.resenha} onChange={(e) => set('resenha', e.target.value)} className={inputClass} />
+          <textarea disabled={!canEdit} rows={3} value={form.resenha} onChange={(e) => set('resenha', e.target.value)} className={inputClass} />
         </Field>
         <Field label="Observações" className="sm:col-span-2">
-          <textarea disabled={!canWrite} rows={3} value={form.notes} onChange={(e) => set('notes', e.target.value)} className={inputClass} />
+          <textarea disabled={!canEdit} rows={3} value={form.notes} onChange={(e) => set('notes', e.target.value)} className={inputClass} />
         </Field>
       </div>
 
       <div className="flex flex-wrap gap-2 border-t border-brand-beige pt-4">
-        {canWrite && (
+        {canEdit && (
           <button type="submit" disabled={saving} className="rounded-xl bg-brand-brown px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-60">
             {saving ? 'Salvando...' : 'Salvar'}
           </button>
         )}
-        {!isNew && canWrite && (
+        {!isNew && canDelete && (
           <button type="button" onClick={onDelete} className="rounded-xl border border-red-200 px-5 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50">
             Excluir
           </button>

@@ -131,7 +131,8 @@ interface ClientFormProps {
 }
 
 export default function ClientForm({ clientId, defaultPartyRole, onClose, onSaved }: ClientFormProps) {
-  const { canWrite } = useAuth();
+  const { canCreate, canUpdate, canDelete } = useAuth();
+  const canEdit = isNew ? canCreate : canUpdate;
   const { success, error: toastError } = useToast();
   const [currentId, setCurrentId] = useState<string | null>(clientId);
   const isNew = !currentId;
@@ -171,7 +172,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
 
   const applyPersonCep = async (raw: string) => {
     const digits = raw.replace(/\D/g, '');
-    if (digits.length !== 8 || !canWrite) return;
+    if (digits.length !== 8 || !canEdit) return;
     setCepLoading(true);
     try {
       const data = await lookupCep(digits);
@@ -193,7 +194,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
 
   const applyPropCep = async (raw: string) => {
     const digits = raw.replace(/\D/g, '');
-    if (digits.length !== 8 || !canWrite) return;
+    if (digits.length !== 8 || !canEdit) return;
     setPropCepLoading(true);
     try {
       const data = await lookupCep(digits);
@@ -225,7 +226,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
   };
 
   const onCreateAccessUser = async () => {
-    if (!currentId || !canWrite) return;
+    if (!currentId || !canEdit) return;
     if (
       !confirm(
         'Criar usuário de acesso para esta pessoa?\n\nLogin: primeiro nome + sobrenome\nSenha inicial: ariane2026\n\nA pessoa verá contratos e dados conforme os papéis marcados (comprador, vendedor, assessor, testemunha).'
@@ -246,7 +247,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
   };
 
   const onResetAccessPassword = async () => {
-    if (!currentId || !canWrite || !accessUser) return;
+    if (!currentId || !canEdit || !accessUser) return;
     if (newAccessPassword.length < 6) {
       toastError('A senha deve ter pelo menos 6 caracteres');
       return;
@@ -336,7 +337,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
 
   const onSubmitDados = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!canWrite) return;
+    if (!canEdit) return;
     const validationError = validateRequiredPerson(form);
     if (validationError) {
       toastError(validationError);
@@ -363,7 +364,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
   };
 
   const onSaveObservacoes = async () => {
-    if (!canWrite || !currentId) return;
+    if (!canEdit || !currentId) return;
     const validationError = validateRequiredPerson(form);
     if (validationError) {
       toastError(validationError);
@@ -383,7 +384,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
   };
 
   const onDelete = async () => {
-    if (!canWrite || !currentId) return;
+    if (!canEdit || !currentId) return;
     if (
       !confirm(
         'Excluir este cliente definitivamente?\n\nEle será removido dos proprietários dos animais vinculados. Esta ação não pode ser desfeita.'
@@ -402,7 +403,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
   };
 
   const onUploadDoc = async (file: File | null) => {
-    if (!file || !currentId || !canWrite) return;
+    if (!file || !currentId || !canEdit) return;
     setUploading(true);
     try {
       const up = await uploadPersonDocument(file);
@@ -454,31 +455,31 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
           <Section title="Identificação">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Nome completo *" className="sm:col-span-2">
-                <input required disabled={!canWrite} value={form.name || ''} onChange={(e) => set('name', e.target.value)} className={inputClass} placeholder="Nome completo" />
+                <input required disabled={!canEdit} value={form.name || ''} onChange={(e) => set('name', e.target.value)} className={inputClass} placeholder="Nome completo" />
               </Field>
               <Field label="Apelido">
-                <input disabled={!canWrite} value={form.nickname || ''} onChange={(e) => set('nickname', e.target.value)} className={inputClass} />
+                <input disabled={!canEdit} value={form.nickname || ''} onChange={(e) => set('nickname', e.target.value)} className={inputClass} />
               </Field>
               <Field label="Data de nascimento">
-                <input type="date" disabled={!canWrite} value={form.birth_date || ''} onChange={(e) => set('birth_date', e.target.value)} className={inputClass} />
+                <input type="date" disabled={!canEdit} value={form.birth_date || ''} onChange={(e) => set('birth_date', e.target.value)} className={inputClass} />
               </Field>
               <Field label="Tipo documento *">
-                <select required disabled={!canWrite} value={form.document_type || 'CPF'} onChange={(e) => set('document_type', e.target.value)} className={inputClass}>
+                <select required disabled={!canEdit} value={form.document_type || 'CPF'} onChange={(e) => set('document_type', e.target.value)} className={inputClass}>
                   <option value="CPF">CPF</option>
                   <option value="CNPJ">CNPJ</option>
                 </select>
               </Field>
               <Field label="CPF / CNPJ *">
-                <input required disabled={!canWrite} value={form.document || ''} onChange={(e) => set('document', e.target.value)} className={inputClass} placeholder={form.document_type === 'CNPJ' ? '00.000.000/0000-00' : '000.000.000-00'} />
+                <input required disabled={!canEdit} value={form.document || ''} onChange={(e) => set('document', e.target.value)} className={inputClass} placeholder={form.document_type === 'CNPJ' ? '00.000.000/0000-00' : '000.000.000-00'} />
               </Field>
               <Field label="RG">
-                <input disabled={!canWrite} value={form.rg || ''} onChange={(e) => set('rg', e.target.value)} className={inputClass} />
+                <input disabled={!canEdit} value={form.rg || ''} onChange={(e) => set('rg', e.target.value)} className={inputClass} />
               </Field>
               <Field label="Órgão emissor">
-                <input disabled={!canWrite} placeholder="SSP/MG" value={form.rg_issuer || ''} onChange={(e) => set('rg_issuer', e.target.value)} className={inputClass} />
+                <input disabled={!canEdit} placeholder="SSP/MG" value={form.rg_issuer || ''} onChange={(e) => set('rg_issuer', e.target.value)} className={inputClass} />
               </Field>
               <Field label="Estado civil">
-                <select disabled={!canWrite} value={form.marital_status || ''} onChange={(e) => set('marital_status', e.target.value)} className={inputClass}>
+                <select disabled={!canEdit} value={form.marital_status || ''} onChange={(e) => set('marital_status', e.target.value)} className={inputClass}>
                   <option value="">—</option>
                   <option value="solteiro">Solteiro(a)</option>
                   <option value="casado">Casado(a)</option>
@@ -488,13 +489,13 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
                 </select>
               </Field>
               <Field label="Profissão">
-                <input disabled={!canWrite} value={form.profession || ''} onChange={(e) => set('profession', e.target.value)} className={inputClass} />
+                <input disabled={!canEdit} value={form.profession || ''} onChange={(e) => set('profession', e.target.value)} className={inputClass} />
               </Field>
               <Field label="Nome da mãe" className="sm:col-span-2">
-                <input disabled={!canWrite} value={form.mother_name || ''} onChange={(e) => set('mother_name', e.target.value)} className={inputClass} />
+                <input disabled={!canEdit} value={form.mother_name || ''} onChange={(e) => set('mother_name', e.target.value)} className={inputClass} />
               </Field>
               <Field label="Nome do pai" className="sm:col-span-2">
-                <input disabled={!canWrite} value={form.father_name || ''} onChange={(e) => set('father_name', e.target.value)} className={inputClass} />
+                <input disabled={!canEdit} value={form.father_name || ''} onChange={(e) => set('father_name', e.target.value)} className={inputClass} />
               </Field>
             </div>
           </Section>
@@ -502,19 +503,19 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
           <Section title="Contato e endereço">
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="E-mail *">
-                <input type="email" required disabled={!canWrite} value={form.email || ''} onChange={(e) => set('email', e.target.value)} className={inputClass} />
+                <input type="email" required disabled={!canEdit} value={form.email || ''} onChange={(e) => set('email', e.target.value)} className={inputClass} />
               </Field>
               <Field label="Telefone *">
-                <input required disabled={!canWrite} value={form.phone || ''} onChange={(e) => set('phone', e.target.value)} className={inputClass} />
+                <input required disabled={!canEdit} value={form.phone || ''} onChange={(e) => set('phone', e.target.value)} className={inputClass} />
               </Field>
               <Field label="WhatsApp">
-                <input disabled={!canWrite} value={form.whatsapp || ''} onChange={(e) => set('whatsapp', e.target.value)} className={inputClass} />
+                <input disabled={!canEdit} value={form.whatsapp || ''} onChange={(e) => set('whatsapp', e.target.value)} className={inputClass} />
               </Field>
               <Field label="CEP *">
                 <div className="relative">
                   <input
                     required
-                    disabled={!canWrite || cepLoading}
+                    disabled={!canEdit || cepLoading}
                     value={form.zip_code || ''}
                     onChange={(e) => {
                       const formatted = formatCepInput(e.target.value);
@@ -533,24 +534,24 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
                 <span className="mt-1 block text-xs text-brand-olive">Ao digitar o CEP, rua, cidade e UF são preenchidos automaticamente.</span>
               </Field>
               <Field label="Cidade *">
-                <input required disabled={!canWrite} value={form.city || ''} onChange={(e) => set('city', e.target.value)} className={inputClass} />
+                <input required disabled={!canEdit} value={form.city || ''} onChange={(e) => set('city', e.target.value)} className={inputClass} />
               </Field>
               <Field label="UF *">
-                <input required disabled={!canWrite} maxLength={2} value={form.state || ''} onChange={(e) => set('state', e.target.value.toUpperCase())} className={inputClass} />
+                <input required disabled={!canEdit} maxLength={2} value={form.state || ''} onChange={(e) => set('state', e.target.value.toUpperCase())} className={inputClass} />
               </Field>
               <Field label="País">
-                <input disabled={!canWrite} value={form.country || 'Brasil'} onChange={(e) => set('country', e.target.value)} className={inputClass} />
+                <input disabled={!canEdit} value={form.country || 'Brasil'} onChange={(e) => set('country', e.target.value)} className={inputClass} />
               </Field>
               <Field label="Endereço (logradouro) *">
-                <input required disabled={!canWrite} value={form.address || ''} onChange={(e) => set('address', e.target.value)} className={inputClass} placeholder="Rua, avenida..." />
+                <input required disabled={!canEdit} value={form.address || ''} onChange={(e) => set('address', e.target.value)} className={inputClass} placeholder="Rua, avenida..." />
               </Field>
               <Field label="Número">
-                <input disabled={!canWrite} value={form.address_number || ''} onChange={(e) => set('address_number', e.target.value)} className={inputClass} placeholder="Nº" />
+                <input disabled={!canEdit} value={form.address_number || ''} onChange={(e) => set('address_number', e.target.value)} className={inputClass} placeholder="Nº" />
               </Field>
             </div>
           </Section>
 
-          {canWrite && (
+          {canEdit && (
             <Section title="Papéis">
               <div className="flex flex-wrap gap-4 text-sm text-brand-dark-brown/80">
                 <label className="inline-flex items-center gap-2">
@@ -583,7 +584,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
             </Section>
           )}
 
-          {!isNew && canWrite && (
+          {!isNew && canEdit && (
             <Section title="Acesso ao sistema">
               <p className="text-sm text-brand-olive">
                 Crie um login para a pessoa acompanhar contratos, animais e cobranças relacionados aos papéis
@@ -663,7 +664,8 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
           )}
 
           <FooterActions
-            canWrite={canWrite}
+            canEdit={canEdit}
+            canDelete={canDelete}
             saving={saving}
             isNew={isNew}
             onDelete={onDelete}
@@ -676,7 +678,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
       {tab === 'documentos' && (
         <div className="space-y-4">
           {!currentId && <NeedSaveBanner />}
-          {canWrite && currentId && (
+          {canEdit && currentId && (
             <Section title="Anexar documento">
               <div className="flex flex-wrap items-end gap-3">
                 <Field label="Tipo">
@@ -717,7 +719,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
                       {d.file_name || 'Abrir arquivo'}
                     </a>
                   </div>
-                  {canWrite && currentId && (
+                  {canEdit && currentId && (
                     <button
                       type="button"
                       onClick={async () => {
@@ -743,7 +745,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
       {tab === 'propriedades' && (
         <div className="space-y-4">
           {!currentId && <NeedSaveBanner />}
-          {canWrite && currentId && (
+          {canEdit && currentId && (
             <Section title="Nova propriedade / haras">
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Nome *" className="sm:col-span-2">
@@ -814,7 +816,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
                       <p className="font-medium">{p.name}{p.is_primary ? ' · principal' : ''}</p>
                       <p className="text-xs text-brand-olive">{[p.city, p.state].filter(Boolean).join(' / ') || '—'}</p>
                     </div>
-                    {canWrite && currentId && (
+                    {canEdit && currentId && (
                       <button type="button" className="text-xs text-red-600" onClick={async () => { await deleteClientProperty(currentId, p.id); loadNested(currentId); }}>Remover</button>
                     )}
                   </div>
@@ -828,7 +830,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
       {tab === 'contas' && (
         <div className="space-y-4">
           {!currentId && <NeedSaveBanner />}
-          {canWrite && currentId && (
+          {canEdit && currentId && (
             <Section title="Nova conta bancária">
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Tipo">
@@ -877,7 +879,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
                     <p className="font-medium">{b.bank_name}{b.is_primary ? ' · principal' : ''}</p>
                     <p className="text-xs text-brand-olive">Ag {b.agency || '—'} · Cc {b.account_number || '—'} · {b.holder_name || '—'}</p>
                   </div>
-                  {canWrite && currentId && (
+                  {canEdit && currentId && (
                     <button type="button" className="text-xs text-red-600" onClick={async () => { await deleteClientBankAccount(currentId, b.id); loadNested(currentId); }}>Remover</button>
                   )}
                 </div>
@@ -890,7 +892,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
       {tab === 'contatos' && (
         <div className="space-y-4">
           {!currentId && <NeedSaveBanner />}
-          {canWrite && currentId && (
+          {canEdit && currentId && (
             <Section title="Novo contato">
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Nome *"><input value={contactForm.name} onChange={(e) => setContactForm((f) => ({ ...f, name: e.target.value }))} className={inputClass} /></Field>
@@ -926,7 +928,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
                     <p className="font-medium">{c.name}</p>
                     <p className="text-xs text-brand-olive">{[c.role_label, c.phone, c.email].filter(Boolean).join(' · ') || '—'}</p>
                   </div>
-                  {canWrite && currentId && (
+                  {canEdit && currentId && (
                     <button type="button" className="text-xs text-red-600" onClick={async () => { await deleteClientContact(currentId, c.id); loadNested(currentId); }}>Remover</button>
                   )}
                 </div>
@@ -945,7 +947,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
           )}
           <Field label="Histórico / relacionamento">
             <textarea
-              disabled={!canWrite}
+              disabled={!canEdit}
               rows={4}
               value={form.relationship_notes || ''}
               onChange={(e) => set('relationship_notes', e.target.value)}
@@ -955,7 +957,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
           </Field>
           <Field label="Problemas / alertas">
             <textarea
-              disabled={!canWrite}
+              disabled={!canEdit}
               rows={3}
               value={form.problems_notes || ''}
               onChange={(e) => set('problems_notes', e.target.value)}
@@ -965,7 +967,7 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
           </Field>
           <Field label="Observações gerais">
             <textarea
-              disabled={!canWrite}
+              disabled={!canEdit}
               rows={3}
               value={form.notes || ''}
               onChange={(e) => set('notes', e.target.value)}
@@ -973,12 +975,12 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
             />
           </Field>
           <div className="flex flex-wrap gap-2 border-t border-brand-beige pt-4">
-            {canWrite && currentId && (
+            {canEdit && currentId && (
               <button type="button" disabled={saving} onClick={onSaveObservacoes} className="rounded-xl bg-brand-brown px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60">
                 {saving ? 'Salvando...' : 'Salvar observações'}
               </button>
             )}
-            {canWrite && !currentId && (
+            {canEdit && !currentId && (
               <button
                 type="button"
                 disabled={saving}
@@ -1023,18 +1025,24 @@ function Field({ label, children, className = '' }: { label: string; children: R
 }
 
 function FooterActions({
-  canWrite, saving, isNew, onDelete, onClose, submitLabel,
+  canEdit, canDelete, saving, isNew, onDelete, onClose, submitLabel,
 }: {
-  canWrite: boolean; saving: boolean; isNew: boolean; onDelete: () => void; onClose: () => void; submitLabel: string;
+  canEdit: boolean;
+  canDelete: boolean;
+  saving: boolean;
+  isNew: boolean;
+  onDelete: () => void;
+  onClose: () => void;
+  submitLabel: string;
 }) {
   return (
     <div className="flex flex-wrap gap-2 border-t border-brand-beige pt-4">
-      {canWrite && (
+      {canEdit && (
         <button type="submit" disabled={saving} className="rounded-xl bg-brand-brown px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-60">
           {saving ? 'Salvando...' : submitLabel}
         </button>
       )}
-      {!isNew && canWrite && (
+      {!isNew && canDelete && (
         <button type="button" onClick={onDelete} className="rounded-xl border border-red-200 px-5 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50">
           Excluir
         </button>

@@ -75,6 +75,27 @@ CREATE TABLE users (
   CONSTRAINT fk_users_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE audit_logs (
+  id           BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  user_id      BIGINT UNSIGNED NULL,
+  username     VARCHAR(80) NULL,
+  role         VARCHAR(20) NULL,
+  action       VARCHAR(40) NOT NULL,
+  resource     VARCHAR(60) NOT NULL,
+  resource_id  VARCHAR(80) NULL,
+  summary      VARCHAR(500) NULL,
+  ip           VARCHAR(64) NULL,
+  user_agent   VARCHAR(500) NULL,
+  success      TINYINT(1) NOT NULL DEFAULT 1,
+  meta         JSON NULL,
+  INDEX idx_audit_created (created_at),
+  INDEX idx_audit_user (user_id),
+  INDEX idx_audit_action (action),
+  INDEX idx_audit_resource (resource),
+  CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 ALTER TABLE clients
   ADD CONSTRAINT fk_clients_created_by
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL;
@@ -299,6 +320,7 @@ CREATE TABLE charges (
   amount           DECIMAL(12,2) NOT NULL,
   due_date         DATE NOT NULL,
   payment_method   ENUM('pix','boleto','transferencia','outro') NOT NULL DEFAULT 'boleto',
+  collector        ENUM('assessoria','seller') NOT NULL DEFAULT 'assessoria',
   status           ENUM('pendente','pago','atrasado','cancelado') NOT NULL DEFAULT 'pendente',
   paid_at          DATETIME NULL,
   external_ref     VARCHAR(120) NULL,
@@ -308,6 +330,7 @@ CREATE TABLE charges (
   UNIQUE KEY uk_charge_installment (contract_id, installment_no),
   INDEX idx_charges_client (client_id),
   INDEX idx_charges_status (status),
+  INDEX idx_charges_collector (collector),
   INDEX idx_charges_due (due_date),
   CONSTRAINT fk_charges_contract FOREIGN KEY (contract_id) REFERENCES contracts(id) ON DELETE CASCADE,
   CONSTRAINT fk_charges_client FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE RESTRICT

@@ -9,6 +9,9 @@ import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
 import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, sortRows } from '../../hooks/useSortableTable';
+import { useClientMobile } from '../../hooks/useClientMobile';
+import { clientPortalLabels } from '../../constants/clientPortalLabels';
+import { MobileCard } from '../../components/MobileCard';
 import AnimalForm from './AnimalForm';
 import ContractForm from './ContractForm';
 
@@ -47,7 +50,9 @@ const statusLabel: Record<Animal['status'], string> = {
 };
 
 export default function AnimalsPage() {
-  const { canWrite } = useAuth();
+  const { canCreate, canUpdate, canDelete, hasRole } = useAuth();
+  const isCliente = hasRole('cliente');
+  const clientMobile = useClientMobile();
   const { success, error: toastError } = useToast();
   const [animals, setAnimals] = useState<Animal[]>([]);
   const [q, setQ] = useState('');
@@ -64,7 +69,7 @@ export default function AnimalsPage() {
     try {
       setAnimals(await getAnimals());
     } catch (e: any) {
-      toastError(e.message || 'Erro ao carregar animais');
+      toastError(e.message || (isCliente ? clientPortalLabels.loadError : 'Erro ao carregar animais'));
     } finally {
       setLoading(false);
     }
@@ -92,7 +97,7 @@ export default function AnimalsPage() {
   };
 
   const onDelete = async (animal: Animal) => {
-    if (!canWrite) return;
+    if (!canDelete) return;
     if (
       !confirm(
         `Excluir o animal "${animal.name}" definitivamente?\n\nA ficha, vínculos e a foto serão removidos. Esta ação não pode ser desfeita.`
@@ -168,10 +173,11 @@ export default function AnimalsPage() {
           {filtered.length !== animals.length ? (
             <> de <span className="font-semibold text-brand-dark-brown">{animals.length}</span></>
           ) : null}{' '}
-          animais ·{' '}
-          <span className="font-semibold text-brand-dark-brown">{activeCount}</span> ativos
+          {isCliente ? clientPortalLabels.countPurchases : 'animais'} ·{' '}
+          <span className="font-semibold text-brand-dark-brown">{activeCount}</span>{' '}
+          {isCliente ? clientPortalLabels.countActive : 'ativos'}
         </p>
-        {canWrite && (
+        {canCreate && (
           <button
             type="button"
             onClick={openNew}
@@ -189,7 +195,11 @@ export default function AnimalsPage() {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Buscar por nome, registro, chip..."
+              placeholder={
+                isCliente
+                  ? clientPortalLabels.searchPlaceholder
+                  : 'Buscar por nome, registro, chip...'
+              }
               className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
             />
           </div>
@@ -204,16 +214,54 @@ export default function AnimalsPage() {
       />
 
       {loading ? (
-        <Loading message="Carregando animais..." />
+        <Loading message={isCliente ? clientPortalLabels.loadingPurchases : 'Carregando animais...'} />
       ) : filtered.length === 0 ? (
-        <EmptyState />
+        <EmptyState isCliente={isCliente} />
+      ) : clientMobile ? (
+        <ul className="space-y-3">
+          {filtered.map((a) => (
+            <li key={a.id}>
+              <MobileCard onClick={() => openEdit(a.id)}>
+                <div className="flex items-start gap-3">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-brand-beige bg-brand-off-white">
+                    {a.photo_url ? (
+                      <img src={mediaUrl(a.photo_url) || undefined} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <Camera className="h-5 w-5 text-brand-olive/40" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="truncate font-semibold text-brand-dark-brown">{a.name}</p>
+                      <span
+                        className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${statusTone[a.status]}`}
+                      >
+                        {statusLabel[a.status]}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-brand-olive">
+                      {a.breed || '—'}
+                      {a.registration_no ? ` · Reg. ${a.registration_no}` : ''}
+                    </p>
+                    <p className="mt-0.5 text-xs text-brand-olive/80">
+                      {SEX_LABEL[a.sex] || '—'}
+                      {(a.owners as string) ? ` · ${a.owners}` : ''}
+                    </p>
+                  </div>
+                </div>
+              </MobileCard>
+            </li>
+          ))}
+        </ul>
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
           <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
-                <SortTh label="Animal" column="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="px-3 sm:px-4" />
+                <SortTh
+                  label={isCliente ? clientPortalLabels.tableAnimal : 'Animal'}
+                  column="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="px-3 sm:px-4" />
                 <SortTh label="Registro" column="registration" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden md:table-cell" />
                 <SortTh label="Chip" column="chip" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden lg:table-cell" />
                 <SortTh label="Sexo" column="sex" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden sm:table-cell" />
@@ -265,12 +313,12 @@ export default function AnimalsPage() {
                         type="button"
                         onClick={() => openEdit(a.id)}
                         className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-brown hover:bg-brand-beige/50"
-                        title={canWrite ? 'Editar' : 'Ver'}
+                        title={canUpdate ? 'Editar' : 'Ver'}
                       >
                         <Pencil className="h-4 w-4" />
-                        <span className="hidden sm:inline">{canWrite ? 'Editar' : 'Ver'}</span>
+                        <span className="hidden sm:inline">{canUpdate ? 'Editar' : 'Ver'}</span>
                       </button>
-                      {canWrite && a.status === 'ativo' && (
+                      {canUpdate && a.status === 'ativo' && (
                         <button
                           type="button"
                           onClick={() => setSaleAnimalId(a.id)}
@@ -281,7 +329,7 @@ export default function AnimalsPage() {
                           <span className="hidden sm:inline">Venda</span>
                         </button>
                       )}
-                      {canWrite && (
+                      {canDelete && (
                         <button
                           type="button"
                           onClick={() => onDelete(a)}
@@ -333,15 +381,19 @@ export default function AnimalsPage() {
   );
 }
 
-function EmptyState() {
+function EmptyState({ isCliente = false }: { isCliente?: boolean }) {
   return (
     <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-brand-beige bg-white py-16 text-center shadow-card">
       <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-off-white text-brand-olive">
         <PawPrint className="h-6 w-6" />
       </div>
-      <p className="text-sm font-medium text-brand-dark-brown">Nenhum animal encontrado</p>
+      <p className="text-sm font-medium text-brand-dark-brown">
+        {isCliente ? clientPortalLabels.emptyPurchases : 'Nenhum animal encontrado'}
+      </p>
       <p className="max-w-xs text-xs text-brand-olive">
-        Ajuste a busca ou cadastre um novo animal para começar.
+        {isCliente
+          ? clientPortalLabels.emptyPurchasesHint
+          : 'Ajuste a busca ou cadastre um novo animal para começar.'}
       </p>
     </div>
   );

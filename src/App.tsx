@@ -8,6 +8,7 @@ import AuctionsPage from './pages/app/AuctionsPage';
 import PayoutsPage from './pages/app/PayoutsPage';
 import ContractTemplatesPage from './pages/app/ContractTemplatesPage';
 import ContractPrintView from './pages/app/ContractPrintView';
+import AuditPage from './pages/app/AuditPage';
 import ChangePassword from './pages/ChangePassword';
 import ProfilePage from './pages/app/ProfilePage';
 import SessionWarning from './components/SessionWarning';
@@ -126,6 +127,14 @@ function AppContent() {
             element={
               <ProtectedRoute roles={['root', 'admin']}>
                 <UsersPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="auditoria"
+            element={
+              <ProtectedRoute roles={['root', 'admin']}>
+                <AuditPage />
               </ProtectedRoute>
             }
           />

@@ -1,12 +1,16 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { KeyRound, LogOut } from 'lucide-react';
 import { updateProfile } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
+import { useClientMobile } from '../../hooks/useClientMobile';
 import UserAvatar from '../../components/UserAvatar';
 
 export default function ProfilePage() {
-  const { user, refreshUser } = useAuth();
+  const { user, refreshUser, logout } = useAuth();
+  const navigate = useNavigate();
+  const clientMobile = useClientMobile();
   const { success, error: toastError } = useToast();
   const [name, setName] = useState(user?.name || '');
   const [saving, setSaving] = useState(false);
@@ -31,14 +35,30 @@ export default function ProfilePage() {
     }
   };
 
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
   return (
     <div className="mx-auto max-w-lg space-y-5 animate-fade-in">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-semibold text-brand-dark-brown">Meu perfil</h2>
-          <p className="text-sm text-brand-olive">Nome de exibição no sistema</p>
+          {!clientMobile && (
+            <>
+              <h2 className="text-2xl font-semibold text-brand-dark-brown">Meu perfil</h2>
+              <p className="text-sm text-brand-olive">Nome de exibição no sistema</p>
+            </>
+          )}
+          {clientMobile && (
+            <p className="text-sm text-brand-olive">Nome de exibição no sistema</p>
+          )}
         </div>
-        <Link to="/app/alterar-senha" className="text-sm text-brand-brown hover:underline">
+        <Link
+          to="/app/alterar-senha"
+          className="inline-flex items-center gap-1.5 text-sm text-brand-brown hover:underline"
+        >
+          <KeyRound className="h-4 w-4" />
           Alterar senha
         </Link>
       </div>
@@ -79,6 +99,17 @@ export default function ProfilePage() {
           </button>
         </div>
       </form>
+
+      {clientMobile && (
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-white px-4 py-3 text-sm font-medium text-red-600 shadow-card transition hover:bg-red-50"
+        >
+          <LogOut className="h-4 w-4" />
+          Sair da conta
+        </button>
+      )}
     </div>
   );
 }

@@ -52,7 +52,7 @@ function avatarTone(seed: string) {
 }
 
 export default function ClientsPage() {
-  const { canWrite } = useAuth();
+  const { canCreate, canUpdate, canDelete } = useAuth();
   const { success, error: toastError } = useToast();
   const [clients, setClients] = useState<Client[]>([]);
   const [q, setQ] = useState('');
@@ -97,7 +97,7 @@ export default function ClientsPage() {
   };
 
   const onDelete = async (client: Client) => {
-    if (!canWrite) return;
+    if (!canDelete) return;
     if (
       !confirm(
         `Excluir "${client.name}" definitivamente?\n\nSerá removido dos proprietários dos animais vinculados. Esta ação não pode ser desfeita.`
@@ -199,7 +199,7 @@ export default function ClientsPage() {
           pessoas ·{' '}
           <span className="font-semibold text-brand-dark-brown">{activeCount}</span> ativas
         </p>
-        {canWrite && (
+        {canCreate && (
           <button
             type="button"
             onClick={openNew}
@@ -317,12 +317,12 @@ export default function ClientsPage() {
                         type="button"
                         onClick={() => openEdit(c.id)}
                         className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-brand-brown hover:bg-brand-beige/50"
-                        title={canWrite ? 'Editar' : 'Ver'}
-                        aria-label={canWrite ? 'Editar' : 'Ver'}
+                        title={canUpdate ? 'Editar' : 'Ver'}
+                        aria-label={canUpdate ? 'Editar' : 'Ver'}
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
-                      {canWrite && (
+                      {canDelete && (
                         <button
                           type="button"
                           onClick={() => onDelete(c)}

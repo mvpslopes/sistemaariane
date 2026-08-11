@@ -21,6 +21,8 @@ import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
 import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, cmpNum, sortRows } from '../../hooks/useSortableTable';
+import { useClientMobile } from '../../hooks/useClientMobile';
+import { MobileCard } from '../../components/MobileCard';
 import ContractForm from './ContractForm';
 import ContractDocument, { ContractVerso } from './ContractDocument';
 import { getContractPdfBase64 } from './printContractPdf';
@@ -84,7 +86,8 @@ interface ContractsPageProps {
 }
 
 export default function ContractsPage({ initialAnimalId = null }: ContractsPageProps) {
-  const { canWrite } = useAuth();
+  const { canCreate, canUpdate } = useAuth();
+  const clientMobile = useClientMobile();
   const { success, error: toastError } = useToast();
   const [items, setItems] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
@@ -167,7 +170,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   };
 
   const onSendClicksign = async () => {
-    if (!detail || !canWrite) return;
+    if (!detail || !canUpdate) return;
     if (!detail.witness1_id || !detail.witness2_id) {
       toastError('Cadastre as duas testemunhas no contrato antes de enviar');
       return;
@@ -259,7 +262,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   };
 
   const onNotifyClicksign = async (signerId?: string | null) => {
-    if (!detail || !canWrite) return;
+    if (!detail || !canUpdate) return;
     const key = signerId || 'all';
     setNotifyingClicksign(key);
     try {
@@ -273,7 +276,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   };
 
   const onCancelClicksign = async () => {
-    if (!detail || !canWrite) return;
+    if (!detail || !canUpdate) return;
     if (
       !confirm(
         'Cancelar o envio à Clicksign?\n\nO link de assinatura atual deixará de funcionar e você poderá enviar o contrato novamente (com os dados atualizados de CPF/nascimento).'
@@ -296,7 +299,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   };
 
   const onCancel = async () => {
-    if (!detailId || !canWrite) return;
+    if (!detailId || !canUpdate) return;
     if (
       !confirm(
         'Cancelar este contrato?\n\nAs cobranças e repasses pendentes serão cancelados e deixarão de contar no painel.'
@@ -380,7 +383,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
           ) : null}{' '}
           contratos
         </p>
-        {canWrite && (
+        {canCreate && (
           <button
             type="button"
             onClick={() => setFormOpen(true)}
@@ -417,6 +420,44 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
 
       {loading ? (
         <Loading message="Carregando contratos..." />
+      ) : clientMobile ? (
+        filtered.length === 0 ? (
+          <p className="py-12 text-center text-sm text-brand-olive">Nenhum contrato encontrado</p>
+        ) : (
+          <ul className="space-y-3">
+            {filtered.map((c) => (
+              <li key={c.id}>
+                <MobileCard onClick={() => openDetail(c.id)}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold text-brand-dark-brown">{c.animal_name}</p>
+                      {c.contract_number && (
+                        <p className="text-xs text-brand-olive">{c.contract_number}</p>
+                      )}
+                      <p className="mt-1 text-xs text-brand-olive">
+                        {saleLabel(c.sale_type)}
+                        {c.share_pct != null && c.sale_type !== 'inteiro' ? ` (${c.share_pct}%)` : ''}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-brand-olive/80">
+                        {c.seller_name} → {c.buyer_name}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${statusTone[c.status]}`}
+                      >
+                        {statusLabel[c.status]}
+                      </span>
+                      <p className="mt-2 text-sm font-semibold text-brand-dark-brown">
+                        {money(c.total_amount)}
+                      </p>
+                    </div>
+                  </div>
+                </MobileCard>
+              </li>
+            ))}
+          </ul>
+        )
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
           <div className="overflow-x-auto">
@@ -511,7 +552,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                           <FileText className="h-4 w-4" />
                           <span className="hidden sm:inline">Abrir</span>
                         </button>
-                        {canWrite && c.status !== 'cancelado' && c.status !== 'concluido' && (
+                        {canUpdate && c.status !== 'cancelado' && c.status !== 'concluido' && (
                           <button
                             type="button"
                             onClick={() => setEditId(c.id)}
@@ -598,7 +639,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
             </div>
 
             {(detail.clicksign_envelope_id ||
-              (canWrite && detail.status !== 'cancelado' && detail.status !== 'concluido')) && (
+              (canUpdate && detail.status !== 'cancelado' && detail.status !== 'concluido')) && (
               <div className="rounded-xl border border-brand-beige bg-brand-off-white/60 p-4 space-y-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
@@ -611,7 +652,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                   </div>
                   {detail.clicksign_envelope_id && (
                     <div className="flex flex-wrap items-center gap-2">
-                      {canWrite &&
+                      {canUpdate &&
                         (clicksignTracking?.status || detail.clicksign_status) === 'running' && (
                           <button
                             type="button"
@@ -632,7 +673,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                         <RefreshCw className={`h-3.5 w-3.5 ${loadingClicksign ? 'animate-spin' : ''}`} />
                         {loadingClicksign ? 'Atualizando...' : 'Atualizar'}
                       </button>
-                      {canWrite &&
+                      {canUpdate &&
                         (clicksignTracking?.status || detail.clicksign_status) === 'running' && (
                           <button
                             type="button"
@@ -709,7 +750,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                               {s.email && (
                                 <p className="truncate text-xs text-brand-olive">{s.email}</p>
                               )}
-                              {!s.signed && canWrite && (
+                              {!s.signed && canUpdate && (
                                 <div className="space-y-1.5">
                                   <div className="flex flex-wrap gap-1.5">
                                     <button
@@ -839,7 +880,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                   <Download className="h-4 w-4" /> Cópia assinada (PDF)
                 </button>
               )}
-              {canWrite && detail.status !== 'cancelado' && (
+              {canUpdate && detail.status !== 'cancelado' && (
                 <button type="button" onClick={onCancel} className="rounded-xl border border-red-200 px-4 py-2 text-sm text-red-600 hover:bg-red-50">
                   Cancelar contrato
                 </button>

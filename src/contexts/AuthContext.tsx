@@ -5,9 +5,11 @@ import {
   useEffect,
   useRef,
   ReactNode,
+  useMemo,
 } from 'react';
 import * as api from '../services/apiService';
 import type { AuthUser, Role } from '../services/apiService';
+import { permissionsFromRole, type UserPermissions } from '../constants/permissions';
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -15,11 +17,16 @@ interface AuthContextType {
   logout: () => void;
   refreshUser: (next: AuthUser) => void;
   isAuthenticated: boolean;
-  /** true enquanto valida token salvo ao abrir o sistema */
   authChecking: boolean;
   hasRole: (...roles: Role[]) => boolean;
-  canWrite: boolean;
+  permissions: UserPermissions;
+  canCreate: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
   canManageUsers: boolean;
+  canViewAudit: boolean;
+  /** @deprecated Use canCreate / canUpdate */
+  canWrite: boolean;
   resetInactivityTimer: () => void;
   timeRemaining: number;
 }
@@ -37,6 +44,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
+
+  const permissions = useMemo(
+    () => user?.permissions ?? permissionsFromRole(user?.role ?? 'cliente'),
+    [user]
+  );
 
   const logout = () => {
     setUser(null);
@@ -101,10 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const hasRole = (...roles: Role[]) => !!user && roles.includes(user.role);
-  const canWrite = hasRole('root', 'admin', 'user');
-  const canManageUsers = hasRole('root', 'admin');
 
-  // Valida token ao abrir o sistema
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) {
@@ -159,8 +168,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: !!user && !!localStorage.getItem('token'),
         authChecking,
         hasRole,
-        canWrite,
-        canManageUsers,
+        permissions,
+        canCreate: permissions.canCreate,
+        canUpdate: permissions.canUpdate,
+        canDelete: permissions.canDelete,
+        canManageUsers: permissions.canManageUsers,
+        canViewAudit: permissions.canViewAudit,
+        canWrite: permissions.canCreate || permissions.canUpdate,
         resetInactivityTimer,
         timeRemaining,
       }}

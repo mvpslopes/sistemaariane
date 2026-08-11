@@ -1,0 +1,26 @@
+{
+  "name": "Sistema Ariane — Portal do Cliente",
+  "short_name": "Ariane",
+  "description": "Acompanhe suas compras, contratos e cobranças.",
+  "start_url": "/login",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#FAF7F2",
+  "theme_color": "#4F3E32",
+  "orientation": "portrait-primary",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/logo-sistema-ariane.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo-sistema-ariane.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

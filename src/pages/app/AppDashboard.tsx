@@ -26,8 +26,10 @@ import {
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
+import { useClientMobile } from '../../hooks/useClientMobile';
 import Loading from '../../components/Loading';
 import DonutChart from '../../components/DonutChart';
+import { clientPortalLabels } from '../../constants/clientPortalLabels';
 
 interface RecentItem {
   id: string;
@@ -83,6 +85,7 @@ export default function AppDashboard() {
   const [recent, setRecent] = useState<RecentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const isCliente = hasRole('cliente');
+  const clientMobile = useClientMobile();
 
   useEffect(() => {
     const loadCliente = async () => {
@@ -255,6 +258,90 @@ export default function AppDashboard() {
   const firstName = user?.name?.split(' ')[0];
   const s = stats;
 
+  if (clientMobile) {
+    return (
+      <div className="space-y-5 animate-fade-in">
+        <div>
+          <h2 className="text-xl font-semibold text-brand-dark-brown">
+            {greeting()}
+            {firstName ? `, ${firstName}` : ''}
+          </h2>
+          <p className="mt-1 text-sm text-brand-olive">{clientPortalLabels.dashboardSubtitle}</p>
+        </div>
+
+        {(s?.chargesOverdue ?? 0) > 0 && (
+          <Link
+            to="/app/cobrancas"
+            className="block rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+          >
+            <span className="font-semibold">{s?.chargesOverdue} cobrança(s) atrasada(s)</span>
+            <span className="mt-0.5 block text-xs text-amber-800/80">Toque para ver detalhes</span>
+          </Link>
+        )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <MobileStatCard
+            icon={PawPrint}
+            label={clientPortalLabels.purchasesLinked}
+            value={s?.animals ?? 0}
+            to="/app/animais"
+          />
+          <MobileStatCard icon={FileText} label="Contratos" value={s?.contracts ?? 0} to="/app/contratos" />
+          <MobileStatCard
+            icon={Banknote}
+            label="Pendentes"
+            value={s?.chargesPending ?? 0}
+            to="/app/cobrancas"
+            highlight={(s?.chargesPending ?? 0) > 0}
+          />
+          <MobileStatCard
+            icon={Banknote}
+            label="Atrasadas"
+            value={s?.chargesOverdue ?? 0}
+            to="/app/cobrancas"
+            highlight={(s?.chargesOverdue ?? 0) > 0}
+            tone="warn"
+          />
+        </div>
+
+        {recent.length > 0 && (
+          <section className="space-y-3">
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-brand-olive/70">
+              Atividade recente
+            </h3>
+            <ul className="space-y-2">
+              {recent.slice(0, 5).map((item) => (
+                <li key={`${item.kind}-${item.id}`}>
+                  <Link
+                    to={item.to}
+                    className="flex items-center gap-3 rounded-2xl border border-brand-beige bg-white p-3 shadow-card transition active:scale-[0.99]"
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-brand-off-white text-xs font-semibold text-brand-brown">
+                      {item.photo ? (
+                        <img
+                          src={mediaUrl(item.photo) || undefined}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        item.title.charAt(0).toUpperCase()
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-brand-dark-brown">{item.title}</p>
+                      <p className="truncate text-xs text-brand-olive">{item.subtitle}</p>
+                    </div>
+                    <ArrowRight className="h-4 w-4 shrink-0 text-brand-olive/50" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -264,7 +351,9 @@ export default function AppDashboard() {
             {firstName ? `, ${firstName}` : ''}
           </h2>
           <p className="text-sm text-brand-olive">
-            Visão geral de cadastros, contratos e cobranças
+            {isCliente
+              ? 'Visão geral das suas compras, contratos e cobranças'
+              : 'Visão geral de cadastros, contratos e cobranças'}
           </p>
         </div>
         {canWrite && !isCliente && (
@@ -312,11 +401,23 @@ export default function AppDashboard() {
       {/* Operação */}
       <section className="space-y-3">
         <h3 className="text-xs font-semibold uppercase tracking-widest text-brand-olive/70">
-          Plantel e operação
+          {isCliente ? clientPortalLabels.sectionOperation : 'Plantel e operação'}
         </h3>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard icon={PawPrint} label="Animais cadastrados" value={s?.animals ?? 0} to="/app/animais" tone="brown" />
-          <StatCard icon={PawPrint} label="Animais ativos" value={s?.activeAnimals ?? 0} to="/app/animais" tone="forest" />
+          <StatCard
+            icon={PawPrint}
+            label={isCliente ? clientPortalLabels.purchasesLinked : 'Animais cadastrados'}
+            value={s?.animals ?? 0}
+            to="/app/animais"
+            tone="brown"
+          />
+          <StatCard
+            icon={PawPrint}
+            label={isCliente ? clientPortalLabels.purchasesActive : 'Animais ativos'}
+            value={s?.activeAnimals ?? 0}
+            to="/app/animais"
+            tone="forest"
+          />
           <StatCard icon={FileText} label="Contratos" value={s?.contracts ?? 0} to="/app/contratos" tone="gold" />
           <StatCard
             icon={Banknote}
@@ -374,9 +475,18 @@ export default function AppDashboard() {
           )}
           <DonutChart title="Contratos por status" slices={contractSlices} />
           <DonutChart title="Cobranças" slices={chargeSlices} />
-          <DonutChart title="Animais por status" slices={statusSlices} />
-          <DonutChart title="Animais por sexo" slices={sexSlices} />
-          <DonutChart title="Animais por associação" slices={associationSlices} />
+          <DonutChart
+            title={isCliente ? clientPortalLabels.chartByStatus : 'Animais por status'}
+            slices={statusSlices}
+          />
+          <DonutChart
+            title={isCliente ? clientPortalLabels.chartBySex : 'Animais por sexo'}
+            slices={sexSlices}
+          />
+          <DonutChart
+            title={isCliente ? clientPortalLabels.chartByAssociation : 'Animais por associação'}
+            slices={associationSlices}
+          />
         </div>
       </section>
 
@@ -425,7 +535,7 @@ export default function AppDashboard() {
             <h3 className="text-lg font-semibold">Resumo operacional</h3>
             <p className="mt-2 text-sm text-brand-beige/70">
               {isCliente
-                ? 'Acompanhe seus animais, contratos e cobranças vinculadas.'
+                ? clientPortalLabels.summaryPurchases
                 : `${s?.buyers ?? 0} compradores · ${s?.sellers ?? 0} vendedores · ${s?.assessors ?? 0} assessores · ${s?.witnesses ?? 0} testemunhas · ${s?.avalistas ?? 0} avalistas.`}
             </p>
           </div>
@@ -438,7 +548,7 @@ export default function AppDashboard() {
             {isCliente ? (
               <>
                 <Link to="/app/animais" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
-                  Ver animais
+                  {clientPortalLabels.viewPurchases}
                 </Link>
                 <Link to="/app/contratos" className="rounded-lg bg-white/5 px-3 py-2 hover:bg-white/10">
                   Ver contratos
@@ -564,6 +674,40 @@ function StatCard({
         <p className="text-3xl font-semibold text-brand-dark-brown">{value}</p>
         <ArrowRight className="h-4 w-4 text-brand-olive/0 transition group-hover:text-brand-olive/60" />
       </div>
+    </Link>
+  );
+}
+
+function MobileStatCard({
+  icon: Icon,
+  label,
+  value,
+  to,
+  highlight = false,
+  tone = 'default',
+}: {
+  icon: typeof Users;
+  label: string;
+  value: number;
+  to: string;
+  highlight?: boolean;
+  tone?: 'default' | 'warn';
+}) {
+  const border =
+    tone === 'warn' && highlight
+      ? 'border-amber-200 bg-amber-50/50'
+      : highlight
+        ? 'border-brand-gold/40'
+        : 'border-brand-beige';
+
+  return (
+    <Link
+      to={to}
+      className={`rounded-2xl border bg-white p-4 shadow-card transition active:scale-[0.98] ${border}`}
+    >
+      <Icon className="mb-2 h-5 w-5 text-brand-brown" />
+      <p className="text-[11px] leading-tight text-brand-olive">{label}</p>
+      <p className="mt-1 text-2xl font-semibold text-brand-dark-brown">{value}</p>
     </Link>
   );
 }
