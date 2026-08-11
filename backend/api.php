@@ -763,6 +763,14 @@ function validate_required_client(array $body): ?string {
         return 'E-mail inválido';
     }
     if (trim((string)($body['phone'] ?? '')) === '') $missing[] = 'Telefone';
+    $birth = trim((string)($body['birth_date'] ?? ''));
+    if ($birth === '') {
+        $missing[] = 'Data de nascimento';
+    } elseif (!preg_match('/^(\d{4})-(\d{2})-(\d{2})/', $birth, $bm)) {
+        return 'Data de nascimento inválida';
+    } elseif (!checkdate((int)$bm[2], (int)$bm[3], (int)$bm[1])) {
+        return 'Data de nascimento inválida';
+    }
     $cep = preg_replace('/\D+/', '', (string)($body['zip_code'] ?? '')) ?? '';
     if (strlen($cep) !== 8) $missing[] = 'CEP';
     if (trim((string)($body['address'] ?? '')) === '') $missing[] = 'Endereço (logradouro)';

@@ -4,13 +4,13 @@ import { KeyRound, LogOut } from 'lucide-react';
 import { updateProfile } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import { useClientMobile } from '../../hooks/useClientMobile';
+import { useAppMobile } from '../../hooks/useAppMobile';
 import UserAvatar from '../../components/UserAvatar';
 
 export default function ProfilePage() {
   const { user, refreshUser, logout } = useAuth();
   const navigate = useNavigate();
-  const clientMobile = useClientMobile();
+  const appMobile = useAppMobile();
   const { success, error: toastError } = useToast();
   const [name, setName] = useState(user?.name || '');
   const [saving, setSaving] = useState(false);
@@ -44,13 +44,13 @@ export default function ProfilePage() {
     <div className="mx-auto max-w-lg space-y-5 animate-fade-in">
       <div className="flex items-center justify-between gap-3">
         <div>
-          {!clientMobile && (
+          {!appMobile && (
             <>
               <h2 className="text-2xl font-semibold text-brand-dark-brown">Meu perfil</h2>
               <p className="text-sm text-brand-olive">Nome de exibição no sistema</p>
             </>
           )}
-          {clientMobile && (
+          {appMobile && (
             <p className="text-sm text-brand-olive">Nome de exibição no sistema</p>
           )}
         </div>
@@ -100,7 +100,7 @@ export default function ProfilePage() {
         </div>
       </form>
 
-      {clientMobile && (
+      {appMobile && (
         <button
           type="button"
           onClick={handleLogout}

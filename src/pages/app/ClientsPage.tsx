@@ -9,6 +9,8 @@ import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
 import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, sortRows } from '../../hooks/useSortableTable';
+import { useAppMobile } from '../../hooks/useAppMobile';
+import { MobileCard } from '../../components/MobileCard';
 import ClientForm from './ClientForm';
 
 type StatusFilter = 'all' | 'active' | 'inactive';
@@ -53,6 +55,7 @@ function avatarTone(seed: string) {
 
 export default function ClientsPage() {
   const { canCreate, canUpdate, canDelete } = useAuth();
+  const appMobile = useAppMobile();
   const { success, error: toastError } = useToast();
   const [clients, setClients] = useState<Client[]>([]);
   const [q, setQ] = useState('');
@@ -242,6 +245,41 @@ export default function ClientsPage() {
         <Loading message="Carregando pessoas..." />
       ) : filtered.length === 0 ? (
         <EmptyState />
+      ) : appMobile ? (
+        <ul className="space-y-3">
+          {filtered.map((c) => (
+            <li key={c.id}>
+              <MobileCard onClick={() => openEdit(c.id)}>
+                <div className="flex items-start gap-3">
+                  <div
+                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-sm font-semibold ${avatarTone(c.name)}`}
+                  >
+                    {c.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="truncate font-semibold text-brand-dark-brown">{c.name}</p>
+                      <StatusBadge active={c.active} />
+                    </div>
+                    {c.property_name && (
+                      <p className="mt-0.5 truncate text-xs text-brand-olive">{c.property_name}</p>
+                    )}
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {c.is_buyer && <RoleChip label="Comprador" />}
+                      {c.is_seller && <RoleChip label="Vendedor" />}
+                      {c.is_assessor && <RoleChip label="Assessor" />}
+                      {c.is_witness && <RoleChip label="Testemunha" />}
+                      {c.is_avalista && <RoleChip label="Avalista" />}
+                    </div>
+                    <p className="mt-1 text-xs text-brand-olive/80">
+                      {[c.city, c.state].filter(Boolean).join('/') || c.whatsapp || c.phone || '—'}
+                    </p>
+                  </div>
+                </div>
+              </MobileCard>
+            </li>
+          ))}
+        </ul>
       ) : (
         <div className="rounded-2xl border border-brand-beige bg-white shadow-card">
           <div className="w-full max-w-full overflow-x-auto">

@@ -77,6 +77,12 @@ function validateRequiredPerson(form: Partial<Client>): string | null {
 
   if (!form.phone?.trim()) missing.push('Telefone');
 
+  if (!form.birth_date?.trim()) {
+    missing.push('Data de nascimento');
+  } else if (!/^\d{4}-\d{2}-\d{2}$/.test(form.birth_date.trim())) {
+    return 'Data de nascimento inválida';
+  }
+
   const cep = (form.zip_code || '').replace(/\D/g, '');
   if (cep.length !== 8) missing.push('CEP');
   if (!form.address?.trim()) missing.push('Endereço (logradouro)');
@@ -132,10 +138,10 @@ interface ClientFormProps {
 
 export default function ClientForm({ clientId, defaultPartyRole, onClose, onSaved }: ClientFormProps) {
   const { canCreate, canUpdate, canDelete } = useAuth();
-  const canEdit = isNew ? canCreate : canUpdate;
   const { success, error: toastError } = useToast();
   const [currentId, setCurrentId] = useState<string | null>(clientId);
   const isNew = !currentId;
+  const canEdit = isNew ? canCreate : canUpdate;
   const [tab, setTab] = useState<TabId>('dados');
   const [form, setForm] = useState<Partial<Client>>(() => emptyForm(defaultPartyRole));
   const [loading, setLoading] = useState(!isNew);
@@ -460,8 +466,8 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
               <Field label="Apelido">
                 <input disabled={!canEdit} value={form.nickname || ''} onChange={(e) => set('nickname', e.target.value)} className={inputClass} />
               </Field>
-              <Field label="Data de nascimento">
-                <input type="date" disabled={!canEdit} value={form.birth_date || ''} onChange={(e) => set('birth_date', e.target.value)} className={inputClass} />
+              <Field label="Data de nascimento *">
+                <input type="date" required disabled={!canEdit} value={form.birth_date || ''} onChange={(e) => set('birth_date', e.target.value)} className={inputClass} />
               </Field>
               <Field label="Tipo documento *">
                 <select required disabled={!canEdit} value={form.document_type || 'CPF'} onChange={(e) => set('document_type', e.target.value)} className={inputClass}>

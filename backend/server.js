@@ -669,6 +669,16 @@ function validateRequiredClient(body) {
   if (!email) missing.push('E-mail');
   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'E-mail inválido';
   if (!String(body.phone || '').trim()) missing.push('Telefone');
+  const birth = String(body.birth_date || '').trim();
+  if (!birth) missing.push('Data de nascimento');
+  else if (!/^\d{4}-\d{2}-\d{2}$/.test(birth)) return 'Data de nascimento inválida';
+  else {
+    const [y, m, d] = birth.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) {
+      return 'Data de nascimento inválida';
+    }
+  }
   if (String(body.zip_code || '').replace(/\D/g, '').length !== 8) missing.push('CEP');
   if (!String(body.address || '').trim()) missing.push('Endereço (logradouro)');
   if (!String(body.city || '').trim()) missing.push('Cidade');

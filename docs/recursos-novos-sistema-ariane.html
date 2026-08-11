@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sistema Ariane — Novos Recursos</title>
+  <style>
+    @page { size: A4; margin: 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Montserrat, sans-serif;
+      color: #4F3E32;
+      line-height: 1.5;
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      font-size: 10pt;
+    }
+    .cover {
+      text-align: center;
+      padding: 48px 24px 56px;
+      border-bottom: 3px solid #C08A3E;
+      margin-bottom: 28px;
+      page-break-after: always;
+    }
+    .cover h1 { font-size: 24pt; color: #4F3E32; margin: 0 0 6px; }
+    .cover .sub { color: #81705F; font-size: 13pt; margin: 0 0 20px; }
+    .cover .meta { font-size: 10pt; color: #A0896A; line-height: 1.6; }
+    h2 {
+      color: #4F3E32;
+      font-size: 14pt;
+      border-left: 4px solid #C08A3E;
+      padding-left: 10px;
+      margin: 28px 0 12px;
+      page-break-after: avoid;
+    }
+    h3 { color: #81705F; font-size: 11pt; margin: 18px 0 8px; page-break-after: avoid; }
+    p { margin: 8px 0; }
+    .intro {
+      background: #F8F7F4;
+      border: 1px solid #E6D8C3;
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin: 16px 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 9pt;
+    }
+    th, td {
+      border: 1px solid #E6D8C3;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #4F3E32; color: #fff; font-weight: 600; }
+    tr:nth-child(even) { background: #F8F7F4; }
+    .tag {
+      display: inline-block;
+      font-size: 7.5pt;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-right: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .tag.mvp { background: #C08A3E; color: #fff; }
+    .tag.f2 { background: #4A6650; color: #fff; }
+    .tag.f3 { background: #81705F; color: #fff; }
+    ul { margin: 6px 0; padding-left: 20px; }
+    li { margin: 4px 0; }
+    .module-box {
+      border: 1px solid #E6D8C3;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 12px 0;
+      page-break-inside: avoid;
+    }
+    .module-box h3 { margin-top: 0; color: #4F3E32; font-size: 11pt; }
+    .footer {
+      margin-top: 32px;
+      padding-top: 14px;
+      border-top: 1px solid #E6D8C3;
+      font-size: 8.5pt;
+      color: #A0896A;
+      text-align: center;
+    }
+    .page-break { page-break-before: always; }
+  </style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>Sistema Ariane</h1>
+  <p class="sub">Novos Recursos — Estratégia de Upgrade da Plataforma</p>
+  <p class="meta">
+    Ariane Andrade Assessoria · Gestão de Haras<br>
+    Documento técnico-comercial · Versão 1.0 · Agosto/2026
+  </p>
+</div>
+
+<div class="intro">
+  <p><strong>Objetivo:</strong> descrever todos os <strong>recursos novos</strong> a serem desenvolvidos na evolução do Sistema Ariane — indo além do que já existe hoje (contratos, cobranças, repasses, leilões, portal mobile e auditoria).</p>
+  <p>A proposta é transformar o sistema em uma <strong>plataforma modular por haras</strong>, permitindo que cada cliente contrate apenas os módulos que precisa (ex.: só sanitário), com comercialização via adesão e mensalidade.</p>
+</div>
+
+<h2>1. Visão geral — O que será construído</h2>
+<p>O upgrade organiza a plataforma em <strong>quatro dashboards</strong>, complementados por <strong>administração comercial (SaaS)</strong>:</p>
+<table>
+  <tr><th>Dashboard / Área</th><th>Descrição</th><th>Fase</th></tr>
+  <tr><td><strong>Assessoria ao Criador</strong></td><td>Reprodução, sanitário, plantel ampliado, comunicação ABCCMM</td><td><span class="tag mvp">MVP</span></td></tr>
+  <tr><td><strong>Leilões (expansão)</strong></td><td>Financeiro por evento, portal do assessor</td><td><span class="tag f2">Fase 2</span></td></tr>
+  <tr><td><strong>Recebíveis (expansão)</strong></td><td>Inadimplência visual, integração bancária</td><td><span class="tag f2">Fase 2–3</span></td></tr>
+  <tr><td><strong>Financeiro da Empresa</strong></td><td>Consolidado por área de negócio</td><td><span class="tag f3">Fase 3</span></td></tr>
+  <tr><td><strong>Comercialização SaaS</strong></td><td>Planos, módulos e mensalidade por haras</td><td><span class="tag f3">Fase 3</span></td></tr>
+</table>
+
+<h2>2. Dashboard — Assessoria ao Criador</h2>
+<p>Área dedicada ao criador/haras, substituindo planilhas manuais. Inspirada em soluções como Faturar/Confiança Criador, porém <strong>modular e integrada</strong> ao restante do sistema.</p>
+
+<div class="module-box">
+  <h3>2.1 Módulo Reprodução <span class="tag mvp">MVP</span></h3>
+  <p>Controle completo do ciclo reprodutivo, eliminando planilhas de cobrições e embriões.</p>
+  <p><strong>Cobrições</strong></p>
+  <ul>
+    <li>Cadastro: égua, garanhão, receptora (quando aplicável), data e veterinário</li>
+    <li>Métodos: Inseminação Artificial, Monta Natural, Transferência de Embrião</li>
+    <li>Organização por temporada/estação reprodutiva</li>
+    <li>Histórico completo por animal</li>
+  </ul>
+  <p><strong>Embriões</strong></p>
+  <ul>
+    <li>Registro: total produzido, receptora, data, veterinário responsável</li>
+    <li>Status de comunicação à ABCCMM: pendente, comunicado, confirmado</li>
+    <li>Alertas de prazo para evitar multas por comunicação tardia</li>
+  </ul>
+  <p><strong>Prenhez e nascimentos</strong> <span class="tag f2">Fase 2</span></p>
+  <ul>
+    <li>Controle de prenhez (toques), registro de nascimentos</li>
+    <li>Previsão de potros por estação</li>
+  </ul>
+  <p><strong>Relatórios PDF</strong></p>
+  <ul>
+    <li>Cobrições e embriões por período/haras</li>
+    <li>Relatório de monta natural e previsão de nascimentos</li>
+  </ul>
+</div>
+
+<div class="module-box">
+  <h3>2.2 Módulo Sanitário <span class="tag f2">Fase 2</span></h3>
+  <p>Módulo contratável separadamente — para clientes que querem <strong>somente controle sanitário</strong>.</p>
+  <ul>
+    <li>Vacinas (tipo, data, próxima dose)</li>
+    <li>Vermífugos e exames: Mormo, AIE, DNA e outros</li>
+    <li>Alertas de vencimento e relatório sanitário em PDF</li>
+  </ul>
+</div>
+
+<div class="module-box">
+  <h3>2.3 Plantel ampliado <span class="tag f2">Fase 2</span></h3>
+  <ul>
+    <li>Genealogia completa, classificações e avaliações</li>
+    <li>Galeria de fotos e vídeos por animal</li>
+    <li>Vínculo com cotas e condomínio</li>
+  </ul>
+</div>
+
+<div class="module-box">
+  <h3>2.4 Comunicação e responsabilidade (ABCCMM) <span class="tag mvp">MVP</span></h3>
+  <ul>
+    <li>Status por evento: o que foi ou não comunicado à associação</li>
+    <li>Trilha de auditoria: quem registrou, quando e o que alterou</li>
+    <li>Histórico exportável como prova em caso de multa</li>
+    <li>Alertas quando o cliente não informa a tempo</li>
+  </ul>
+  <p><strong>Integração ABCCMM via API</strong> <span class="tag f3">Fase 4</span> — sujeita a discovery técnico.</p>
+</div>
+
+<h2 class="page-break">3. Portal do Assessor <span class="tag f2">Fase 2</span></h2>
+<ul>
+  <li>Visão do que tem <strong>a receber</strong> e <strong>a pagar</strong></li>
+  <li>Controle de vendas realizadas e despesas vinculadas</li>
+  <li>Extrato de comissões e repasses</li>
+  <li>Acesso mobile (cards + bottom navigation)</li>
+</ul>
+
+<h2>4. Dashboard Financeiro da Empresa <span class="tag f3">Fase 3</span></h2>
+<ul>
+  <li>Receitas por área: leilões, assessoria, SaaS (mensalidades)</li>
+  <li>Despesas por centro de custo</li>
+  <li>Repasses pendentes e inadimplência consolidada</li>
+  <li>Relatórios mensais e comparativos</li>
+</ul>
+<p><em>Separado do financeiro “por haras” e “por leilão”.</em></p>
+
+<h2>5. Comercialização SaaS — Módulos por Haras <span class="tag f3">Fase 3</span></h2>
+
+<h3>5.1 Módulos contratáveis</h3>
+<table>
+  <tr><th>Módulo</th><th>Conteúdo</th></tr>
+  <tr><td>Plantel básico</td><td>Animais, fotos, proprietários</td></tr>
+  <tr><td>Reprodução</td><td>Cobrições, embriões, prenhez, nascimentos</td></tr>
+  <tr><td>Sanitário</td><td>Vacinas, vermífugos, exames</td></tr>
+  <tr><td>Contratos e cobranças</td><td>Vendas diretas, parcelas, boletos</td></tr>
+  <tr><td>Leilões</td><td>Eventos, lotes, financeiro por leilão</td></tr>
+</table>
+
+<h3>5.2 Modelo comercial proposto</h3>
+<table>
+  <tr><th>Tipo de cliente</th><th>Adesão</th><th>Mensalidade</th></tr>
+  <tr><td>Cliente de assessoria Ariane</td><td>Grátis (brinde)</td><td>Simbólica ou isenta</td></tr>
+  <tr><td>Cliente avulso (só app)</td><td>Paga</td><td>Paga — conforme módulos</td></tr>
+  <tr><td>Referência mercado (Faturar Criador)</td><td>R$ 400</td><td>R$ 250/haras</td></tr>
+</table>
+
+<h3>5.3 Funcionalidades administrativas</h3>
+<ul>
+  <li>Ativação/desativação de módulos por haras</li>
+  <li>Controle de adesão e mensalidade</li>
+  <li>Suspensão por inadimplência e onboarding de novo haras</li>
+</ul>
+
+<h2>6. Expansões em módulos já existentes</h2>
+
+<div class="module-box">
+  <h3>6.1 Leilões <span class="tag f2">Fase 2</span></h3>
+  <ul>
+    <li>Financeiro completo por leilão (receitas, despesas, resultado)</li>
+    <li>Portal do assessor vinculado ao evento</li>
+    <li>Relatórios pós-leilão em PDF</li>
+  </ul>
+</div>
+
+<div class="module-box">
+  <h3>6.2 Recebíveis <span class="tag f2">Fase 2–3</span></h3>
+  <ul>
+    <li>Dashboard visual de inadimplência</li>
+    <li>Alertas de cobranças atrasadas (e-mail/WhatsApp)</li>
+    <li>Integração bancária para boletos e PIX <span class="tag f3">Fase 4</span></li>
+  </ul>
+</div>
+
+<h2>7. Integrações externas</h2>
+<table>
+  <tr><th>Integração</th><th>Finalidade</th><th>Fase</th></tr>
+  <tr><td><strong>ABCCMM</strong></td><td>Consulta de animais; status de comunicação oficial</td><td>Fase 4</td></tr>
+  <tr><td><strong>Banco / Gateway</strong></td><td>Emissão de boletos e PIX automáticos</td><td>Fase 4</td></tr>
+  <tr><td><strong>Notificações</strong></td><td>E-mail e WhatsApp para alertas de prazo</td><td>Fase 2</td></tr>
+</table>
+
+<h2>8. Perfis de usuário nos novos recursos</h2>
+<table>
+  <tr><th>Perfil</th><th>Novos acessos</th></tr>
+  <tr><td>Admin / Operador</td><td>Todos os módulos; gestão de planos; financeiro empresa</td></tr>
+  <tr><td>Cliente / Criador</td><td>Informar nascimentos/eventos; ver relatórios do haras</td></tr>
+  <tr><td>Assessor</td><td>Portal: receber, pagar, vendas, comissões</td></tr>
+  <tr><td>Veterinário (futuro)</td><td>Registrar cobrições e exames no haras autorizado</td></tr>
+</table>
+
+<h2>9. Cronograma de implementação</h2>
+<table>
+  <tr><th>Fase</th><th>Prazo indicativo</th><th>Entregas principais</th></tr>
+  <tr><td><strong>Fase 0</strong></td><td>2–3 semanas</td><td>Escopo MVP, wireframes, ERD, haras piloto</td></tr>
+  <tr><td><strong>Fase 1 — MVP</strong></td><td>8–12 semanas</td><td>Reprodução, ABCCMM manual, PDF, modularidade básica</td></tr>
+  <tr><td><strong>Fase 2</strong></td><td>6–8 semanas</td><td>Sanitário, prenhez/nascimentos, portal assessor</td></tr>
+  <tr><td><strong>Fase 3</strong></td><td>6–8 semanas</td><td>SaaS (planos/mensalidade), financeiro empresa</td></tr>
+  <tr><td><strong>Fase 4</strong></td><td>Contínuo</td><td>ABCCMM API, banco, estoque/manejo (se demandado)</td></tr>
+</table>
+
+<h2>10. Diferenciais em relação ao mercado</h2>
+<ul>
+  <li><strong>Modular:</strong> cliente contrata só sanitário, só reprodução, ou pacote completo</li>
+  <li><strong>Contrato e cobrança independentes:</strong> venda direta sem obrigar cobrança de terceiros</li>
+  <li><strong>Histórico auditável:</strong> prova do que foi comunicado à ABCCMM</li>
+  <li><strong>Mobile-first:</strong> criador e assessor usam no campo, pelo celular</li>
+  <li><strong>Integrado:</strong> reprodução + contratos + cobranças + leilões na mesma plataforma</li>
+  <li><strong>Preço flexível:</strong> assessoria ganha brinde; avulso paga conforme módulos</li>
+</ul>
+
+<div class="footer">
+  Sistema Ariane · Ariane Andrade Assessoria · Gestão de Haras<br>
+  Documento gerado em Agosto/2026 · Versão 1.0 · Uso interno e apresentação comercial
+</div>
+
+</body>
+</html>

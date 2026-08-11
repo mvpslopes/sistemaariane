@@ -20,13 +20,14 @@ import {
   Menu,
   X,
   Shield,
+  MoreHorizontal,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import UserAvatar from './UserAvatar';
-import ClientBottomNav from './ClientBottomNav';
+import AppBottomNav from './AppBottomNav';
+import MobileMoreSheet from './MobileMoreSheet';
 import { clientPortalLabels, resolvePageMeta } from '../constants/clientPortalLabels';
 import { useIsMobile } from '../hooks/useIsMobile';
-import { useClientMobile } from '../hooks/useClientMobile';
 
 const roleLabel: Record<string, string> = {
   root: 'Root',
@@ -45,8 +46,8 @@ export default function AppShell() {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const isMobile = useIsMobile();
-  const clientMobile = useClientMobile();
   const [cadastrosOpen, setCadastrosOpen] = useState(true);
   const [contaOpen, setContaOpen] = useState(false);
   const isCliente = hasRole('cliente');
@@ -67,20 +68,23 @@ export default function AppShell() {
 
   useEffect(() => {
     setMobileOpen(false);
+    setMoreOpen(false);
     document.body.style.overflow = '';
   }, [location.pathname]);
 
   useEffect(() => {
-    if (clientMobile || !isMobile) {
+    if (isMobile) {
       setMobileOpen(false);
-      document.body.style.overflow = '';
-      return;
+      document.body.style.overflow = moreOpen ? 'hidden' : '';
+      return () => {
+        document.body.style.overflow = '';
+      };
     }
     document.body.style.overflow = mobileOpen ? 'hidden' : '';
     return () => {
       document.body.style.overflow = '';
     };
-  }, [mobileOpen, isMobile, clientMobile]);
+  }, [mobileOpen, isMobile, moreOpen]);
 
   const handleLogout = () => {
     logout();
@@ -113,7 +117,7 @@ export default function AppShell() {
   const showCadastrosChildren = compact || cadastrosOpen;
   const showContaChildren = compact || contaOpen;
 
-  if (clientMobile) {
+  if (isMobile) {
     const firstName = user?.name?.split(' ')[0];
 
     return (
@@ -121,13 +125,26 @@ export default function AppShell() {
         <header className="sticky top-0 z-20 shrink-0 border-b border-brand-beige/70 bg-white/95 px-4 py-3 backdrop-blur-md pt-[max(0.75rem,env(safe-area-inset-top))]">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium text-brand-olive">Portal do cliente</p>
+              <p className="truncate text-xs font-medium text-brand-olive">
+                {isCliente ? 'Portal do cliente' : 'Sistema Ariane · Gestão de Haras'}
+              </p>
               <h1 className="truncate text-lg font-semibold text-brand-dark-brown">{meta.title}</h1>
               {firstName && location.pathname === '/app' && (
                 <p className="truncate text-xs text-brand-olive">Olá, {firstName}</p>
               )}
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              {!isCliente && (
+                <button
+                  type="button"
+                  onClick={() => setMoreOpen(true)}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-brand-beige bg-white text-brand-brown transition hover:bg-brand-off-white"
+                  title="Mais opções"
+                  aria-label="Mais opções"
+                >
+                  <MoreHorizontal className="h-5 w-5" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleLogout}
@@ -152,7 +169,8 @@ export default function AppShell() {
           <Outlet />
         </main>
 
-        <ClientBottomNav />
+        <AppBottomNav />
+        <MobileMoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} />
       </div>
     );
   }

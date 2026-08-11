@@ -26,7 +26,7 @@ import {
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import { useClientMobile } from '../../hooks/useClientMobile';
+import { useAppMobile } from '../../hooks/useAppMobile';
 import Loading from '../../components/Loading';
 import DonutChart from '../../components/DonutChart';
 import { clientPortalLabels } from '../../constants/clientPortalLabels';
@@ -85,7 +85,7 @@ export default function AppDashboard() {
   const [recent, setRecent] = useState<RecentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const isCliente = hasRole('cliente');
-  const clientMobile = useClientMobile();
+  const appMobile = useAppMobile();
 
   useEffect(() => {
     const loadCliente = async () => {
@@ -258,7 +258,7 @@ export default function AppDashboard() {
   const firstName = user?.name?.split(' ')[0];
   const s = stats;
 
-  if (clientMobile) {
+  if (appMobile) {
     return (
       <div className="space-y-5 animate-fade-in">
         <div>
@@ -266,7 +266,11 @@ export default function AppDashboard() {
             {greeting()}
             {firstName ? `, ${firstName}` : ''}
           </h2>
-          <p className="mt-1 text-sm text-brand-olive">{clientPortalLabels.dashboardSubtitle}</p>
+          <p className="mt-1 text-sm text-brand-olive">
+            {isCliente
+              ? clientPortalLabels.dashboardSubtitle
+              : 'Visão geral de cadastros, contratos e cobranças'}
+          </p>
         </div>
 
         {(s?.chargesOverdue ?? 0) > 0 && (
@@ -280,28 +284,45 @@ export default function AppDashboard() {
         )}
 
         <div className="grid grid-cols-2 gap-3">
-          <MobileStatCard
-            icon={PawPrint}
-            label={clientPortalLabels.purchasesLinked}
-            value={s?.animals ?? 0}
-            to="/app/animais"
-          />
-          <MobileStatCard icon={FileText} label="Contratos" value={s?.contracts ?? 0} to="/app/contratos" />
-          <MobileStatCard
-            icon={Banknote}
-            label="Pendentes"
-            value={s?.chargesPending ?? 0}
-            to="/app/cobrancas"
-            highlight={(s?.chargesPending ?? 0) > 0}
-          />
-          <MobileStatCard
-            icon={Banknote}
-            label="Atrasadas"
-            value={s?.chargesOverdue ?? 0}
-            to="/app/cobrancas"
-            highlight={(s?.chargesOverdue ?? 0) > 0}
-            tone="warn"
-          />
+          {isCliente ? (
+            <>
+              <MobileStatCard
+                icon={PawPrint}
+                label={clientPortalLabels.purchasesLinked}
+                value={s?.animals ?? 0}
+                to="/app/animais"
+              />
+              <MobileStatCard icon={FileText} label="Contratos" value={s?.contracts ?? 0} to="/app/contratos" />
+              <MobileStatCard
+                icon={Banknote}
+                label="Pendentes"
+                value={s?.chargesPending ?? 0}
+                to="/app/cobrancas"
+                highlight={(s?.chargesPending ?? 0) > 0}
+              />
+              <MobileStatCard
+                icon={Banknote}
+                label="Atrasadas"
+                value={s?.chargesOverdue ?? 0}
+                to="/app/cobrancas"
+                highlight={(s?.chargesOverdue ?? 0) > 0}
+                tone="warn"
+              />
+            </>
+          ) : (
+            <>
+              <MobileStatCard icon={Users} label="Pessoas" value={s?.clients ?? 0} to="/app/pessoas" />
+              <MobileStatCard icon={PawPrint} label="Animais" value={s?.animals ?? 0} to="/app/animais" />
+              <MobileStatCard icon={FileText} label="Contratos" value={s?.contracts ?? 0} to="/app/contratos" />
+              <MobileStatCard
+                icon={Banknote}
+                label="Pendentes"
+                value={s?.chargesPending ?? 0}
+                to="/app/cobrancas"
+                highlight={(s?.chargesPending ?? 0) > 0}
+              />
+            </>
+          )}
         </div>
 
         {recent.length > 0 && (

@@ -21,7 +21,7 @@ import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
 import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, cmpNum, sortRows } from '../../hooks/useSortableTable';
-import { useClientMobile } from '../../hooks/useClientMobile';
+import { useAppMobile } from '../../hooks/useAppMobile';
 import { MobileCard } from '../../components/MobileCard';
 import ContractForm from './ContractForm';
 import ContractDocument, { ContractVerso } from './ContractDocument';
@@ -87,7 +87,7 @@ interface ContractsPageProps {
 
 export default function ContractsPage({ initialAnimalId = null }: ContractsPageProps) {
   const { canCreate, canUpdate } = useAuth();
-  const clientMobile = useClientMobile();
+  const appMobile = useAppMobile();
   const { success, error: toastError } = useToast();
   const [items, setItems] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
@@ -420,7 +420,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
 
       {loading ? (
         <Loading message="Carregando contratos..." />
-      ) : clientMobile ? (
+      ) : appMobile ? (
         filtered.length === 0 ? (
           <p className="py-12 text-center text-sm text-brand-olive">Nenhum contrato encontrado</p>
         ) : (

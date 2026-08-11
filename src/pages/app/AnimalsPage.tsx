@@ -9,7 +9,7 @@ import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
 import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, sortRows } from '../../hooks/useSortableTable';
-import { useClientMobile } from '../../hooks/useClientMobile';
+import { useAppMobile } from '../../hooks/useAppMobile';
 import { clientPortalLabels } from '../../constants/clientPortalLabels';
 import { MobileCard } from '../../components/MobileCard';
 import AnimalForm from './AnimalForm';
@@ -52,7 +52,7 @@ const statusLabel: Record<Animal['status'], string> = {
 export default function AnimalsPage() {
   const { canCreate, canUpdate, canDelete, hasRole } = useAuth();
   const isCliente = hasRole('cliente');
-  const clientMobile = useClientMobile();
+  const appMobile = useAppMobile();
   const { success, error: toastError } = useToast();
   const [animals, setAnimals] = useState<Animal[]>([]);
   const [q, setQ] = useState('');
@@ -217,7 +217,7 @@ export default function AnimalsPage() {
         <Loading message={isCliente ? clientPortalLabels.loadingPurchases : 'Carregando animais...'} />
       ) : filtered.length === 0 ? (
         <EmptyState isCliente={isCliente} />
-      ) : clientMobile ? (
+      ) : appMobile ? (
         <ul className="space-y-3">
           {filtered.map((a) => (
             <li key={a.id}>

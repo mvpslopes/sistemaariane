@@ -1,7 +1,7 @@
 import { useAuth } from '../contexts/AuthContext';
 import { useIsMobile } from './useIsMobile';
 
-/** Portal mobile dedicado ao perfil cliente (~767px). */
+/** UI específica do perfil cliente no mobile (rótulos, filtros etc.). */
 export function useClientMobile() {
   const { hasRole } = useAuth();
   const isMobile = useIsMobile();

@@ -15,7 +15,7 @@ import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
 import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, cmpNum, sortRows } from '../../hooks/useSortableTable';
-import { useClientMobile } from '../../hooks/useClientMobile';
+import { useAppMobile } from '../../hooks/useAppMobile';
 import { MobileCard } from '../../components/MobileCard';
 
 const money = (v: number) =>
@@ -64,8 +64,9 @@ const COLLECTOR_ORDER: Record<ChargeCollector, number> = {
 };
 
 export default function ChargesPage() {
-  const { canUpdate } = useAuth();
-  const clientMobile = useClientMobile();
+  const { canUpdate, hasRole } = useAuth();
+  const appMobile = useAppMobile();
+  const isCliente = hasRole('cliente');
   const { success, error: toastError } = useToast();
   const [items, setItems] = useState<Charge[]>([]);
   const [loading, setLoading] = useState(true);
@@ -199,7 +200,7 @@ export default function ChargesPage() {
             <> de <span className="font-semibold text-brand-dark-brown">{items.length}</span></>
           ) : null}{' '}
           cobranças
-          {!clientMobile && (
+          {!isCliente && (
             <>
               {' '}
               · <span className="font-semibold text-brand-dark-brown">{pending}</span> da assessoria em aberto ·{' '}
@@ -228,7 +229,7 @@ export default function ChargesPage() {
               value={statusFilter}
               onChange={setStatusFilter}
             />
-            {!clientMobile && (
+            {!isCliente && (
               <FilterPills
                 options={COLLECTOR_FILTERS.map((opt) => ({ ...opt, count: collectorCounts[opt.id] }))}
                 value={collectorFilter}
@@ -241,7 +242,7 @@ export default function ChargesPage() {
 
       {loading ? (
         <Loading message="Carregando cobranças..." />
-      ) : clientMobile ? (
+      ) : appMobile ? (
         filtered.length === 0 ? (
           <p className="py-12 text-center text-sm text-brand-olive">Nenhuma cobrança encontrada</p>
         ) : (

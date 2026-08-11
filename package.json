@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "backend:install": "cd backend && npm install",
-    "backend:start": "cd backend && npm start"
+    "backend:start": "cd backend && npm start",
+    "docs:pdf": "node scripts/html-to-pdf.mjs docs/recursos-novos-sistema-ariane.html"
   },
   "dependencies": {
     "firebase": "^12.7.0",
@@ -33,6 +34,7 @@
     "eslint-plugin-react-refresh": "^0.4.11",
     "globals": "^15.9.0",
     "postcss": "^8.4.35",
+    "puppeteer": "^24.34.0",
     "tailwindcss": "^3.4.1",
     "typescript": "^5.5.3",
     "vite": "^5.4.2"
