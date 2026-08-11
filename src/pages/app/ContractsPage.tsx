@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, Search, FileText, Printer, Pencil, Send, RefreshCw, CheckCircle2, Clock, Download, Copy, MessageCircle, Mail } from 'lucide-react';
 import {
   getContract,
@@ -17,6 +17,10 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 import Modal from '../../components/Modal';
+import { FilterPills } from '../../components/FilterPills';
+import { ListTableToolbar } from '../../components/ListTableToolbar';
+import { SortTh } from '../../components/SortTh';
+import { useSortableTable, cmpStr, cmpNum, sortRows } from '../../hooks/useSortableTable';
 import ContractForm from './ContractForm';
 import ContractDocument, { ContractVerso } from './ContractDocument';
 import { getContractPdfBase64 } from './printContractPdf';
@@ -49,6 +53,32 @@ const saleLabel = (type: string) => {
 const money = (v: number) =>
   v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
+type StatusFilter = 'all' | 'aguardando_assinatura' | 'finalizados' | 'cancelado';
+type SortKey = 'animal' | 'type' | 'buyer' | 'value' | 'status';
+
+const FINALIZED_STATUSES: Contract['status'][] = ['ativo', 'concluido'];
+
+const STATUS_FILTER_OPTIONS: { id: StatusFilter; label: string }[] = [
+  { id: 'all', label: 'Todos' },
+  { id: 'aguardando_assinatura', label: 'Aguardando assinatura' },
+  { id: 'finalizados', label: 'Finalizados' },
+  { id: 'cancelado', label: 'Cancelados' },
+];
+
+const STATUS_SORT_ORDER: Record<Contract['status'], number> = {
+  rascunho: 0,
+  aguardando_assinatura: 1,
+  ativo: 2,
+  concluido: 3,
+  cancelado: 4,
+};
+
+function matchesStatusFilter(status: Contract['status'], filter: StatusFilter) {
+  if (filter === 'all') return true;
+  if (filter === 'finalizados') return FINALIZED_STATUSES.includes(status);
+  return status === filter;
+}
+
 interface ContractsPageProps {
   initialAnimalId?: string | null;
 }
@@ -59,6 +89,8 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const [items, setItems] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const { sortKey, sortDir, toggleSort } = useSortableTable<SortKey>();
   const [formOpen, setFormOpen] = useState(!!initialAnimalId);
   const [editId, setEditId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -292,21 +324,61 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
     }
   };
 
-  const filtered = items.filter((c) => {
-    if (!q.trim()) return true;
-    const s = q.toLowerCase();
-    return (
-      (c.animal_name || '').toLowerCase().includes(s) ||
-      (c.seller_name || '').toLowerCase().includes(s) ||
-      (c.buyer_name || '').toLowerCase().includes(s)
-    );
-  });
+  const statusCounts = useMemo(() => {
+    const counts: Record<StatusFilter, number> = {
+      all: items.length,
+      aguardando_assinatura: 0,
+      finalizados: 0,
+      cancelado: 0,
+    };
+    items.forEach((c) => {
+      if (c.status === 'aguardando_assinatura') counts.aguardando_assinatura += 1;
+      if (FINALIZED_STATUSES.includes(c.status)) counts.finalizados += 1;
+      if (c.status === 'cancelado') counts.cancelado += 1;
+    });
+    return counts;
+  }, [items]);
+
+  const filtered = useMemo(() => {
+    const search = q.trim().toLowerCase();
+    let list = items.filter((c) => {
+      if (!matchesStatusFilter(c.status, statusFilter)) return false;
+      if (!search) return true;
+      return (
+        (c.animal_name || '').toLowerCase().includes(search) ||
+        (c.contract_number || '').toLowerCase().includes(search) ||
+        (c.seller_name || '').toLowerCase().includes(search) ||
+        (c.buyer_name || '').toLowerCase().includes(search)
+      );
+    });
+
+    return sortRows(list, sortKey, sortDir, (a, b, key) => {
+      switch (key as SortKey) {
+        case 'animal':
+          return cmpStr(a.animal_name, b.animal_name) || cmpStr(a.contract_number, b.contract_number);
+        case 'type':
+          return cmpStr(a.sale_type, b.sale_type) || cmpNum(a.share_pct ?? 0, b.share_pct ?? 0);
+        case 'buyer':
+          return cmpStr(a.buyer_name, b.buyer_name);
+        case 'value':
+          return cmpNum(a.total_amount, b.total_amount);
+        case 'status':
+          return STATUS_SORT_ORDER[a.status] - STATUS_SORT_ORDER[b.status];
+        default:
+          return 0;
+      }
+    });
+  }, [items, q, statusFilter, sortKey, sortDir]);
 
   return (
     <div className="space-y-5 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
-          <span className="font-semibold text-brand-dark-brown">{items.length}</span> contratos
+          <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
+          {filtered.length !== items.length ? (
+            <> de <span className="font-semibold text-brand-dark-brown">{items.length}</span></>
+          ) : null}{' '}
+          contratos
         </p>
         {canWrite && (
           <button
@@ -319,15 +391,29 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
         )}
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-olive/60" />
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Filtrar por animal, vendedor ou comprador..."
-          className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
-        />
-      </div>
+      <ListTableToolbar
+        search={
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-olive/60" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Filtrar por animal, vendedor ou comprador..."
+              className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
+            />
+          </div>
+        }
+        filters={
+          <FilterPills
+            options={STATUS_FILTER_OPTIONS.map((opt) => ({
+              ...opt,
+              count: statusCounts[opt.id],
+            }))}
+            value={statusFilter}
+            onChange={setStatusFilter}
+          />
+        }
+      />
 
       {loading ? (
         <Loading message="Carregando contratos..." />
@@ -337,11 +423,46 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
             <table className="min-w-full text-left text-sm">
               <thead className="bg-brand-off-white text-brand-olive">
                 <tr>
-                  <th className="px-3 py-3 font-medium sm:px-4">Nº / Animal</th>
-                  <th className="hidden px-4 py-3 font-medium md:table-cell">Tipo</th>
-                  <th className="hidden px-4 py-3 font-medium lg:table-cell">Comprador</th>
-                  <th className="px-3 py-3 font-medium sm:px-4">Valor</th>
-                  <th className="px-3 py-3 font-medium sm:px-4">Status</th>
+                  <SortTh
+                    label="Nº / Animal"
+                    column="animal"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                    className="px-3 sm:px-4"
+                  />
+                  <SortTh
+                    label="Tipo"
+                    column="type"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                    className="hidden md:table-cell"
+                  />
+                  <SortTh
+                    label="Comprador"
+                    column="buyer"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                    className="hidden lg:table-cell"
+                  />
+                  <SortTh
+                    label="Valor"
+                    column="value"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                    className="px-3 sm:px-4"
+                  />
+                  <SortTh
+                    label="Status"
+                    column="status"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                    className="px-3 sm:px-4"
+                  />
                   <th className="px-2 py-3 font-medium sm:px-4"></th>
                 </tr>
               </thead>

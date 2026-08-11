@@ -5,8 +5,25 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 import Modal from '../../components/Modal';
+import { FilterPills } from '../../components/FilterPills';
+import { ListTableToolbar } from '../../components/ListTableToolbar';
+import { SortTh } from '../../components/SortTh';
+import { useSortableTable, cmpStr, sortRows } from '../../hooks/useSortableTable';
 import AnimalForm from './AnimalForm';
 import ContractForm from './ContractForm';
+
+type StatusFilter = 'all' | Animal['status'];
+type SortKey = 'name' | 'registration' | 'chip' | 'sex' | 'owners' | 'status';
+
+const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
+  { id: 'all', label: 'Todos' },
+  { id: 'ativo', label: 'Ativos' },
+  { id: 'vendido', label: 'Vendidos' },
+  { id: 'falecido', label: 'Falecidos' },
+  { id: 'transferido', label: 'Transferidos' },
+];
+
+const SEX_LABEL: Record<string, string> = { M: 'Macho', F: 'Fêmea', C: 'Castrado' };
 
 const statusTone: Record<Animal['status'], string> = {
   ativo: 'bg-emerald-50 text-emerald-700',
@@ -34,16 +51,18 @@ export default function AnimalsPage() {
   const { success, error: toastError } = useToast();
   const [animals, setAnimals] = useState<Animal[]>([]);
   const [q, setQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const { sortKey, sortDir, toggleSort } = useSortableTable<SortKey>();
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saleAnimalId, setSaleAnimalId] = useState<string | null>(null);
 
-  const load = async (search?: string) => {
+  const load = async () => {
     setLoading(true);
     try {
-      setAnimals(await getAnimals(search));
+      setAnimals(await getAnimals());
     } catch (e: any) {
       toastError(e.message || 'Erro ao carregar animais');
     } finally {
@@ -85,7 +104,7 @@ export default function AnimalsPage() {
     try {
       await deleteAnimal(animal.id);
       success('Animal excluído');
-      await load(q);
+      await load();
     } catch (e: any) {
       toastError(e.message || 'Erro ao excluir animal');
     } finally {
@@ -93,11 +112,63 @@ export default function AnimalsPage() {
     }
   };
 
+  const statusCounts = useMemo(() => {
+    const counts: Record<StatusFilter, number> = {
+      all: animals.length,
+      ativo: 0,
+      vendido: 0,
+      falecido: 0,
+      transferido: 0,
+    };
+    animals.forEach((a) => {
+      if (counts[a.status] !== undefined) counts[a.status] += 1;
+    });
+    return counts;
+  }, [animals]);
+
+  const filtered = useMemo(() => {
+    const search = q.trim().toLowerCase();
+    let list = animals.filter((a) => {
+      if (statusFilter !== 'all' && a.status !== statusFilter) return false;
+      if (!search) return true;
+      return (
+        a.name.toLowerCase().includes(search) ||
+        (a.registration_no || '').toLowerCase().includes(search) ||
+        (a.chip_no || '').toLowerCase().includes(search) ||
+        (a.breed || '').toLowerCase().includes(search) ||
+        String(a.owners || '').toLowerCase().includes(search)
+      );
+    });
+
+    return sortRows(list, sortKey, sortDir, (a, b, key) => {
+      switch (key as SortKey) {
+        case 'name':
+          return cmpStr(a.name, b.name);
+        case 'registration':
+          return cmpStr(a.registration_no, b.registration_no);
+        case 'chip':
+          return cmpStr(a.chip_no, b.chip_no);
+        case 'sex':
+          return cmpStr(SEX_LABEL[a.sex || ''] || a.sex, SEX_LABEL[b.sex || ''] || b.sex);
+        case 'owners':
+          return cmpStr(String(a.owners || ''), String(b.owners || ''));
+        case 'status':
+          return cmpStr(a.status, b.status);
+        default:
+          return 0;
+      }
+    });
+  }, [animals, q, statusFilter, sortKey, sortDir]);
+
   return (
     <div className="space-y-5 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
-          <span className="font-semibold text-brand-dark-brown">{animals.length}</span> animais ·{' '}
+          <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
+          {filtered.length !== animals.length ? (
+            <> de <span className="font-semibold text-brand-dark-brown">{animals.length}</span></>
+          ) : null}{' '}
+          animais ·{' '}
           <span className="font-semibold text-brand-dark-brown">{activeCount}</span> ativos
         </p>
         {canWrite && (
@@ -111,30 +182,30 @@ export default function AnimalsPage() {
         )}
       </div>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          load(q);
-        }}
-        className="flex gap-2"
-      >
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-olive/60" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar por nome, registro, chip..."
-            className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
+      <ListTableToolbar
+        search={
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-olive/60" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar por nome, registro, chip..."
+              className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
+            />
+          </div>
+        }
+        filters={
+          <FilterPills
+            options={STATUS_FILTERS.map((opt) => ({ ...opt, count: statusCounts[opt.id] }))}
+            value={statusFilter}
+            onChange={setStatusFilter}
           />
-        </div>
-        <button type="submit" className="rounded-xl border border-brand-beige bg-white px-4 py-2 text-sm font-medium hover:bg-brand-off-white">
-          Buscar
-        </button>
-      </form>
+        }
+      />
 
       {loading ? (
         <Loading message="Carregando animais..." />
-      ) : animals.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <EmptyState />
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
@@ -142,17 +213,17 @@ export default function AnimalsPage() {
           <table className="min-w-full text-left text-sm">
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
-                <th className="px-3 py-3 font-medium sm:px-4">Animal</th>
-                <th className="hidden px-4 py-3 font-medium md:table-cell">Registro</th>
-                <th className="hidden px-4 py-3 font-medium lg:table-cell">Chip</th>
-                <th className="hidden px-4 py-3 font-medium sm:table-cell">Sexo</th>
-                <th className="hidden px-4 py-3 font-medium xl:table-cell">Vendedor(es)</th>
-                <th className="px-3 py-3 font-medium sm:px-4">Status</th>
+                <SortTh label="Animal" column="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="px-3 sm:px-4" />
+                <SortTh label="Registro" column="registration" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden md:table-cell" />
+                <SortTh label="Chip" column="chip" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden lg:table-cell" />
+                <SortTh label="Sexo" column="sex" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden sm:table-cell" />
+                <SortTh label="Vendedor(es)" column="owners" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden xl:table-cell" />
+                <SortTh label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="px-3 sm:px-4" />
                 <th className="px-2 py-3 font-medium sm:px-4"></th>
               </tr>
             </thead>
             <tbody>
-              {animals.map((a) => (
+              {filtered.map((a) => (
                 <tr
                   key={a.id}
                   className="border-t border-brand-beige/60 transition-colors hover:bg-brand-off-white/70"
@@ -239,7 +310,7 @@ export default function AnimalsPage() {
         subtitle="Ficha básica do plantel"
         size="xl"
       >
-        <AnimalForm animalId={editingId} onClose={closeModal} onSaved={() => load(q)} />
+        <AnimalForm animalId={editingId} onClose={closeModal} onSaved={() => load()} />
       </Modal>
 
       <Modal
@@ -254,7 +325,7 @@ export default function AnimalsPage() {
           onClose={() => setSaleAnimalId(null)}
           onSaved={() => {
             setSaleAnimalId(null);
-            load(q);
+            load();
           }}
         />
       </Modal>

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Plus, FileStack } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, FileStack, Search } from 'lucide-react';
 import {
   createContractTemplate,
   getContractTemplates,
@@ -10,6 +10,19 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 import Modal from '../../components/Modal';
+import { FilterPills } from '../../components/FilterPills';
+import { ListTableToolbar } from '../../components/ListTableToolbar';
+import { SortTh } from '../../components/SortTh';
+import { useSortableTable, cmpStr, sortRows } from '../../hooks/useSortableTable';
+
+type StatusFilter = 'all' | 'active' | 'inactive';
+type SortKey = 'name' | 'code' | 'status';
+
+const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
+  { id: 'all', label: 'Todos' },
+  { id: 'active', label: 'Ativos' },
+  { id: 'inactive', label: 'Inativos' },
+];
 
 const inputClass =
   'w-full rounded-xl border border-brand-beige bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-olive focus:ring-2 focus:ring-brand-beige';
@@ -29,6 +42,9 @@ export default function ContractTemplatesPage() {
   const { success, error: toastError } = useToast();
   const [items, setItems] = useState<ContractTemplate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const { sortKey, sortDir, toggleSort } = useSortableTable<SortKey>();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<ContractTemplate | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -99,11 +115,51 @@ export default function ContractTemplatesPage() {
     }
   };
 
+  const statusCounts = useMemo(() => {
+    const counts: Record<StatusFilter, number> = { all: items.length, active: 0, inactive: 0 };
+    items.forEach((t) => {
+      if (t.active) counts.active += 1;
+      else counts.inactive += 1;
+    });
+    return counts;
+  }, [items]);
+
+  const filtered = useMemo(() => {
+    const search = q.trim().toLowerCase();
+    let list = items.filter((t) => {
+      if (statusFilter === 'active' && !t.active) return false;
+      if (statusFilter === 'inactive' && t.active) return false;
+      if (!search) return true;
+      return (
+        t.name.toLowerCase().includes(search) ||
+        (t.code || '').toLowerCase().includes(search) ||
+        t.title.toLowerCase().includes(search)
+      );
+    });
+
+    return sortRows(list, sortKey, sortDir, (a, b, key) => {
+      switch (key as SortKey) {
+        case 'name':
+          return cmpStr(a.name, b.name);
+        case 'code':
+          return cmpStr(a.code, b.code);
+        case 'status':
+          return Number(b.active) - Number(a.active);
+        default:
+          return 0;
+      }
+    });
+  }, [items, q, statusFilter, sortKey, sortDir]);
+
   return (
     <div className="space-y-5 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
-          Cadastre os <strong>versos</strong> (cláusulas). Na venda você escolhe o modelo; a frente é preenchida pelo sistema.
+          <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
+          {filtered.length !== items.length ? (
+            <> de <span className="font-semibold text-brand-dark-brown">{items.length}</span></>
+          ) : null}{' '}
+          modelos · Cadastre os <strong>versos</strong> (cláusulas). Na venda você escolhe o modelo.
         </p>
         {canWrite && (
           <button
@@ -116,6 +172,27 @@ export default function ContractTemplatesPage() {
         )}
       </div>
 
+      <ListTableToolbar
+        search={
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-olive/60" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Filtrar por nome, código ou título..."
+              className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
+            />
+          </div>
+        }
+        filters={
+          <FilterPills
+            options={STATUS_FILTERS.map((opt) => ({ ...opt, count: statusCounts[opt.id] }))}
+            value={statusFilter}
+            onChange={setStatusFilter}
+          />
+        }
+      />
+
       {loading ? (
         <Loading message="Carregando modelos..." />
       ) : (
@@ -123,21 +200,21 @@ export default function ContractTemplatesPage() {
           <table className="min-w-full text-left text-sm">
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
-                <th className="px-4 py-3 font-medium">Modelo</th>
-                <th className="hidden px-4 py-3 font-medium md:table-cell">Código</th>
-                <th className="px-4 py-3 font-medium">Status</th>
+                <SortTh label="Modelo" column="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortTh label="Código" column="code" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden md:table-cell" />
+                <SortTh label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                 <th className="px-4 py-3 font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 && (
+              {filtered.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-4 py-10 text-center text-brand-olive">
-                    Nenhum modelo — rode seed-modelo-contrato-padrao.sql ou cadastre aqui
+                    Nenhum modelo encontrado
                   </td>
                 </tr>
               )}
-              {items.map((t) => (
+              {filtered.map((t) => (
                 <tr key={t.id} className="border-t border-brand-beige/70">
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 font-medium text-brand-dark-brown">

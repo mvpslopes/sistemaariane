@@ -1,8 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Search } from 'lucide-react';
 import { getPayouts, updatePayout, type Payout, type PayoutStatus } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
+import { FilterPills } from '../../components/FilterPills';
+import { ListTableToolbar } from '../../components/ListTableToolbar';
+import { SortTh } from '../../components/SortTh';
+import { useSortableTable, cmpStr, cmpNum, sortRows } from '../../hooks/useSortableTable';
 
 const money = (v: number) =>
   v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -28,18 +33,38 @@ const roleLabel: Record<string, string> = {
   outro: 'Outro',
 };
 
+type StatusFilter = 'all' | PayoutStatus;
+type SortKey = 'animal' | 'beneficiary' | 'installment' | 'pct' | 'amount' | 'status';
+
+const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
+  { id: 'all', label: 'Todos' },
+  { id: 'aguardando', label: 'Aguardando cobrança' },
+  { id: 'pendente', label: 'Pendentes' },
+  { id: 'pago', label: 'Repassados' },
+  { id: 'cancelado', label: 'Cancelados' },
+];
+
+const STATUS_ORDER: Record<PayoutStatus, number> = {
+  aguardando: 0,
+  pendente: 1,
+  pago: 2,
+  cancelado: 3,
+};
+
 export default function PayoutsPage() {
   const { canWrite } = useAuth();
   const { success, error: toastError } = useToast();
   const [items, setItems] = useState<Payout[]>([]);
   const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState('');
+  const [q, setQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const { sortKey, sortDir, toggleSort } = useSortableTable<SortKey>();
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-  const load = async (st?: string) => {
+  const load = async () => {
     setLoading(true);
     try {
-      setItems(await getPayouts(st ? { status: st } : undefined));
+      setItems(await getPayouts());
     } catch (e: any) {
       toastError(e.message || 'Erro ao carregar repasses');
     } finally {
@@ -57,13 +82,62 @@ export default function PayoutsPage() {
     try {
       await updatePayout(id, { status: next });
       success(next === 'pago' ? 'Repasse marcado como pago' : 'Status atualizado');
-      await load(status || undefined);
+      await load();
     } catch (e: any) {
       toastError(e.message || 'Erro ao atualizar');
     } finally {
       setUpdatingId(null);
     }
   };
+
+  const statusCounts = useMemo(() => {
+    const counts: Record<StatusFilter, number> = {
+      all: items.length,
+      aguardando: 0,
+      pendente: 0,
+      pago: 0,
+      cancelado: 0,
+    };
+    items.forEach((i) => {
+      if (counts[i.status] !== undefined) counts[i.status] += 1;
+    });
+    return counts;
+  }, [items]);
+
+  const filtered = useMemo(() => {
+    const search = q.trim().toLowerCase();
+    let list = items.filter((p) => {
+      if (statusFilter !== 'all' && p.status !== statusFilter) return false;
+      if (!search) return true;
+      const beneficiary = p.label || p.beneficiary_name || roleLabel[p.beneficiary_role] || '';
+      return (
+        (p.animal_name || '').toLowerCase().includes(search) ||
+        beneficiary.toLowerCase().includes(search)
+      );
+    });
+
+    return sortRows(list, sortKey, sortDir, (a, b, key) => {
+      switch (key as SortKey) {
+        case 'animal':
+          return cmpStr(a.animal_name, b.animal_name);
+        case 'beneficiary':
+          return cmpStr(
+            a.label || a.beneficiary_name || roleLabel[a.beneficiary_role],
+            b.label || b.beneficiary_name || roleLabel[b.beneficiary_role]
+          );
+        case 'installment':
+          return cmpNum(a.installment_no, b.installment_no);
+        case 'pct':
+          return cmpNum(a.pct, b.pct);
+        case 'amount':
+          return cmpNum(a.amount, b.amount);
+        case 'status':
+          return STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+        default:
+          return 0;
+      }
+    });
+  }, [items, q, statusFilter, sortKey, sortDir]);
 
   const waiting = items.filter((i) => i.status === 'aguardando').length;
   const pending = items.filter((i) => i.status === 'pendente').length;
@@ -73,30 +147,42 @@ export default function PayoutsPage() {
     <div className="space-y-5 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
-          <span className="font-semibold text-brand-dark-brown">{waiting}</span> aguardando cobrança ·{' '}
+          <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
+          {filtered.length !== items.length ? (
+            <> de <span className="font-semibold text-brand-dark-brown">{items.length}</span></>
+          ) : null}{' '}
+          repasses ·{' '}
+          <span className="font-semibold text-brand-dark-brown">{waiting}</span> aguardando ·{' '}
           <span className="font-semibold text-brand-dark-brown">{pending}</span> pendentes ·{' '}
           <span className="font-semibold text-brand-dark-brown">{paid}</span> repassados
         </p>
-        <select
-          value={status}
-          onChange={(e) => {
-            setStatus(e.target.value);
-            load(e.target.value || undefined);
-          }}
-          className="rounded-xl border border-brand-beige bg-white px-3 py-2 text-sm"
-        >
-          <option value="">Todos os status</option>
-          <option value="aguardando">Aguardando cobrança</option>
-          <option value="pendente">Pendente de repasse</option>
-          <option value="pago">Repassado</option>
-          <option value="cancelado">Cancelado</option>
-        </select>
       </div>
 
       <p className="text-xs text-brand-olive">
         Quando a cobrança do comprador é marcada como paga, o repasse correspondente fica{' '}
         <strong>pendente</strong> para você baixar (assessoria, dono e assessores).
       </p>
+
+      <ListTableToolbar
+        search={
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-olive/60" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Filtrar por animal ou beneficiário..."
+              className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
+            />
+          </div>
+        }
+        filters={
+          <FilterPills
+            options={STATUS_FILTERS.map((opt) => ({ ...opt, count: statusCounts[opt.id] }))}
+            value={statusFilter}
+            onChange={setStatusFilter}
+          />
+        }
+      />
 
       {loading ? (
         <Loading message="Carregando repasses..." />
@@ -105,24 +191,24 @@ export default function PayoutsPage() {
           <table className="min-w-full text-left text-sm">
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
-                <th className="px-4 py-3 font-medium">Animal</th>
-                <th className="px-4 py-3 font-medium">Beneficiário</th>
-                <th className="px-4 py-3 font-medium">Parcela</th>
-                <th className="hidden px-4 py-3 font-medium md:table-cell">%</th>
-                <th className="px-4 py-3 font-medium">Valor</th>
-                <th className="px-4 py-3 font-medium">Status</th>
+                <SortTh label="Animal" column="animal" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortTh label="Beneficiário" column="beneficiary" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortTh label="Parcela" column="installment" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortTh label="%" column="pct" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden md:table-cell" />
+                <SortTh label="Valor" column="amount" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                <SortTh label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                 <th className="px-4 py-3 font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 && (
+              {filtered.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-4 py-10 text-center text-brand-olive">
                     Nenhum repasse encontrado — configure % na venda/contrato
                   </td>
                 </tr>
               )}
-              {items.map((p) => (
+              {filtered.map((p) => (
                 <tr key={p.id} className="border-t border-brand-beige/70">
                   <td className="px-4 py-3 font-medium text-brand-dark-brown">{p.animal_name || '—'}</td>
                   <td className="px-4 py-3">

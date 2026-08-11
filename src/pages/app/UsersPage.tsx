@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Search } from 'lucide-react';
 import {
   createUser,
   getClients,
@@ -13,6 +14,28 @@ import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 import Modal from '../../components/Modal';
 import UserAvatar from '../../components/UserAvatar';
+import { FilterPills } from '../../components/FilterPills';
+import { ListTableToolbar } from '../../components/ListTableToolbar';
+import { SortTh } from '../../components/SortTh';
+import { useSortableTable, cmpStr, sortRows } from '../../hooks/useSortableTable';
+
+type StatusFilter = 'all' | 'active' | 'inactive';
+type RoleFilter = 'all' | Role;
+type SortKey = 'name' | 'username' | 'role' | 'client' | 'status';
+
+const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
+  { id: 'all', label: 'Todos' },
+  { id: 'active', label: 'Ativos' },
+  { id: 'inactive', label: 'Inativos' },
+];
+
+const ROLE_FILTERS: { id: RoleFilter; label: string }[] = [
+  { id: 'all', label: 'Todos os perfis' },
+  { id: 'root', label: 'Root' },
+  { id: 'admin', label: 'Admin' },
+  { id: 'user', label: 'Usuário' },
+  { id: 'cliente', label: 'Cliente' },
+];
 
 const roleOptions: { value: Role; label: string }[] = [
   { value: 'admin', label: 'Admin' },
@@ -33,6 +56,10 @@ export default function UsersPage() {
   const [users, setUsers] = useState<AuthUser[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
+  const { sortKey, sortDir, toggleSort } = useSortableTable<SortKey>();
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<AuthUser | null>(null);
   const [form, setForm] = useState({
@@ -144,13 +171,79 @@ export default function UsersPage() {
       ? [{ value: 'root' as Role, label: 'Root' }, ...roleOptions]
       : roleOptions;
 
+  const statusCounts = useMemo(() => {
+    const counts: Record<StatusFilter, number> = { all: users.length, active: 0, inactive: 0 };
+    users.forEach((u) => {
+      if (u.active !== false) counts.active += 1;
+      else counts.inactive += 1;
+    });
+    return counts;
+  }, [users]);
+
+  const roleCounts = useMemo(() => {
+    const counts: Record<RoleFilter, number> = {
+      all: users.length,
+      root: 0,
+      admin: 0,
+      user: 0,
+      cliente: 0,
+    };
+    users.forEach((u) => {
+      if (counts[u.role] !== undefined) counts[u.role] += 1;
+    });
+    return counts;
+  }, [users]);
+
+  const filtered = useMemo(() => {
+    const search = q.trim().toLowerCase();
+    return sortRows(
+      users.filter((u) => {
+        if (statusFilter === 'active' && u.active === false) return false;
+        if (statusFilter === 'inactive' && u.active !== false) return false;
+        if (roleFilter !== 'all' && u.role !== roleFilter) return false;
+        if (!search) return true;
+        const clientName = u.clientId ? clientNameById.get(u.clientId) || '' : '';
+        return (
+          u.name.toLowerCase().includes(search) ||
+          u.username.toLowerCase().includes(search) ||
+          clientName.toLowerCase().includes(search)
+        );
+      }),
+      sortKey,
+      sortDir,
+      (a, b, key) => {
+        switch (key as SortKey) {
+          case 'name':
+            return cmpStr(a.name, b.name);
+          case 'username':
+            return cmpStr(a.username, b.username);
+          case 'role':
+            return cmpStr(a.role, b.role);
+          case 'client':
+            return cmpStr(
+              a.clientId ? clientNameById.get(a.clientId) : '',
+              b.clientId ? clientNameById.get(b.clientId) : ''
+            );
+          case 'status':
+            return Number(b.active !== false) - Number(a.active !== false);
+          default:
+            return 0;
+        }
+      }
+    );
+  }, [users, q, statusFilter, roleFilter, sortKey, sortDir, clientNameById]);
+
   if (loading) return <Loading message="Carregando usuários..." />;
 
   return (
     <div className="space-y-5 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
-          <span className="font-semibold text-brand-dark-brown">{users.length}</span> usuários cadastrados
+          <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
+          {filtered.length !== users.length ? (
+            <> de <span className="font-semibold text-brand-dark-brown">{users.length}</span></>
+          ) : null}{' '}
+          usuários cadastrados
         </p>
         <button
           type="button"
@@ -160,6 +253,37 @@ export default function UsersPage() {
           Novo usuário
         </button>
       </div>
+
+      <ListTableToolbar
+        search={
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-olive/60" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar por nome, usuário ou cliente..."
+              className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
+            />
+          </div>
+        }
+        filters={
+          <>
+            <FilterPills
+              options={STATUS_FILTERS.map((opt) => ({ ...opt, count: statusCounts[opt.id] }))}
+              value={statusFilter}
+              onChange={setStatusFilter}
+            />
+            <FilterPills
+              options={ROLE_FILTERS.filter((opt) => opt.id !== 'root' || me?.role === 'root').map((opt) => ({
+                ...opt,
+                count: roleCounts[opt.id],
+              }))}
+              value={roleFilter}
+              onChange={setRoleFilter}
+            />
+          </>
+        }
+      />
 
       {showForm && (
         <Modal
@@ -269,16 +393,23 @@ export default function UsersPage() {
         <table className="min-w-full text-left text-sm">
           <thead className="bg-brand-off-white text-brand-olive">
             <tr>
-              <th className="px-4 py-3 font-medium">Nome</th>
-              <th className="px-4 py-3 font-medium">Usuário</th>
-              <th className="px-4 py-3 font-medium">Perfil</th>
-              <th className="hidden px-4 py-3 font-medium md:table-cell">Cliente vinculado</th>
-              <th className="px-4 py-3 font-medium">Status</th>
+              <SortTh label="Nome" column="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+              <SortTh label="Usuário" column="username" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+              <SortTh label="Perfil" column="role" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+              <SortTh label="Cliente vinculado" column="client" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden md:table-cell" />
+              <SortTh label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <th className="px-4 py-3 font-medium"></th>
             </tr>
           </thead>
           <tbody>
-            {users.map((u) => (
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-4 py-10 text-center text-brand-olive">
+                  Nenhum usuário encontrado
+                </td>
+              </tr>
+            )}
+            {filtered.map((u) => (
               <tr key={u.id} className="border-t border-brand-beige/60 transition-colors hover:bg-brand-off-white/70">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Gavel, Pencil, Plus } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Gavel, Pencil, Plus, Search } from 'lucide-react';
 import {
   createAuction,
   createAuctionLot,
@@ -19,7 +19,30 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 import Modal from '../../components/Modal';
+import { FilterPills } from '../../components/FilterPills';
+import { ListTableToolbar } from '../../components/ListTableToolbar';
+import { SortTh } from '../../components/SortTh';
+import { useSortableTable, cmpStr, cmpNum, sortRows } from '../../hooks/useSortableTable';
 import ContractForm from './ContractForm';
+
+type StatusFilter = 'all' | 'agendado' | 'em_andamento' | 'encerrado' | 'cancelado';
+type SortKey = 'name' | 'date' | 'location' | 'lots' | 'status';
+
+const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
+  { id: 'all', label: 'Todos' },
+  { id: 'agendado', label: 'Agendados' },
+  { id: 'em_andamento', label: 'Em andamento' },
+  { id: 'encerrado', label: 'Encerrados' },
+  { id: 'cancelado', label: 'Cancelados' },
+];
+
+const STATUS_ORDER: Record<AuctionStatus, number> = {
+  rascunho: 0,
+  agendado: 1,
+  em_andamento: 2,
+  encerrado: 3,
+  cancelado: 4,
+};
 
 const inputClass =
   'w-full rounded-xl border border-brand-beige bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-olive focus:ring-2 focus:ring-brand-beige';
@@ -55,6 +78,9 @@ export default function AuctionsPage() {
   const { success, error: toastError } = useToast();
   const [items, setItems] = useState<Auction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const { sortKey, sortDir, toggleSort } = useSortableTable<SortKey>();
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -277,11 +303,59 @@ export default function AuctionsPage() {
     }
   };
 
+  const statusCounts = useMemo(() => {
+    const counts: Record<StatusFilter, number> = {
+      all: items.length,
+      agendado: 0,
+      em_andamento: 0,
+      encerrado: 0,
+      cancelado: 0,
+    };
+    items.forEach((a) => {
+      if (counts[a.status] !== undefined) counts[a.status] += 1;
+    });
+    return counts;
+  }, [items]);
+
+  const filtered = useMemo(() => {
+    const search = q.trim().toLowerCase();
+    let list = items.filter((a) => {
+      if (statusFilter !== 'all' && a.status !== statusFilter) return false;
+      if (!search) return true;
+      return (
+        a.name.toLowerCase().includes(search) ||
+        (a.location || '').toLowerCase().includes(search) ||
+        (a.organizer || '').toLowerCase().includes(search)
+      );
+    });
+
+    return sortRows(list, sortKey, sortDir, (a, b, key) => {
+      switch (key as SortKey) {
+        case 'name':
+          return cmpStr(a.name, b.name);
+        case 'date':
+          return cmpStr(a.auction_date, b.auction_date);
+        case 'location':
+          return cmpStr(a.location, b.location);
+        case 'lots':
+          return cmpNum(a.lots_count ?? 0, b.lots_count ?? 0);
+        case 'status':
+          return STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+        default:
+          return 0;
+      }
+    });
+  }, [items, q, statusFilter, sortKey, sortDir]);
+
   return (
     <div className="space-y-5 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
-          Cadastro de leilões e lotes. O leilão ao vivo fica fora do sistema — aqui você registra o evento e o arremate.
+          <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
+          {filtered.length !== items.length ? (
+            <> de <span className="font-semibold text-brand-dark-brown">{items.length}</span></>
+          ) : null}{' '}
+          leilões · Cadastro de leilões e lotes. O leilão ao vivo fica fora do sistema.
         </p>
         {canWrite && (
           <button
@@ -294,6 +368,27 @@ export default function AuctionsPage() {
         )}
       </div>
 
+      <ListTableToolbar
+        search={
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-olive/60" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Filtrar por nome, local ou organizador..."
+              className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
+            />
+          </div>
+        }
+        filters={
+          <FilterPills
+            options={STATUS_FILTERS.map((opt) => ({ ...opt, count: statusCounts[opt.id] }))}
+            value={statusFilter}
+            onChange={setStatusFilter}
+          />
+        }
+      />
+
       {loading ? (
         <Loading message="Carregando leilões..." />
       ) : (
@@ -302,23 +397,23 @@ export default function AuctionsPage() {
           <table className="min-w-full text-left text-sm">
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
-                <th className="px-3 py-3 font-medium sm:px-4">Leilão</th>
-                <th className="hidden px-4 py-3 font-medium md:table-cell">Data</th>
-                <th className="hidden px-4 py-3 font-medium lg:table-cell">Local</th>
-                <th className="px-3 py-3 font-medium sm:px-4">Lotes</th>
-                <th className="px-3 py-3 font-medium sm:px-4">Status</th>
+                <SortTh label="Leilão" column="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="px-3 sm:px-4" />
+                <SortTh label="Data" column="date" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden md:table-cell" />
+                <SortTh label="Local" column="location" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden lg:table-cell" />
+                <SortTh label="Lotes" column="lots" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="px-3 sm:px-4" />
+                <SortTh label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="px-3 sm:px-4" />
                 <th className="px-4 py-3 font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              {items.length === 0 && (
+              {filtered.length === 0 && (
                 <tr>
                   <td colSpan={6} className="px-4 py-10 text-center text-brand-olive">
-                    Nenhum leilão cadastrado
+                    Nenhum leilão encontrado
                   </td>
                 </tr>
               )}
-              {items.map((a) => (
+              {filtered.map((a) => (
                 <tr
                   key={a.id}
                   className="cursor-pointer border-t border-brand-beige/70 hover:bg-brand-off-white/50"

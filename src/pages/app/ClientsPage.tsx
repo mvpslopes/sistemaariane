@@ -5,7 +5,39 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 import Modal from '../../components/Modal';
+import { FilterPills } from '../../components/FilterPills';
+import { ListTableToolbar } from '../../components/ListTableToolbar';
+import { SortTh } from '../../components/SortTh';
+import { useSortableTable, cmpStr, sortRows } from '../../hooks/useSortableTable';
 import ClientForm from './ClientForm';
+
+type StatusFilter = 'all' | 'active' | 'inactive';
+type RoleFilter = 'all' | 'buyer' | 'seller' | 'assessor' | 'witness' | 'avalista';
+type SortKey = 'name' | 'property' | 'document' | 'contact' | 'city' | 'status';
+
+const STATUS_FILTERS: { id: StatusFilter; label: string }[] = [
+  { id: 'all', label: 'Todos' },
+  { id: 'active', label: 'Ativos' },
+  { id: 'inactive', label: 'Inativos' },
+];
+
+const ROLE_FILTERS: { id: RoleFilter; label: string }[] = [
+  { id: 'all', label: 'Todos os papéis' },
+  { id: 'buyer', label: 'Compradores' },
+  { id: 'seller', label: 'Vendedores' },
+  { id: 'assessor', label: 'Assessores' },
+  { id: 'witness', label: 'Testemunhas' },
+  { id: 'avalista', label: 'Avalistas' },
+];
+
+function matchesRoleFilter(client: Client, filter: RoleFilter) {
+  if (filter === 'all') return true;
+  if (filter === 'buyer') return !!client.is_buyer;
+  if (filter === 'seller') return !!client.is_seller;
+  if (filter === 'assessor') return !!client.is_assessor;
+  if (filter === 'witness') return !!client.is_witness;
+  return !!client.is_avalista;
+}
 
 const avatarPalette = [
   'bg-brand-gold/20 text-brand-gold',
@@ -24,15 +56,18 @@ export default function ClientsPage() {
   const { success, error: toastError } = useToast();
   const [clients, setClients] = useState<Client[]>([]);
   const [q, setQ] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
+  const { sortKey, sortDir, toggleSort } = useSortableTable<SortKey>();
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const load = async (search?: string) => {
+  const load = async () => {
     setLoading(true);
     try {
-      setClients(await getClients(search));
+      setClients(await getClients());
     } catch (e: any) {
       toastError(e.message || 'Erro ao carregar pessoas');
     } finally {
@@ -74,7 +109,7 @@ export default function ClientsPage() {
     try {
       await deleteClient(client.id);
       success('Pessoa excluída');
-      await load(q);
+      await load();
     } catch (e: any) {
       toastError(e.message || 'Erro ao excluir');
     } finally {
@@ -82,11 +117,86 @@ export default function ClientsPage() {
     }
   };
 
+  const statusCounts = useMemo(() => {
+    const counts: Record<StatusFilter, number> = { all: clients.length, active: 0, inactive: 0 };
+    clients.forEach((c) => {
+      if (c.active) counts.active += 1;
+      else counts.inactive += 1;
+    });
+    return counts;
+  }, [clients]);
+
+  const roleCounts = useMemo(() => {
+    const counts: Record<RoleFilter, number> = {
+      all: clients.length,
+      buyer: 0,
+      seller: 0,
+      assessor: 0,
+      witness: 0,
+      avalista: 0,
+    };
+    clients.forEach((c) => {
+      if (c.is_buyer) counts.buyer += 1;
+      if (c.is_seller) counts.seller += 1;
+      if (c.is_assessor) counts.assessor += 1;
+      if (c.is_witness) counts.witness += 1;
+      if (c.is_avalista) counts.avalista += 1;
+    });
+    return counts;
+  }, [clients]);
+
+  const filtered = useMemo(() => {
+    const search = q.trim().toLowerCase();
+    let list = clients.filter((c) => {
+      if (statusFilter === 'active' && !c.active) return false;
+      if (statusFilter === 'inactive' && c.active) return false;
+      if (!matchesRoleFilter(c, roleFilter)) return false;
+      if (!search) return true;
+      const hay = [
+        c.name,
+        c.property_name,
+        c.document,
+        c.email,
+        c.phone,
+        c.whatsapp,
+        c.city,
+        c.state,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return hay.includes(search);
+    });
+
+    return sortRows(list, sortKey, sortDir, (a, b, key) => {
+      switch (key as SortKey) {
+        case 'name':
+          return cmpStr(a.name, b.name);
+        case 'property':
+          return cmpStr(a.property_name, b.property_name);
+        case 'document':
+          return cmpStr(a.document, b.document);
+        case 'contact':
+          return cmpStr(a.whatsapp || a.phone || a.email, b.whatsapp || b.phone || b.email);
+        case 'city':
+          return cmpStr([a.city, a.state].filter(Boolean).join('/'), [b.city, b.state].filter(Boolean).join('/'));
+        case 'status':
+          return Number(b.active) - Number(a.active);
+        default:
+          return 0;
+      }
+    });
+  }, [clients, q, statusFilter, roleFilter, sortKey, sortDir]);
+
   return (
     <div className="space-y-5 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
-          <span className="font-semibold text-brand-dark-brown">{clients.length}</span> pessoas ·{' '}
+          <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
+          {filtered.length !== clients.length ? (
+            <> de <span className="font-semibold text-brand-dark-brown">{clients.length}</span></>
+          ) : null}{' '}
+          pessoas ·{' '}
           <span className="font-semibold text-brand-dark-brown">{activeCount}</span> ativas
         </p>
         {canWrite && (
@@ -100,33 +210,37 @@ export default function ClientsPage() {
         )}
       </div>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          load(q);
-        }}
-        className="flex gap-2"
-      >
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-olive/60" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Buscar por nome, haras, documento, e-mail..."
-            className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
-          />
-        </div>
-        <button
-          type="submit"
-          className="rounded-xl border border-brand-beige bg-white px-4 py-2 text-sm font-medium hover:bg-brand-off-white"
-        >
-          Buscar
-        </button>
-      </form>
+      <ListTableToolbar
+        search={
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-olive/60" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar por nome, haras, documento, e-mail..."
+              className="w-full rounded-xl border border-brand-beige bg-white py-2.5 pl-10 pr-3 text-sm outline-none transition focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
+            />
+          </div>
+        }
+        filters={
+          <>
+            <FilterPills
+              options={STATUS_FILTERS.map((opt) => ({ ...opt, count: statusCounts[opt.id] }))}
+              value={statusFilter}
+              onChange={setStatusFilter}
+            />
+            <FilterPills
+              options={ROLE_FILTERS.map((opt) => ({ ...opt, count: roleCounts[opt.id] }))}
+              value={roleFilter}
+              onChange={setRoleFilter}
+            />
+          </>
+        }
+      />
 
       {loading ? (
         <Loading message="Carregando pessoas..." />
-      ) : clients.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <EmptyState />
       ) : (
         <div className="rounded-2xl border border-brand-beige bg-white shadow-card">
@@ -134,19 +248,19 @@ export default function ClientsPage() {
           <table className="w-full min-w-[720px] text-left text-sm">
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
-                <th className="min-w-[200px] max-w-[280px] px-3 py-3 font-medium sm:px-4">Nome</th>
-                <th className="hidden min-w-[140px] px-4 py-3 font-medium lg:table-cell">Propriedade</th>
-                <th className="hidden min-w-[120px] px-4 py-3 font-medium xl:table-cell">Documento</th>
-                <th className="hidden min-w-[120px] px-4 py-3 font-medium 2xl:table-cell">Contato</th>
-                <th className="hidden min-w-[100px] px-4 py-3 font-medium 2xl:table-cell">Cidade</th>
-                <th className="w-[88px] px-3 py-3 font-medium sm:px-4">Status</th>
+                <SortTh label="Nome" column="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="min-w-[200px] max-w-[280px] px-3 sm:px-4" />
+                <SortTh label="Propriedade" column="property" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden min-w-[140px] md:table-cell" />
+                <SortTh label="Documento" column="document" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden min-w-[120px] xl:table-cell" />
+                <SortTh label="Contato" column="contact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden min-w-[120px] 2xl:table-cell" />
+                <SortTh label="Cidade" column="city" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden min-w-[100px] 2xl:table-cell" />
+                <SortTh label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[88px] px-3 sm:px-4" />
                 <th className="sticky right-0 z-20 w-[96px] bg-brand-off-white px-2 py-3 text-right font-medium shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.08)] sm:w-[108px] sm:px-4">
                   Ações
                 </th>
               </tr>
             </thead>
             <tbody>
-              {clients.map((c) => (
+              {filtered.map((c) => (
                 <tr
                   key={c.id}
                   className="group border-t border-brand-beige/60 transition-colors hover:bg-brand-off-white/70"
@@ -237,7 +351,7 @@ export default function ClientsPage() {
         subtitle="Uma pessoa pode ser comprador, vendedor, assessor, testemunha e/ou avalista ao mesmo tempo"
         size="2xl"
       >
-        <ClientForm clientId={editingId} onClose={closeModal} onSaved={() => load(q)} />
+        <ClientForm clientId={editingId} onClose={closeModal} onSaved={() => load()} />
       </Modal>
     </div>
   );
