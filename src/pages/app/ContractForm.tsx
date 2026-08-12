@@ -21,6 +21,7 @@ import { CHARGE_COLLECTOR_LABELS } from '../../constants/chargeCollectors';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
+import { todayDateISO } from '../../utils/dateTime';
 import { Plus } from 'lucide-react';
 
 interface PayoutRuleInput {
@@ -151,7 +152,7 @@ export default function ContractForm({
     totalAmount: suggestedAmount != null ? String(suggestedAmount) : '',
     paymentMethod: 'boleto' as PaymentMethod,
     installments: 1,
-    firstDueDate: new Date().toISOString().slice(0, 10),
+    firstDueDate: todayDateISO(),
     notes: '',
   });
   const [rules, setRules] = useState<PayoutRuleInput[]>([

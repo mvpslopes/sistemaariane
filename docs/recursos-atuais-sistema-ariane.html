@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sistema Ariane — Recursos e Funcionalidades Atuais</title>
+  <style>
+    @page { size: A4; margin: 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Montserrat, sans-serif;
+      color: #4F3E32;
+      line-height: 1.5;
+      margin: 0;
+      padding: 0;
+      background: #fff;
+      font-size: 10pt;
+    }
+    .cover {
+      text-align: center;
+      padding: 48px 24px 56px;
+      border-bottom: 3px solid #C08A3E;
+      margin-bottom: 28px;
+      page-break-after: always;
+    }
+    .cover h1 { font-size: 24pt; color: #4F3E32; margin: 0 0 6px; }
+    .cover .sub { color: #81705F; font-size: 13pt; margin: 0 0 20px; }
+    .cover .meta { font-size: 10pt; color: #A0896A; line-height: 1.6; }
+    h2 {
+      color: #4F3E32;
+      font-size: 14pt;
+      border-left: 4px solid #C08A3E;
+      padding-left: 10px;
+      margin: 28px 0 12px;
+      page-break-after: avoid;
+    }
+    h3 { color: #81705F; font-size: 11pt; margin: 18px 0 8px; page-break-after: avoid; }
+    p { margin: 8px 0; }
+    .intro {
+      background: #F8F7F4;
+      border: 1px solid #E6D8C3;
+      border-radius: 8px;
+      padding: 16px 18px;
+      margin: 16px 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 9pt;
+    }
+    th, td {
+      border: 1px solid #E6D8C3;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #4F3E32; color: #fff; font-weight: 600; }
+    tr:nth-child(even) { background: #F8F7F4; }
+    ul { margin: 6px 0; padding-left: 20px; }
+    li { margin: 4px 0; }
+    .module-box {
+      border: 1px solid #E6D8C3;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 12px 0;
+      page-break-inside: avoid;
+    }
+    .module-box h3 { margin-top: 0; color: #4F3E32; font-size: 11pt; }
+    .tag {
+      display: inline-block;
+      font-size: 7.5pt;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #4A6650;
+      color: #fff;
+      text-transform: uppercase;
+    }
+    .footer {
+      margin-top: 32px;
+      padding-top: 14px;
+      border-top: 1px solid #E6D8C3;
+      font-size: 8.5pt;
+      color: #A0896A;
+      text-align: center;
+    }
+    .page-break { page-break-before: always; }
+  </style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>Sistema Ariane</h1>
+  <p class="sub">Recursos e Funcionalidades — Versão Atual</p>
+  <p class="meta">
+    Ariane Andrade Assessoria · Gestão de Haras<br>
+    sistema.arianeandradeassessoria.app.br<br>
+    Documento de inventário · Versão 1.0 · Agosto/2026
+  </p>
+</div>
+
+<div class="intro">
+  <p>Este documento descreve <strong>tudo o que já está implementado e em produção</strong> no Sistema Ariane — plataforma web de assessoria equestre para gestão de pessoas, plantel, contratos, cobranças, leilões e portal do cliente.</p>
+  <p><strong>Stack:</strong> React + Vite + Tailwind CSS (frontend) · PHP + MySQL (backend/API) · Hospedagem Hostinger</p>
+</div>
+
+<h2>1. Perfis de acesso e permissões</h2>
+<table>
+  <tr><th>Perfil</th><th>Descrição</th><th>Permissões principais</th></tr>
+  <tr><td><strong>Root / Admin</strong></td><td>Administradores do sistema</td><td>Acesso total: criar, editar, excluir, usuários, auditoria</td></tr>
+  <tr><td><strong>Operador (user)</strong></td><td>Equipe da assessoria</td><td>Cria cadastros e contratos; não edita/exclui registros existentes</td></tr>
+  <tr><td><strong>Cliente</strong></td><td>Comprador, vendedor ou parte vinculada</td><td>Visualiza apenas seus dados: compras, contratos e cobranças</td></tr>
+</table>
+
+<table>
+  <tr><th>Ação</th><th>Root/Admin</th><th>Operador</th><th>Cliente</th></tr>
+  <tr><td>Criar registros</td><td>Sim</td><td>Sim</td><td>Não</td></tr>
+  <tr><td>Editar registros</td><td>Sim</td><td>Não</td><td>Não</td></tr>
+  <tr><td>Excluir registros</td><td>Sim</td><td>Não</td><td>Não</td></tr>
+  <tr><td>Gerenciar usuários</td><td>Sim</td><td>Não</td><td>Não</td></tr>
+  <tr><td>Ver auditoria</td><td>Sim</td><td>Não</td><td>Não</td></tr>
+  <tr><td>Portal filtrado (só seus dados)</td><td>—</td><td>—</td><td>Sim</td></tr>
+</table>
+
+<h2>2. Autenticação e conta</h2>
+<ul>
+  <li>Login com usuário e senha (JWT)</li>
+  <li>Alteração de senha obrigatória no primeiro acesso</li>
+  <li>Aviso de sessão por inatividade com opção de estender ou sair</li>
+  <li>Página de perfil (nome de exibição)</li>
+  <li>Criação de usuário de acesso vinculado a uma pessoa cadastrada</li>
+  <li>Reset de senha de acesso do cliente pela assessoria</li>
+</ul>
+
+<h2>3. Cadastro de pessoas (Pessoas)</h2>
+<div class="module-box">
+  <h3>3.1 Cadastro unificado <span class="tag">Implementado</span></h3>
+  <p>Uma pessoa pode acumular papéis: <strong>comprador, vendedor, assessor, testemunha e avalista</strong>.</p>
+  <p><strong>Abas do cadastro:</strong></p>
+  <ul>
+    <li><strong>Dados</strong> — identificação, contato, endereço (busca CEP automática)</li>
+    <li><strong>Documentos</strong> — upload de RG, CNH, comprovante, selfie etc.</li>
+    <li><strong>Propriedades</strong> — haras/fazendas vinculados à pessoa</li>
+    <li><strong>Contas bancárias</strong> — dados para repasse</li>
+    <li><strong>Contatos</strong> — gerentes, veterinários, referências</li>
+    <li><strong>Observações</strong> — notas de relacionamento e pendências</li>
+  </ul>
+  <p><strong>Campos obrigatórios:</strong> nome, CPF/CNPJ, e-mail, telefone, data de nascimento, CEP, endereço, cidade e UF.</p>
+  <p><strong>Listagem:</strong> busca, filtros por status e papel, ordenação por colunas; visualização em tabela (desktop) ou cards (mobile).</p>
+</div>
+
+<h2>4. Plantel — Animais</h2>
+<div class="module-box">
+  <h3>4.1 Ficha do animal <span class="tag">Implementado</span></h3>
+  <ul>
+    <li>Nome, foto, registro, chip, sexo, raça, associação (ABCCMM, ABQM, etc.)</li>
+    <li>Data de nascimento, pelagem, resenha, status (ativo, vendido, falecido, transferido)</li>
+    <li>Tipo de propriedade (único, condomínio, cotas)</li>
+    <li>Vínculo com proprietários/vendedores</li>
+    <li>Catálogo de raças configurável</li>
+    <li>Geração de venda/contrato direto a partir do animal ativo</li>
+  </ul>
+  <p><strong>Portal cliente:</strong> animais aparecem como <em>“Minhas compras”</em>, filtrados pelos contratos vinculados.</p>
+</div>
+
+<h2>5. Contratos de venda</h2>
+<div class="module-box">
+  <h3>5.1 Contrato + cobranças <span class="tag">Implementado</span></h3>
+  <ul>
+    <li>Tipos de venda: inteiro, fração, condomínio (com % de cota)</li>
+    <li>Até <strong>50 parcelas</strong> por contrato</li>
+    <li>Formas de pagamento: boleto, PIX, transferência etc.</li>
+    <li>Vendedor, comprador, assessor, avalista, duas testemunhas</li>
+    <li>Cronograma de parcelas com valores e vencimentos</li>
+    <li><strong>Destinação por parcela:</strong> cobrada pela assessoria ou pelo vendedor</li>
+    <li>Regras de repasse (% assessoria, dono, assessores)</li>
+    <li>Status: rascunho, aguardando assinatura, ativo, concluído, cancelado</li>
+  </ul>
+</div>
+
+<div class="module-box">
+  <h3>5.2 PDF e impressão <span class="tag">Implementado</span></h3>
+  <ul>
+    <li>Geração de PDF do contrato (nota de leilão + verso com cláusulas)</li>
+    <li>Modelos de contrato reutilizáveis (versos/cláusulas)</li>
+    <li>Texto fixo no cronograma: <em>“Forma de pagamento discriminada no cronograma de parcelas abaixo.”</em></li>
+    <li>Visualização para impressão em página dedicada</li>
+  </ul>
+</div>
+
+<div class="module-box">
+  <h3>5.3 Assinatura digital — Clicksign <span class="tag">Implementado</span></h3>
+  <ul>
+    <li>Envio do PDF para assinatura de vendedor, comprador e 2 testemunhas</li>
+    <li>Pré-preenchimento de CPF e data de nascimento no widget de assinatura</li>
+    <li>Acompanhamento de status das assinaturas em tempo real</li>
+    <li>Reenvio de notificação por e-mail</li>
+    <li>Link de assinatura compartilhável (WhatsApp)</li>
+    <li>Página pública de assinatura incorporada (<code>/assinar/:id</code>)</li>
+    <li>Cancelamento de envelope para reenvio após correção de dados</li>
+    <li>Download do PDF assinado quando concluído</li>
+  </ul>
+</div>
+
+<h2 class="page-break">6. Cobranças</h2>
+<div class="module-box">
+  <h3>6.1 Gestão de parcelas <span class="tag">Implementado</span></h3>
+  <ul>
+    <li>Listagem de todas as parcelas geradas pelos contratos</li>
+    <li>Status: pendente, pago, atrasado, cancelado</li>
+    <li>Filtros por status e por destinação (assessoria / vendedor)</li>
+    <li>Busca por animal, cliente ou número da parcela</li>
+    <li>Ordenação por colunas</li>
+    <li>Marcação manual como paga (admin) — apenas parcelas da assessoria</li>
+    <li>Alteração de destinação da cobrança (admin)</li>
+    <li>Dashboard: contadores consideram parcelas da assessoria para inadimplência</li>
+  </ul>
+</div>
+
+<h2>7. Repasses</h2>
+<div class="module-box">
+  <h3>7.1 Repasse automático <span class="tag">Implementado</span></h3>
+  <ul>
+    <li>Quando cobrança da assessoria é marcada como paga, repasses ficam pendentes</li>
+    <li>Destinatários: assessoria, dono do animal, assessores (conforme regras do contrato)</li>
+    <li>Marcação de repasse como pago</li>
+    <li>Filtros e listagem com busca e ordenação</li>
+  </ul>
+</div>
+
+<h2>8. Leilões</h2>
+<div class="module-box">
+  <h3>8.1 Eventos e lotes <span class="tag">Implementado</span></h3>
+  <ul>
+    <li>Cadastro de leilões (nome, data, local, status)</li>
+    <li>Lotes vinculados a animais</li>
+    <li>Múltiplos vendedores por lote</li>
+    <li>Registro de arremate e geração de contrato a partir do lote</li>
+    <li>Status do evento: agendado, em andamento, encerrado, cancelado</li>
+  </ul>
+</div>
+
+<h2>9. Dashboard</h2>
+<div class="module-box">
+  <h3>9.1 Painel administrativo <span class="tag">Implementado</span></h3>
+  <ul>
+    <li>Contadores: pessoas, compradores, vendedores, assessores, animais, contratos, cobranças</li>
+    <li>Gráficos (donut): perfis, contratos por status, cobranças, animais por status/sexo/associação</li>
+    <li>Atividade recente (últimos cadastros)</li>
+    <li>Atalhos rápidos para módulos</li>
+  </ul>
+</div>
+
+<div class="module-box">
+  <h3>9.2 Portal do cliente <span class="tag">Implementado</span></h3>
+  <ul>
+    <li>Dashboard simplificado com visão das compras, contratos e cobranças vinculadas</li>
+    <li>Dados filtrados automaticamente pelo perfil logado</li>
+    <li>Rótulos adaptados (“Minhas compras” em vez de “Animais”)</li>
+  </ul>
+</div>
+
+<h2>10. Experiência mobile</h2>
+<div class="module-box">
+  <h3>10.1 Layout adaptativo <span class="tag">Implementado</span></h3>
+  <ul>
+    <li>Interface mobile dedicada para telas ≤ 767px (todos os perfis)</li>
+    <li>Bottom navigation fixa com ícones e destaque visual</li>
+    <li>Header compacto com título, logout e avatar</li>
+    <li>Menu “Mais opções” (staff): leilões, repasses, modelos, usuários, auditoria</li>
+    <li>Listagens em cards no mobile (pessoas, animais, contratos, cobranças)</li>
+    <li>Dashboard mobile simplificado (cards 2×2, sem gráficos densos)</li>
+    <li>Safe area para iPhone (notch e barra inferior)</li>
+    <li>PWA básico: instalável no celular (manifest + meta tags)</li>
+  </ul>
+  <p><strong>Bottom nav — Cliente:</strong> Início · Compras · Contratos · Cobranças · Perfil</p>
+  <p><strong>Bottom nav — Staff:</strong> Início · Pessoas · Animais · Contratos · Cobranças</p>
+</div>
+
+<h2>11. Auditoria</h2>
+<div class="module-box">
+  <h3>11.1 Log de ações <span class="tag">Implementado</span></h3>
+  <ul>
+    <li>Registro de ações: login, criação, alteração, exclusão</li>
+    <li>Página de auditoria (admin/root) com filtros</li>
+    <li>Rastreabilidade por usuário, entidade e data</li>
+  </ul>
+</div>
+
+<h2>12. Usuários do sistema</h2>
+<ul>
+  <li>Cadastro de usuários internos (root, admin, operador)</li>
+  <li>Vinculação de usuário cliente a pessoa cadastrada</li>
+  <li>Ativação/desativação de contas</li>
+</ul>
+
+<h2>13. Listagens e UX geral</h2>
+<ul>
+  <li>Busca textual em todas as listagens principais</li>
+  <li>Filtros por pills (status, papéis, destinação etc.)</li>
+  <li>Ordenação clicável por colunas</li>
+  <li>Modais para formulários de cadastro/edição</li>
+  <li>Notificações toast (sucesso/erro)</li>
+  <li>Sidebar recolhível no desktop</li>
+  <li>Identidade visual da marca (cores, tipografia Montserrat)</li>
+</ul>
+
+<h2>14. Infraestrutura e deploy</h2>
+<table>
+  <tr><th>Item</th><th>Detalhe</th></tr>
+  <tr><td>URL</td><td>sistema.arianeandradeassessoria.app.br</td></tr>
+  <tr><td>Build</td><td><code>npm run build</code> → pasta <code>dist/sistema/</code></td></tr>
+  <tr><td>Backend</td><td><code>api.php</code> (PHP na Hostinger)</td></tr>
+  <tr><td>Uploads</td><td>Fotos de animais, avatares, documentos de pessoas</td></tr>
+  <tr><td>Banco</td><td>MySQL — schema e migrations em <code>database/</code></td></tr>
+  <tr><td>Dev local</td><td>Vite + Node (<code>backend/server.js</code>) espelhando a API PHP</td></tr>
+</table>
+
+<h2>15. Módulos do banco de dados (tabelas)</h2>
+<table>
+  <tr><th>Tabela</th><th>Função</th></tr>
+  <tr><td>clients</td><td>Pessoas (compradores, vendedores, etc.)</td></tr>
+  <tr><td>client_documents / properties / bank_accounts / contacts</td><td>Dados complementares da pessoa</td></tr>
+  <tr><td>animals / animal_owners / animal_genealogy</td><td>Plantel e proprietários</td></tr>
+  <tr><td>contracts / contract_templates / contract_signatures</td><td>Contratos e modelos</td></tr>
+  <tr><td>charges</td><td>Parcelas/cobranças</td></tr>
+  <tr><td>contract_payout_rules / payouts</td><td>Regras e repasses</td></tr>
+  <tr><td>auctions / auction_lots / auction_lot_sellers</td><td>Leilões</td></tr>
+  <tr><td>users</td><td>Usuários do sistema</td></tr>
+  <tr><td>audit_logs</td><td>Auditoria</td></tr>
+  <tr><td>catalogs</td><td>Catálogos (raças etc.)</td></tr>
+</table>
+
+<h2>16. O que ainda NÃO está implementado</h2>
+<p>Para referência — estes itens constam no roadmap, mas <strong>não fazem parte da versão atual</strong>:</p>
+<ul>
+  <li>Controle de reprodução (cobrições, embriões, prenhez, nascimentos)</li>
+  <li>Módulo sanitário (vacinas, exames)</li>
+  <li>Integração ABCCMM via API</li>
+  <li>Integração bancária (emissão automática de boletos/PIX)</li>
+  <li>Planos/módulos comerciais por haras (SaaS)</li>
+  <li>Portal dedicado do assessor (receber/pagar)</li>
+  <li>Dashboard financeiro consolidado da empresa</li>
+  <li>Estoque e manejo</li>
+</ul>
+
+<div class="footer">
+  Sistema Ariane · Ariane Andrade Assessoria · Gestão de Haras<br>
+  Inventário de funcionalidades atuais · Agosto/2026 · Versão 1.0
+</div>
+
+</body>
+</html>

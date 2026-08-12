@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { changePassword } from '../services/apiService';
 import { useToast } from '../contexts/ToastContext';
+import AppButton from '../components/AppButton';
 
 export default function ChangePassword() {
   const { success, error: toastError } = useToast();
@@ -37,7 +38,7 @@ export default function ChangePassword() {
   };
 
   return (
-    <div className="mx-auto max-w-lg space-y-5 animate-fade-in">
+    <div className="mx-auto max-w-lg space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-semibold text-brand-dark-brown">Alterar senha</h2>
@@ -79,13 +80,9 @@ export default function ChangePassword() {
             className={inputClass}
           />
         </label>
-        <button
-          type="submit"
-          disabled={saving}
-          className="rounded-xl bg-brand-brown px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-60"
-        >
-          {saving ? 'Salvando...' : 'Salvar senha'}
-        </button>
+        <AppButton type="submit" loading={saving}>
+          Salvar senha
+        </AppButton>
       </form>
     </div>
   );

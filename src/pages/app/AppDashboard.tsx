@@ -27,7 +27,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useAppMobile } from '../../hooks/useAppMobile';
-import Loading from '../../components/Loading';
+import DashboardSkeleton from '../../components/skeletons/DashboardSkeleton';
 import DonutChart from '../../components/DonutChart';
 import { clientPortalLabels } from '../../constants/clientPortalLabels';
 
@@ -41,12 +41,7 @@ interface RecentItem {
   createdAt: string;
 }
 
-function greeting() {
-  const h = new Date().getHours();
-  if (h < 12) return 'Bom dia';
-  if (h < 18) return 'Boa tarde';
-  return 'Boa noite';
-}
+import { greetingBR } from '../../utils/dateTime';
 
 const STATUS_COLORS: Record<Animal['status'], string> = {
   ativo: '#4A6650',
@@ -253,17 +248,17 @@ export default function AppDashboard() {
     ];
   }, [stats]);
 
-  if (loading) return <Loading message="Carregando painel..." />;
+  if (loading) return <DashboardSkeleton mobile={appMobile} />;
 
   const firstName = user?.name?.split(' ')[0];
   const s = stats;
 
   if (appMobile) {
     return (
-      <div className="space-y-5 animate-fade-in">
+      <div className="space-y-5">
         <div>
           <h2 className="text-xl font-semibold text-brand-dark-brown">
-            {greeting()}
+            {greetingBR()}
             {firstName ? `, ${firstName}` : ''}
           </h2>
           <p className="mt-1 text-sm text-brand-olive">
@@ -364,11 +359,11 @@ export default function AppDashboard() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold text-brand-dark-brown">
-            {greeting()}
+            {greetingBR()}
             {firstName ? `, ${firstName}` : ''}
           </h2>
           <p className="text-sm text-brand-olive">

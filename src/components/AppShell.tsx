@@ -27,7 +27,9 @@ import UserAvatar from './UserAvatar';
 import AppBottomNav from './AppBottomNav';
 import MobileMoreSheet from './MobileMoreSheet';
 import { clientPortalLabels, resolvePageMeta } from '../constants/clientPortalLabels';
+import { formatLongDateBR } from '../utils/dateTime';
 import { useIsMobile } from '../hooks/useIsMobile';
+import PageTransition from './PageTransition';
 
 const roleLabel: Record<string, string> = {
   root: 'Root',
@@ -108,11 +110,7 @@ export default function AppShell() {
     }`;
 
   const meta = resolvePageMeta(location.pathname, isCliente);
-  const today = new Intl.DateTimeFormat('pt-BR', {
-    weekday: 'long',
-    day: '2-digit',
-    month: 'long',
-  }).format(new Date());
+  const today = formatLongDateBR();
 
   const showCadastrosChildren = compact || cadastrosOpen;
   const showContaChildren = compact || contaOpen;
@@ -166,7 +164,9 @@ export default function AppShell() {
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 pb-28">
-          <Outlet />
+          <PageTransition>
+            <Outlet />
+          </PageTransition>
         </main>
 
         <AppBottomNav />
@@ -542,7 +542,9 @@ export default function AppShell() {
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 sm:p-4 md:p-6">
-          <Outlet />
+          <PageTransition>
+            <Outlet />
+          </PageTransition>
         </main>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import type { Contract } from '../../services/apiService';
 import { printContractPdf } from './printContractPdf';
+import { formatDateBR, formatDateTimeBR, todayDateISO } from '../../utils/dateTime';
 
 const money = (v: number) =>
   v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -106,7 +107,7 @@ export default function ContractDocument({
         <p className="mt-1 text-sm text-brand-olive">
           Nº {contract.contract_number || contract.id}
           {contract.lot_label ? ` · Lote ${contract.lot_label}` : ''} ·{' '}
-          {new Date(contract.created_at || Date.now()).toLocaleDateString('pt-BR')}
+          {formatDateBR(contract.created_at || todayDateISO())}
           {contract.template_name ? ` · Modelo: ${contract.template_name}` : ''}
         </p>
       </header>
@@ -185,7 +186,7 @@ export default function ContractDocument({
                 <li key={s.id} className="rounded-lg border border-brand-beige p-3">
                   <p className="font-medium">{s.signer_name}</p>
                   <p className="text-xs text-brand-olive">
-                    Papel: {s.party_role} · {new Date(s.signed_at).toLocaleString('pt-BR')}
+                    Papel: {s.party_role} · {formatDateTimeBR(s.signed_at)}
                     {s.ip ? ` · IP ${s.ip}` : ''}
                   </p>
                 </li>

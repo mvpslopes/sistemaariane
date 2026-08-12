@@ -15,12 +15,15 @@ import {
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import Loading from '../../components/Loading';
+import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
+import DetailSkeleton from '../../components/skeletons/DetailSkeleton';
+import AppButton from '../../components/AppButton';
 import Modal from '../../components/Modal';
 import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
 import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, cmpNum, sortRows } from '../../hooks/useSortableTable';
+import { formatDateBR, formatDateTimeBR } from '../../utils/dateTime';
 import { useAppMobile } from '../../hooks/useAppMobile';
 import { MobileCard } from '../../components/MobileCard';
 import ContractForm from './ContractForm';
@@ -374,7 +377,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   }, [items, q, statusFilter, sortKey, sortDir]);
 
   return (
-    <div className="space-y-5 animate-fade-in">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
           <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
@@ -384,13 +387,9 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
           contratos
         </p>
         {canCreate && (
-          <button
-            type="button"
-            onClick={() => setFormOpen(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand-brown px-4 py-2 text-sm font-medium text-white shadow-lg shadow-brand-brown/20 hover:bg-brand-olive"
-          >
+          <AppButton type="button" onClick={() => setFormOpen(true)}>
             <Plus className="h-4 w-4" /> Nova venda
-          </button>
+          </AppButton>
         )}
       </div>
 
@@ -419,7 +418,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
       />
 
       {loading ? (
-        <Loading message="Carregando contratos..." />
+        <ListPageSkeleton variant={appMobile ? 'cards' : 'table'} />
       ) : appMobile ? (
         filtered.length === 0 ? (
           <p className="py-12 text-center text-sm text-brand-olive">Nenhum contrato encontrado</p>
@@ -615,7 +614,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
         size="xl"
       >
         {detailLoading || !detail ? (
-          <Loading message="Carregando contrato..." />
+          <DetailSkeleton />
         ) : (
           <div className="space-y-5">
             <div className="grid gap-3 text-sm sm:grid-cols-2">
@@ -712,7 +711,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                       )}
                       {detail.clicksign_sent_at && (
                         <span className="text-xs text-brand-olive">
-                          Enviado em {new Date(detail.clicksign_sent_at).toLocaleString('pt-BR')}
+                          Enviado em {formatDateTimeBR(detail.clicksign_sent_at)}
                         </span>
                       )}
                     </div>
@@ -743,7 +742,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                                   }`}
                                 >
                                   {s.signed && s.signedAt
-                                    ? `Assinou em: ${new Date(s.signedAt).toLocaleDateString('pt-BR')}`
+                                    ? `Assinou em: ${formatDateBR(s.signedAt)}`
                                     : s.statusLabel}
                                 </span>
                               </div>

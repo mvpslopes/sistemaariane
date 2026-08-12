@@ -6,7 +6,8 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { CheckCircle2, AlertCircle, Info, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 export type ToastType = 'success' | 'error' | 'info';
 
@@ -27,7 +28,35 @@ interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | undefined>(undefined);
 
-const AUTO_DISMISS_MS = 4200;
+const AUTO_DISMISS_MS = 4500;
+const MAX_VISIBLE_TOASTS = 3;
+
+const typeConfig = {
+  success: {
+    label: 'Sucesso',
+    Icon: CheckCircle2,
+    container: 'border-brand-forest/20 bg-white/95 text-brand-dark-brown',
+    accent: 'bg-brand-forest',
+    iconWrap: 'bg-brand-forest/10 text-brand-forest ring-1 ring-brand-forest/15',
+    progress: 'bg-brand-forest',
+  },
+  error: {
+    label: 'Erro',
+    Icon: AlertCircle,
+    container: 'border-red-200/80 bg-white/95 text-brand-dark-brown',
+    accent: 'bg-red-500',
+    iconWrap: 'bg-red-50 text-red-600 ring-1 ring-red-100',
+    progress: 'bg-red-500',
+  },
+  info: {
+    label: 'Informação',
+    Icon: Info,
+    container: 'border-brand-gold/35 bg-white/95 text-brand-dark-brown',
+    accent: 'bg-brand-gold',
+    iconWrap: 'bg-brand-gold/12 text-brand-gold ring-1 ring-brand-gold/20',
+    progress: 'bg-brand-gold',
+  },
+} as const;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
@@ -39,7 +68,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const toast = useCallback(
     (message: string, type: ToastType = 'info') => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      setToasts((prev) => [...prev, { id, type, message }]);
+      setToasts((prev) => [...prev.slice(-(MAX_VISIBLE_TOASTS - 1)), { id, type, message }]);
       window.setTimeout(() => dismiss(id), AUTO_DISMISS_MS);
     },
     [dismiss]
@@ -82,40 +111,87 @@ function ToastViewport({
   toasts: ToastItem[];
   onDismiss: (id: string) => void;
 }) {
+  const isMobile = useIsMobile();
+
   if (!toasts.length) return null;
 
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-[min(100%-2rem,24rem)] flex-col gap-2">
+    <div
+      className={
+        isMobile
+          ? 'pointer-events-none fixed inset-x-0 top-0 z-[110] flex flex-col gap-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))]'
+          : 'pointer-events-none fixed bottom-5 right-5 z-[110] flex w-[min(100%-2.5rem,26rem)] flex-col gap-2.5'
+      }
+      aria-live="polite"
+      aria-relevant="additions"
+    >
       {toasts.map((t) => (
-        <div
+        <ToastCard
           key={t.id}
-          className={`pointer-events-auto flex items-start gap-3 rounded-xl border px-4 py-3 shadow-lg animate-slide-up ${styles[t.type]}`}
-          role="status"
-        >
-          <span className="mt-0.5 shrink-0">{icons[t.type]}</span>
-          <p className="flex-1 text-sm font-medium leading-snug">{t.message}</p>
-          <button
-            type="button"
-            onClick={() => onDismiss(t.id)}
-            className="shrink-0 rounded-lg p-1 opacity-70 hover:opacity-100"
-            aria-label="Fechar"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+          toast={t}
+          isMobile={isMobile}
+          onDismiss={() => onDismiss(t.id)}
+        />
       ))}
     </div>
   );
 }
 
-const icons = {
-  success: <CheckCircle2 className="h-5 w-5" />,
-  error: <AlertCircle className="h-5 w-5" />,
-  info: <Info className="h-5 w-5" />,
-};
+function ToastCard({
+  toast,
+  isMobile,
+  onDismiss,
+}: {
+  toast: ToastItem;
+  isMobile: boolean;
+  onDismiss: () => void;
+}) {
+  const config = typeConfig[toast.type];
+  const { Icon, label, container, accent, iconWrap, progress } = config;
 
-const styles: Record<ToastType, string> = {
-  success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-  error: 'border-red-200 bg-red-50 text-red-800',
-  info: 'border-brand-beige bg-white text-brand-dark-brown',
-};
+  return (
+    <div
+      className={`pointer-events-auto relative overflow-hidden rounded-2xl border shadow-card backdrop-blur-md ${container} ${
+        isMobile ? 'animate-toast-slide-down' : 'animate-toast-slide-up'
+      }`}
+      role="status"
+    >
+      <span className={`absolute inset-y-0 left-0 w-1 ${accent}`} aria-hidden />
+
+      <div className="flex items-start gap-3 px-4 py-3.5 pl-5">
+        <span
+          className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${iconWrap}`}
+        >
+          <Icon className="h-[1.125rem] w-[1.125rem]" strokeWidth={2.25} />
+        </span>
+
+        <div className="min-w-0 flex-1 pt-0.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-brown/80">
+            {label}
+          </p>
+          <p className="mt-0.5 text-sm font-medium leading-snug text-brand-dark-brown">
+            {toast.message}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="-mr-1 mt-0.5 shrink-0 rounded-xl p-1.5 text-brand-brown/60 transition hover:bg-brand-off-white hover:text-brand-dark-brown"
+          aria-label="Fechar notificação"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="h-1 bg-brand-beige/40">
+        <div
+          className={`h-full origin-left ${progress}`}
+          style={{
+            animation: `toastProgress ${AUTO_DISMISS_MS}ms linear forwards`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}

@@ -10,6 +10,18 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 dotenv.config();
+process.env.TZ = 'America/Sao_Paulo';
+
+const APP_TIMEZONE = 'America/Sao_Paulo';
+
+function todayBrasiliaISO() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const animalsUploadsDir = path.join(__dirname, 'uploads', 'animals');
@@ -69,7 +81,11 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
-console.log('✅ Pool MySQL configurado');
+pool.on('connection', (conn) => {
+  conn.query("SET time_zone = '-03:00'");
+});
+
+console.log('✅ Pool MySQL configurado (fuso: America/Sao_Paulo)');
 
 function signToken(user) {
   return jwt.sign(
@@ -709,7 +725,7 @@ function normalizeCollector(value) {
   return value === 'seller' ? 'seller' : 'assessoria';
 }
 
-function mapChargeRow(c, today = new Date().toISOString().slice(0, 10)) {
+function mapChargeRow(c, today = todayBrasiliaISO()) {
   let status = c.status;
   if (status === 'pendente' && c.due_date < today) status = 'atrasado';
   return {

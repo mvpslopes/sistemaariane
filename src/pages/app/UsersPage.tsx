@@ -12,7 +12,8 @@ import {
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import Loading from '../../components/Loading';
+import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
+import AppButton from '../../components/AppButton';
 import Modal from '../../components/Modal';
 import UserAvatar from '../../components/UserAvatar';
 import { FilterPills } from '../../components/FilterPills';
@@ -262,10 +263,20 @@ export default function UsersPage() {
     );
   }, [users, q, statusFilter, roleFilter, sortKey, sortDir, clientNameById]);
 
-  if (loading) return <Loading message="Carregando usuários..." />;
+  if (loading) {
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="h-5 w-40 rounded-lg bg-brand-beige/50" />
+          <div className="h-10 w-32 rounded-xl bg-brand-beige/50" />
+        </div>
+        <ListPageSkeleton variant="table" />
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-5 animate-fade-in">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
           <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
@@ -274,13 +285,9 @@ export default function UsersPage() {
           ) : null}{' '}
           usuários cadastrados
         </p>
-        <button
-          type="button"
-          onClick={openNew}
-          className="rounded-xl bg-brand-brown px-4 py-2 text-sm font-medium text-white shadow-lg shadow-brand-brown/20 transition hover:bg-brand-olive"
-        >
+        <AppButton type="button" onClick={openNew}>
           Novo usuário
-        </button>
+        </AppButton>
       </div>
 
       <ListTableToolbar

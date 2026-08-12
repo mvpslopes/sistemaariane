@@ -9,7 +9,8 @@ return [
     'db_user' => 'u179630068_ariane_usermvp',
     'db_password' => 'SUA_SENHA_AQUI',
     'db_name' => 'u179630068_mvp_ariane',
-    'jwt_secret' => 'altere_este_segredo_jwt',
+    // Fuso de Brasília (UTC−3) — alinhado ao frontend e às regras de negócio
+    'app_timezone' => 'America/Sao_Paulo',
 
     // Clicksign (NÃO versionar o token real — use config.local.php)
     'clicksign_access_token' => '',

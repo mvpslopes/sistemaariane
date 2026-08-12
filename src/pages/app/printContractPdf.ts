@@ -1,4 +1,5 @@
 import type { Contract } from '../../services/apiService';
+import { formatDateBR, formatDateLongBR, formatDateTimeBR, parseAppDate, todayDateISO, APP_TIMEZONE } from '../../utils/dateTime';
 
 const money = (v: number) =>
   v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -12,28 +13,12 @@ function esc(s: string | null | undefined) {
 }
 
 function fmtDate(d: string | null | undefined) {
-  if (!d) return '—';
-  try {
-    return new Date(d.includes('T') ? d : d + 'T12:00:00').toLocaleDateString('pt-BR');
-  } catch {
-    return d;
-  }
+  return formatDateBR(d);
 }
-
-const MONTHS_PT = [
-  'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
-  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
-];
 
 /** Ex.: 10 de novembro de 2026 */
 function fmtDateLong(d: string | null | undefined) {
-  if (!d) return '____ de ______________ de ______';
-  try {
-    const dt = new Date(d.includes('T') ? d : d + 'T12:00:00');
-    return `${dt.getDate()} de ${MONTHS_PT[dt.getMonth()]} de ${dt.getFullYear()}`;
-  } catch {
-    return d;
-  }
+  return formatDateLongBR(d);
 }
 
 const ASSESSORIA = {
@@ -126,7 +111,7 @@ function partyBlock(
 /** HTML completo do contrato (frente + verso + assinaturas + promissórias). */
 export function buildContractHtml(contract: Contract): string {
   const logoUrl = `${window.location.origin}/logo-ariane-wide-transparente.png`;
-  const emit = new Date(contract.created_at || Date.now()).toLocaleString('pt-BR');
+  const emit = formatDateTimeBR(contract.created_at || new Date());
   const number = contract.contract_number || contract.id;
   const title =
     contract.template_title || 'NOTA DE LEILÃO E CONTRATO COM RESERVA DE DOMÍNIO';
@@ -203,8 +188,16 @@ export function buildContractHtml(contract: Contract): string {
       ? contract.charges[contract.charges.length - 1].due_date
       : contract.first_due_date;
   const issueDate =
-    contract.created_at?.slice(0, 10) || new Date().toISOString().slice(0, 10);
-  const npYear = new Date(issueDate + 'T12:00:00').getFullYear();
+    contract.created_at?.slice(0, 10) || todayDateISO();
+  const issueParsed = parseAppDate(issueDate);
+  const npYear = issueParsed
+    ? Number(
+        new Intl.DateTimeFormat('en-CA', {
+          timeZone: APP_TIMEZONE,
+          year: 'numeric',
+        }).format(issueParsed)
+      )
+    : Number(todayDateISO().slice(0, 4));
   const npSerial = `${npYear}.${String(number).replace(/\D/g, '').padStart(10, '0')}`;
 
   const animalRef = `sobre o contrato nº <strong>${esc(String(number))}</strong> (animal <strong>${esc(

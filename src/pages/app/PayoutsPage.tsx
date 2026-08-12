@@ -3,11 +3,12 @@ import { Search } from 'lucide-react';
 import { getPayouts, updatePayout, type Payout, type PayoutStatus } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import Loading from '../../components/Loading';
+import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
 import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
 import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, cmpNum, sortRows } from '../../hooks/useSortableTable';
+import { formatDateBR } from '../../utils/dateTime';
 
 const money = (v: number) =>
   v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -144,7 +145,7 @@ export default function PayoutsPage() {
   const paid = items.filter((i) => i.status === 'pago').length;
 
   return (
-    <div className="space-y-5 animate-fade-in">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
           <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
@@ -185,7 +186,7 @@ export default function PayoutsPage() {
       />
 
       {loading ? (
-        <Loading message="Carregando repasses..." />
+        <ListPageSkeleton variant="table" />
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
           <table className="min-w-full text-left text-sm">
@@ -222,7 +223,7 @@ export default function PayoutsPage() {
                     #{p.installment_no}
                     {p.charge_due_date && (
                       <div className="text-xs text-brand-olive">
-                        venc. {new Date(p.charge_due_date + 'T12:00:00').toLocaleDateString('pt-BR')}
+                        venc. {formatDateBR(p.charge_due_date)}
                       </div>
                     )}
                   </td>

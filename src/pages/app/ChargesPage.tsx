@@ -10,12 +10,13 @@ import {
 import { CHARGE_COLLECTOR_SHORT } from '../../constants/chargeCollectors';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import Loading from '../../components/Loading';
+import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
 import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
 import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, cmpNum, sortRows } from '../../hooks/useSortableTable';
 import { useAppMobile } from '../../hooks/useAppMobile';
+import { formatDateBR } from '../../utils/dateTime';
 import { MobileCard } from '../../components/MobileCard';
 
 const money = (v: number) =>
@@ -192,7 +193,7 @@ export default function ChargesPage() {
   const paid = assessoriaItems.filter((i) => i.status === 'pago').length;
 
   return (
-    <div className="space-y-5 animate-fade-in">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
           <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
@@ -241,7 +242,7 @@ export default function ChargesPage() {
       />
 
       {loading ? (
-        <Loading message="Carregando cobranças..." />
+        <ListPageSkeleton variant={appMobile ? 'cards' : 'table'} />
       ) : appMobile ? (
         filtered.length === 0 ? (
           <p className="py-12 text-center text-sm text-brand-olive">Nenhuma cobrança encontrada</p>
@@ -258,7 +259,7 @@ export default function ChargesPage() {
                         <p className="mt-0.5 text-xs text-brand-olive">
                           Parcela {c.installment_no} · {c.payment_method.toUpperCase()}
                         </p>
-                        <p className="mt-0.5 text-xs text-brand-olive">Venc. {c.due_date}</p>
+                        <p className="mt-0.5 text-xs text-brand-olive">Venc. {formatDateBR(c.due_date)}</p>
                         <span
                           className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${collectorTone[collector]}`}
                         >
@@ -312,7 +313,7 @@ export default function ChargesPage() {
                     <td className="px-4 py-3 text-brand-brown">
                       {c.installment_no} · {c.payment_method.toUpperCase()}
                     </td>
-                    <td className="px-4 py-3 text-brand-brown">{c.due_date}</td>
+                    <td className="px-4 py-3 text-brand-brown">{formatDateBR(c.due_date)}</td>
                     <td className="px-4 py-3 text-brand-brown">{money(c.amount)}</td>
                     <td className="px-4 py-3">
                       {canUpdate ? (

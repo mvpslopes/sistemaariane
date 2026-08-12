@@ -17,12 +17,14 @@ import {
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import Loading from '../../components/Loading';
+import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
+import DetailSkeleton from '../../components/skeletons/DetailSkeleton';
 import Modal from '../../components/Modal';
 import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
 import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, cmpNum, sortRows } from '../../hooks/useSortableTable';
+import { formatDateBR } from '../../utils/dateTime';
 import ContractForm from './ContractForm';
 
 type StatusFilter = 'all' | 'agendado' | 'em_andamento' | 'encerrado' | 'cancelado';
@@ -348,7 +350,7 @@ export default function AuctionsPage() {
   }, [items, q, statusFilter, sortKey, sortDir]);
 
   return (
-    <div className="space-y-5 animate-fade-in">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
           <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
@@ -390,7 +392,7 @@ export default function AuctionsPage() {
       />
 
       {loading ? (
-        <Loading message="Carregando leilões..." />
+        <ListPageSkeleton variant="table" />
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
           <div className="overflow-x-auto">
@@ -427,7 +429,7 @@ export default function AuctionsPage() {
                   </td>
                   <td className="hidden px-4 py-3 md:table-cell">
                     {a.auction_date
-                      ? new Date(a.auction_date + 'T12:00:00').toLocaleDateString('pt-BR')
+                      ? formatDateBR(a.auction_date)
                       : '—'}
                   </td>
                   <td className="hidden px-4 py-3 lg:table-cell">{a.location || '—'}</td>
@@ -516,13 +518,13 @@ export default function AuctionsPage() {
         size="2xl"
       >
         {detailLoading || !detail ? (
-          <Loading message="Carregando..." />
+          <DetailSkeleton />
         ) : (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2 text-sm text-brand-olive">
               <span>
                 {detail.auction_date
-                  ? new Date(detail.auction_date + 'T12:00:00').toLocaleDateString('pt-BR')
+                  ? formatDateBR(detail.auction_date)
                   : 'Sem data'}
               </span>
               {detail.location && <span>· {detail.location}</span>}

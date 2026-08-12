@@ -25,7 +25,9 @@ export function MobileCard({ children, onClick, className = '' }: MobileCardProp
           : undefined
       }
       className={`rounded-2xl border border-brand-beige bg-white p-4 shadow-card ${
-        interactive ? 'cursor-pointer transition active:scale-[0.99] hover:border-brand-olive/30' : ''
+        interactive
+          ? 'cursor-pointer transition hover:border-brand-olive/30 hover:shadow-card-hover active:scale-[0.99]'
+          : ''
       } ${className}`}
     >
       {children}

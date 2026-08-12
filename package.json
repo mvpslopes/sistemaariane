@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "backend:install": "cd backend && npm install",
     "backend:start": "cd backend && npm start",
-    "docs:pdf": "node scripts/html-to-pdf.mjs docs/recursos-novos-sistema-ariane.html"
+    "docs:pdf": "node scripts/html-to-pdf.mjs docs/recursos-novos-sistema-ariane.html",
+    "docs:pdf-atuais": "node scripts/html-to-pdf.mjs docs/recursos-atuais-sistema-ariane.html"
   },
   "dependencies": {
     "firebase": "^12.7.0",

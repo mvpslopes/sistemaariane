@@ -3,7 +3,8 @@ import { Plus, Search, Pencil, Trash2, Users } from 'lucide-react';
 import { deleteClient, getClients, type Client } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import Loading from '../../components/Loading';
+import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
+import AppButton from '../../components/AppButton';
 import Modal from '../../components/Modal';
 import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
@@ -192,7 +193,7 @@ export default function ClientsPage() {
   }, [clients, q, statusFilter, roleFilter, sortKey, sortDir]);
 
   return (
-    <div className="space-y-5 animate-fade-in">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
           <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
@@ -203,13 +204,9 @@ export default function ClientsPage() {
           <span className="font-semibold text-brand-dark-brown">{activeCount}</span> ativas
         </p>
         {canCreate && (
-          <button
-            type="button"
-            onClick={openNew}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand-brown px-4 py-2 text-sm font-medium text-white shadow-lg shadow-brand-brown/20 transition hover:bg-brand-olive"
-          >
+          <AppButton type="button" onClick={openNew}>
             <Plus className="h-4 w-4" /> Nova pessoa
-          </button>
+          </AppButton>
         )}
       </div>
 
@@ -242,7 +239,7 @@ export default function ClientsPage() {
       />
 
       {loading ? (
-        <Loading message="Carregando pessoas..." />
+        <ListPageSkeleton variant={appMobile ? 'cards' : 'table'} />
       ) : filtered.length === 0 ? (
         <EmptyState />
       ) : appMobile ? (

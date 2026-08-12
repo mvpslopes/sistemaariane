@@ -6,6 +6,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useAppMobile } from '../../hooks/useAppMobile';
 import UserAvatar from '../../components/UserAvatar';
+import AppButton from '../../components/AppButton';
 
 export default function ProfilePage() {
   const { user, refreshUser, logout } = useAuth();
@@ -41,7 +42,7 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="mx-auto max-w-lg space-y-5 animate-fade-in">
+    <div className="mx-auto max-w-lg space-y-5">
       <div className="flex items-center justify-between gap-3">
         <div>
           {!appMobile && (
@@ -90,13 +91,9 @@ export default function ProfilePage() {
         </label>
 
         <div className="flex gap-2 border-t border-brand-beige pt-4">
-          <button
-            type="submit"
-            disabled={saving}
-            className="rounded-xl bg-brand-brown px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-60"
-          >
-            {saving ? 'Salvando...' : 'Salvar perfil'}
-          </button>
+          <AppButton type="submit" loading={saving}>
+            Salvar perfil
+          </AppButton>
         </div>
       </form>
 

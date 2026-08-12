@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { Search, Shield } from 'lucide-react';
 import { getAuditLogs, type AuditLogEntry } from '../../services/apiService';
 import { useToast } from '../../contexts/ToastContext';
-import Loading from '../../components/Loading';
+import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
 import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
 import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, sortRows } from '../../hooks/useSortableTable';
+import { formatDateTimeBR } from '../../utils/dateTime';
 
 type ActionFilter = 'all' | string;
 type SortKey = 'createdAt' | 'username' | 'action' | 'resource' | 'summary';
@@ -28,11 +29,7 @@ const ACTION_FILTERS = [
   { id: 'delete', label: 'Exclusões' },
 ];
 
-const fmtDate = (iso: string) => {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString('pt-BR');
-};
+const fmtDate = (iso: string) => formatDateTimeBR(iso, iso);
 
 export default function AuditPage() {
   const { error: toastError } = useToast();
@@ -99,7 +96,7 @@ export default function AuditPage() {
   }, [items, q, actionFilter, effectiveKey, effectiveDir]);
 
   return (
-    <div className="space-y-5 animate-fade-in">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-start gap-3 rounded-2xl border border-brand-beige bg-brand-off-white/50 p-4">
         <Shield className="mt-0.5 h-5 w-5 shrink-0 text-brand-olive" />
         <div>
@@ -135,7 +132,7 @@ export default function AuditPage() {
       />
 
       {loading ? (
-        <Loading message="Carregando auditoria..." />
+        <ListPageSkeleton variant="table" />
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
           <table className="min-w-full text-left text-sm">

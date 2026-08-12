@@ -8,7 +8,7 @@ import {
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import Loading from '../../components/Loading';
+import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
 import Modal from '../../components/Modal';
 import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
@@ -152,7 +152,7 @@ export default function ContractTemplatesPage() {
   }, [items, q, statusFilter, sortKey, sortDir]);
 
   return (
-    <div className="space-y-5 animate-fade-in">
+    <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-brand-olive">
           <span className="font-semibold text-brand-dark-brown">{filtered.length}</span>
@@ -194,7 +194,7 @@ export default function ContractTemplatesPage() {
       />
 
       {loading ? (
-        <Loading message="Carregando modelos..." />
+        <ListPageSkeleton variant="table" rows={4} columns={3} />
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
           <table className="min-w-full text-left text-sm">

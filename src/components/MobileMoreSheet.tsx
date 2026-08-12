@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useAnimatedPresence } from '../hooks/useAnimatedPresence';
 
 interface MobileMoreSheetProps {
   open: boolean;
@@ -17,12 +18,13 @@ interface MobileMoreSheetProps {
 }
 
 const linkClass =
-  'flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-brand-dark-brown transition hover:bg-brand-off-white';
+  'flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-brand-dark-brown transition hover:bg-brand-off-white active:scale-[0.99]';
 
 export default function MobileMoreSheet({ open, onClose }: MobileMoreSheetProps) {
   const { canManageUsers, canViewAudit } = useAuth();
+  const { mounted, visible, duration } = useAnimatedPresence(open, 320);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   const items = [
     { to: '/app/leiloes', icon: Gavel, label: 'Leilões' },
@@ -37,12 +39,16 @@ export default function MobileMoreSheet({ open, onClose }: MobileMoreSheetProps)
   return (
     <>
       <div
-        className="fixed inset-0 z-40 bg-black/45 md:hidden"
+        className={`fixed inset-0 z-40 bg-black/45 transition-opacity md:hidden ${visible ? 'opacity-100' : 'opacity-0'}`}
+        style={{ transitionDuration: `${duration}ms` }}
         onClick={onClose}
         aria-hidden
       />
       <div
-        className="fixed inset-x-0 bottom-0 z-50 rounded-t-3xl border-t border-brand-beige bg-white px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-4 shadow-2xl md:hidden"
+        className={`fixed inset-x-0 bottom-0 z-50 rounded-t-3xl border-t border-brand-beige bg-white px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-4 shadow-2xl transition-transform md:hidden ${
+          visible ? 'translate-y-0' : 'translate-y-full'
+        }`}
+        style={{ transitionDuration: `${duration}ms`, transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)' }}
         role="dialog"
         aria-label="Mais opções"
       >
@@ -51,7 +57,7 @@ export default function MobileMoreSheet({ open, onClose }: MobileMoreSheetProps)
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-brand-olive hover:bg-brand-off-white"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-brand-olive transition hover:bg-brand-off-white active:scale-95"
             aria-label="Fechar"
           >
             <X className="h-5 w-5" />
@@ -60,7 +66,7 @@ export default function MobileMoreSheet({ open, onClose }: MobileMoreSheetProps)
         <nav className="max-h-[min(60vh,24rem)] space-y-1 overflow-y-auto">
           {items.map(({ to, icon: Icon, label }) => (
             <Link key={to} to={to} onClick={onClose} className={linkClass}>
-              <Icon className="h-5 w-5 shrink-0 text-brand-brown" />
+              <Icon className="h-5 w-5 shrink-0 text-brand-olive" />
               {label}
             </Link>
           ))}

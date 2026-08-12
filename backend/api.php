@@ -26,6 +26,8 @@ if (file_exists($configFile)) {
     exit;
 }
 
+date_default_timezone_set('America/Sao_Paulo');
+
 try {
     $pdo = new PDO(
         sprintf(
@@ -41,6 +43,7 @@ try {
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         ]
     );
+    $pdo->exec("SET time_zone = '-03:00'");
 } catch (PDOException $e) {
     http_response_code(500);
     echo json_encode([
