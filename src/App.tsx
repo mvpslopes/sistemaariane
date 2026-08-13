@@ -141,7 +141,7 @@ function AppContent() {
           <Route
             path="assinaturas"
             element={
-              <ProtectedRoute roles={['root', 'admin']}>
+              <ProtectedRoute roles={['root', 'admin', 'user']}>
                 <SubscriptionsPage />
               </ProtectedRoute>
             }

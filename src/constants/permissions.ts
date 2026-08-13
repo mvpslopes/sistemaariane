@@ -13,8 +13,8 @@ export function permissionsFromRole(role: Role): UserPermissions {
   const isAdmin = role === 'root' || role === 'admin';
   return {
     canCreate: isStaff,
-    canUpdate: isAdmin,
-    canDelete: isAdmin,
+    canUpdate: isStaff,
+    canDelete: isStaff,
     canManageUsers: isAdmin,
     canViewAudit: isAdmin,
   };

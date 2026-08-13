@@ -158,11 +158,11 @@ function can_create(string $role): bool {
 }
 
 function can_update(string $role): bool {
-    return in_array($role, ['root', 'admin'], true);
+    return in_array($role, ['root', 'admin', 'user'], true);
 }
 
 function can_delete(string $role): bool {
-    return in_array($role, ['root', 'admin'], true);
+    return in_array($role, ['root', 'admin', 'user'], true);
 }
 
 function can_manage_users(string $role): bool {
@@ -188,11 +188,11 @@ function require_create(string $secret): array {
 }
 
 function require_update(string $secret): array {
-    return require_auth($secret, ['root', 'admin']);
+    return require_auth($secret, ['root', 'admin', 'user']);
 }
 
 function require_delete(string $secret): array {
-    return require_auth($secret, ['root', 'admin']);
+    return require_auth($secret, ['root', 'admin', 'user']);
 }
 
 function audit_log(

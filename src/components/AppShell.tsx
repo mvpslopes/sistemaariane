@@ -52,7 +52,7 @@ import AppBrandMark from './AppBrandMark';
 const roleLabel: Record<string, string> = {
   root: 'Root',
   admin: 'Admin',
-  user: 'Usuário',
+  user: 'Operador',
   cliente: 'Cliente',
 };
 

@@ -264,11 +264,11 @@ function canCreate(role) {
 }
 
 function canUpdate(role) {
-  return role === 'root' || role === 'admin';
+  return ['root', 'admin', 'user'].includes(role);
 }
 
 function canDelete(role) {
-  return role === 'root' || role === 'admin';
+  return ['root', 'admin', 'user'].includes(role);
 }
 
 function canViewAudit(role) {
@@ -1871,7 +1871,7 @@ app.post('/api/clients/:id/access-user', auth(['root', 'admin', 'user']), async 
   }
 });
 
-app.put('/api/clients/:id/access-user/password', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/clients/:id/access-user/password', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const password = String(req.body?.password || '');
@@ -1960,7 +1960,7 @@ app.post('/api/clients', auth(['root', 'admin', 'user']), async (req, res) => {
   }
 });
 
-app.put('/api/clients/:id', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/clients/:id', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const {
@@ -2015,7 +2015,7 @@ app.put('/api/clients/:id', auth(['root', 'admin']), async (req, res) => {
   }
 });
 
-app.delete('/api/clients/:id', auth(['root', 'admin']), async (req, res) => {
+app.delete('/api/clients/:id', auth(['root', 'admin', 'user']), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const id = Number(req.params.id);
@@ -2085,7 +2085,7 @@ app.post('/api/clients/:id/documents', auth(['root', 'admin', 'user']), async (r
   }
 });
 
-app.delete('/api/clients/:id/documents/:docId', auth(['root', 'admin']), async (req, res) => {
+app.delete('/api/clients/:id/documents/:docId', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const [result] = await pool.execute(
       'DELETE FROM client_documents WHERE id = ? AND client_id = ?',
@@ -2137,7 +2137,7 @@ app.post('/api/clients/:id/properties', auth(['root', 'admin', 'user']), async (
   }
 });
 
-app.put('/api/clients/:id/properties/:propId', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/clients/:id/properties/:propId', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const b = req.body;
     if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome da propriedade é obrigatório' });
@@ -2159,7 +2159,7 @@ app.put('/api/clients/:id/properties/:propId', auth(['root', 'admin']), async (r
   }
 });
 
-app.delete('/api/clients/:id/properties/:propId', auth(['root', 'admin']), async (req, res) => {
+app.delete('/api/clients/:id/properties/:propId', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const [result] = await pool.execute(
       'DELETE FROM client_properties WHERE id = ? AND client_id = ?',
@@ -2213,7 +2213,7 @@ app.post('/api/clients/:id/bank-accounts', auth(['root', 'admin', 'user']), asyn
   }
 });
 
-app.put('/api/clients/:id/bank-accounts/:accId', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/clients/:id/bank-accounts/:accId', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const b = req.body;
     if (!String(b.bank_name || '').trim()) return res.status(400).json({ error: 'Banco é obrigatório' });
@@ -2236,7 +2236,7 @@ app.put('/api/clients/:id/bank-accounts/:accId', auth(['root', 'admin']), async 
   }
 });
 
-app.delete('/api/clients/:id/bank-accounts/:accId', auth(['root', 'admin']), async (req, res) => {
+app.delete('/api/clients/:id/bank-accounts/:accId', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const [result] = await pool.execute(
       'DELETE FROM client_bank_accounts WHERE id = ? AND client_id = ?',
@@ -2283,7 +2283,7 @@ app.post('/api/clients/:id/contacts', auth(['root', 'admin', 'user']), async (re
   }
 });
 
-app.put('/api/clients/:id/contacts/:contactId', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/clients/:id/contacts/:contactId', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const b = req.body;
     if (!String(b.name || '').trim()) return res.status(400).json({ error: 'Nome do contato é obrigatório' });
@@ -2301,7 +2301,7 @@ app.put('/api/clients/:id/contacts/:contactId', auth(['root', 'admin']), async (
   }
 });
 
-app.delete('/api/clients/:id/contacts/:contactId', auth(['root', 'admin']), async (req, res) => {
+app.delete('/api/clients/:id/contacts/:contactId', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const [result] = await pool.execute(
       'DELETE FROM client_contacts WHERE id = ? AND client_id = ?',
@@ -2498,7 +2498,7 @@ app.post('/api/animals', auth(['root', 'admin', 'user']), async (req, res) => {
   }
 });
 
-app.put('/api/animals/:id', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/animals/:id', auth(['root', 'admin', 'user']), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const id = Number(req.params.id);
@@ -2558,7 +2558,7 @@ app.put('/api/animals/:id', auth(['root', 'admin']), async (req, res) => {
   }
 });
 
-app.delete('/api/animals/:id', auth(['root', 'admin']), async (req, res) => {
+app.delete('/api/animals/:id', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const [[row]] = await pool.execute('SELECT photo_url FROM animals WHERE id = ?', [id]);
@@ -2926,7 +2926,7 @@ app.post('/api/contracts', auth(['root', 'admin', 'user']), async (req, res) => 
   }
 });
 
-app.put('/api/contracts/:id', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/contracts/:id', auth(['root', 'admin', 'user']), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const id = Number(req.params.id);
@@ -3670,7 +3670,7 @@ app.get('/api/contracts/:id/clicksign/signed-pdf', auth(['root', 'admin', 'user'
   }
 });
 
-app.post('/api/contracts/:id/clicksign/cancel', auth(['root', 'admin']), async (req, res) => {
+app.post('/api/contracts/:id/clicksign/cancel', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const [rows] = await pool.execute(`${contractSelect} AND c.id = ?`, [id]);
@@ -3702,7 +3702,7 @@ app.post('/api/contracts/:id/clicksign/cancel', auth(['root', 'admin']), async (
   }
 });
 
-app.post('/api/contracts/:id/clicksign/notify', auth(['root', 'admin']), async (req, res) => {
+app.post('/api/contracts/:id/clicksign/notify', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const [rows] = await pool.execute(`${contractSelect} AND c.id = ?`, [id]);
@@ -3723,7 +3723,7 @@ app.post('/api/contracts/:id/clicksign/notify', auth(['root', 'admin']), async (
   }
 });
 
-app.post('/api/contracts/:id/clicksign', auth(['root', 'admin']), async (req, res) => {
+app.post('/api/contracts/:id/clicksign', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const [rows] = await pool.execute(`${contractSelect} AND c.id = ?`, [id]);
@@ -3854,7 +3854,7 @@ app.get('/api/charges', auth(), async (req, res) => {
   }
 });
 
-app.put('/api/charges/:id', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/charges/:id', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { status, collector, notes } = req.body;
@@ -3976,7 +3976,7 @@ app.post('/api/auctions/:id/expenses', auth(['root', 'admin', 'user']), async (r
   }
 });
 
-app.put('/api/auctions/:id/expenses/:expenseId', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/auctions/:id/expenses/:expenseId', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const auctionId = Number(req.params.id);
     const expenseId = Number(req.params.expenseId);
@@ -4015,7 +4015,7 @@ app.put('/api/auctions/:id/expenses/:expenseId', auth(['root', 'admin']), async 
   }
 });
 
-app.delete('/api/auctions/:id/expenses/:expenseId', auth(['root', 'admin']), async (req, res) => {
+app.delete('/api/auctions/:id/expenses/:expenseId', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const [result] = await pool.execute(
       'DELETE FROM auction_expenses WHERE id = ? AND auction_id = ?',
@@ -4076,7 +4076,7 @@ app.post('/api/auctions', auth(['root', 'admin', 'user']), async (req, res) => {
   }
 });
 
-app.put('/api/auctions/:id', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/auctions/:id', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { name, auctionDate, location, organizer, status, notes } = req.body;
@@ -4182,7 +4182,7 @@ app.post('/api/auction-lots', auth(['root', 'admin', 'user']), async (req, res) 
   }
 });
 
-app.put('/api/auction-lots/:id', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/auction-lots/:id', auth(['root', 'admin', 'user']), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const id = Number(req.params.id);
@@ -4279,7 +4279,7 @@ app.get('/api/payouts', auth(), async (req, res) => {
   }
 });
 
-app.put('/api/payouts/:id', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/payouts/:id', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { status, notes } = req.body;
@@ -4364,7 +4364,7 @@ app.post('/api/contract-templates', auth(['root', 'admin', 'user']), async (req,
   }
 });
 
-app.put('/api/contract-templates/:id', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/contract-templates/:id', auth(['root', 'admin', 'user']), async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const id = Number(req.params.id);
@@ -4552,7 +4552,7 @@ app.get('/api/company-finance', auth(), async (req, res) => {
   }
 });
 
-app.get('/api/subscriptions', auth(['root', 'admin']), async (_req, res) => {
+app.get('/api/subscriptions', auth(['root', 'admin', 'user']), async (_req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT c.*,
@@ -4574,7 +4574,7 @@ app.get('/api/subscriptions', auth(['root', 'admin']), async (_req, res) => {
   }
 });
 
-app.get('/api/clients/:id/modules', auth(['root', 'admin']), async (req, res) => {
+app.get('/api/clients/:id/modules', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const cid = Number(req.params.id);
     const [rows] = await pool.execute(
@@ -4598,7 +4598,7 @@ app.get('/api/clients/:id/modules', auth(['root', 'admin']), async (req, res) =>
   }
 });
 
-app.put('/api/clients/:id/modules', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/clients/:id/modules', auth(['root', 'admin', 'user']), async (req, res) => {
   const cid = Number(req.params.id);
   const body = req.body || {};
   const conn = await pool.getConnection();
@@ -4830,7 +4830,7 @@ app.post('/api/breeding-coverings', auth(['root', 'admin', 'user']), async (req,
   }
 });
 
-app.put('/api/breeding-coverings/:id', auth(['root', 'admin']), async (req, res) => {
+app.put('/api/breeding-coverings/:id', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const [curRows] = await pool.execute('SELECT * FROM breeding_coverings WHERE id = ?', [id]);
@@ -4863,7 +4863,7 @@ app.put('/api/breeding-coverings/:id', auth(['root', 'admin']), async (req, res)
   }
 });
 
-app.delete('/api/breeding-coverings/:id', auth(['root', 'admin']), async (req, res) => {
+app.delete('/api/breeding-coverings/:id', auth(['root', 'admin', 'user']), async (req, res) => {
   try {
     const [result] = await pool.execute('DELETE FROM breeding_coverings WHERE id = ?', [
       Number(req.params.id),
