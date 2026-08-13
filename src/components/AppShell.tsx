@@ -373,15 +373,21 @@ export default function AppShell() {
           </NavAccordion>
         </nav>
 
-        <div className="border-t border-white/10 p-3">
+        <div className="border-t border-brand-gold/25 p-3">
           <div
-            className={`flex items-center gap-3 rounded-xl px-3 py-2.5 ${compact ? 'md:justify-center' : ''}`}
+            className={`flex items-center gap-3 rounded-xl bg-gradient-to-br from-brand-gold to-[#d4954a] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] ${
+              compact ? 'md:justify-center' : ''
+            }`}
           >
-            <UserAvatar name={user?.name || 'U'} size="md" className="!ring-white/20" />
+            <UserAvatar
+              name={user?.name || 'U'}
+              size="md"
+              className="!bg-brand-dark-brown !text-white !ring-2 !ring-brand-dark-brown/20"
+            />
             {!compact && (
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-white">{user?.name}</p>
-                <p className="truncate text-xs text-brand-beige/50">
+                <p className="truncate text-sm font-semibold text-brand-dark-brown">{user?.name}</p>
+                <p className="truncate text-xs font-medium text-brand-dark-brown/80">
                   {user ? roleLabel[user.role] : ''}
                 </p>
               </div>
