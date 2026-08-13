@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Search, Pencil, Trash2, Camera, PawPrint, FileText } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Plus, Search, Pencil, Trash2, Camera, PawPrint, FileText, ExternalLink } from 'lucide-react';
 import { deleteAnimal, getAnimals, mediaUrl, type Animal } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -229,7 +230,13 @@ export default function AnimalsPage() {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
-                      <p className="truncate font-semibold text-brand-dark-brown">{a.name}</p>
+                      <Link
+                        to={`/app/animais/${a.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="truncate font-semibold text-brand-dark-brown hover:underline"
+                      >
+                        {a.name}
+                      </Link>
                       <span
                         className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${statusTone[a.status]}`}
                       >
@@ -283,7 +290,12 @@ export default function AnimalsPage() {
                         )}
                       </div>
                       <div className="min-w-0">
-                        <span className="block truncate font-medium text-brand-dark-brown">{a.name}</span>
+                        <Link
+                          to={`/app/animais/${a.id}`}
+                          className="block truncate font-medium text-brand-dark-brown hover:text-brand-brown hover:underline"
+                        >
+                          {a.name}
+                        </Link>
                         <span className="text-[11px] text-brand-olive sm:hidden">
                           {a.sex === 'M' ? 'Macho' : a.sex === 'F' ? 'Fêmea' : a.sex === 'C' ? 'Castrado' : '—'}
                         </span>
@@ -306,6 +318,14 @@ export default function AnimalsPage() {
                   </td>
                   <td className="px-2 py-3 text-right sm:px-4">
                     <div className="inline-flex items-center gap-0.5 sm:gap-1">
+                      <Link
+                        to={`/app/animais/${a.id}`}
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-olive hover:bg-brand-beige/50"
+                        title="Ficha do animal"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        <span className="hidden sm:inline">Ficha</span>
+                      </Link>
                       <button
                         type="button"
                         onClick={() => openEdit(a.id)}

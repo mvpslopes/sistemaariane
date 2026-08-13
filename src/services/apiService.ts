@@ -94,6 +94,9 @@ export interface AuthUser {
   avatarUrl?: string | null;
   role: Role;
   clientId: string | null;
+  isAssessor?: boolean;
+  isBuyer?: boolean;
+  isSeller?: boolean;
   active?: boolean;
   mustChangePassword?: boolean;
   permissions?: UserPermissions;
@@ -146,7 +149,93 @@ export interface Client {
   is_avalista?: boolean;
   /** Haras/fazenda principal (quando cadastrada em propriedades) */
   property_name?: string | null;
+  subscription_type?: 'assessoria' | 'avulso';
+  subscription_suspended?: boolean;
+  adhesion_fee?: number | null;
+  monthly_fee?: number | null;
+  adhesion_paid_at?: string | null;
+  modules?: ClientModule[];
   created_at?: string;
+}
+
+export type ClientModuleCode = 'plantel' | 'reproducao' | 'sanitario' | 'contratos' | 'leiloes';
+
+export interface ClientModule {
+  code: ClientModuleCode;
+  active: boolean;
+  monthlyFee: number | null;
+  activatedAt: string | null;
+  notes: string | null;
+}
+
+export interface ClientSubscriptionPayload {
+  subscriptionType: 'assessoria' | 'avulso';
+  subscriptionSuspended: boolean;
+  adhesionFee: number | null;
+  monthlyFee: number | null;
+  adhesionPaidAt: string | null;
+  modules: Array<{ code: ClientModuleCode; active: boolean; monthlyFee: number | null }>;
+}
+
+export interface ReceivablesDashboard {
+  openTotal: number;
+  overdueTotal: number;
+  openCount: number;
+  overdueCount: number;
+  aging: {
+    current: number;
+    d1_30: number;
+    d31_60: number;
+    d61_90: number;
+    d90_plus: number;
+  };
+  byCollector: Record<
+    'assessoria' | 'seller',
+    { open: number; overdue: number; overdueCount: number }
+  >;
+  topDebtors: Array<{
+    clientId: string;
+    clientName: string;
+    whatsapp: string | null;
+    phone: string | null;
+    chargesCount: number;
+    overdueAmount: number;
+    oldestDue: string | null;
+  }>;
+  overdueItems: Array<{
+    id: string;
+    amount: number;
+    dueDate: string;
+    status: string;
+    collector: string;
+    installmentNo: number;
+    clientName: string;
+    whatsapp: string | null;
+    animalName: string | null;
+    contractNumber: string | null;
+    daysOverdue: number;
+  }>;
+}
+
+export interface CompanyFinanceSummary {
+  assessoria: {
+    paidMonth: number;
+    paidYear: number;
+    open: number;
+    overdue: number;
+  };
+  auctions: {
+    revenue: number;
+    expenses: number;
+    commissionEstimated: number;
+    resultEstimated: number;
+  };
+  payoutsPending: number;
+  saas: {
+    monthlyEstimated: number;
+    activeClients: number;
+  };
+  monthlySeries: Array<{ label: string; assessoriaPaid: number }>;
 }
 
 export type PersonDocType = 'rg' | 'identidade' | 'cnh' | 'comprovante_residencia' | 'selfie' | 'outro';
@@ -337,8 +426,50 @@ export interface Auction {
   status: AuctionStatus;
   notes: string | null;
   lots_count?: number | null;
+  contracts_count?: number | null;
+  sales_total?: number | null;
+  commission_estimated?: number | null;
   created_at?: string;
   lots?: AuctionLot[];
+}
+
+export interface AssessorAuctionFinanceContract {
+  id: string;
+  contract_number: string | null;
+  animal_name: string | null;
+  buyer_name: string | null;
+  lot_number: string | null;
+  total_amount: number;
+  status: Contract['status'];
+  commission_pct: number;
+  commission_amount: number;
+}
+
+export interface AssessorAuctionPayout {
+  id: string;
+  contract_id: string;
+  installment_no: number;
+  amount: number;
+  status: PayoutStatus;
+  paid_at: string | null;
+  charge_due_date: string | null;
+  animal_name: string | null;
+}
+
+export interface AssessorAuctionFinance {
+  auction_id: string;
+  auction_name: string;
+  auction_date: string | null;
+  location: string | null;
+  auction_status: AuctionStatus;
+  contracts_count: number;
+  sales_total: number;
+  commission_estimated: number;
+  commission_paid: number;
+  commission_pending: number;
+  commission_waiting: number;
+  contracts: AssessorAuctionFinanceContract[];
+  payouts: AssessorAuctionPayout[];
 }
 
 export interface AuctionLot {
@@ -360,6 +491,50 @@ export interface AuctionLot {
   status: LotStatus;
   contract_id: string | null;
   created_at?: string;
+}
+
+export type AuctionExpenseCategory =
+  | 'locacao'
+  | 'equipe'
+  | 'marketing'
+  | 'leiloeiro'
+  | 'transporte'
+  | 'outros';
+
+export interface AuctionExpense {
+  id: string;
+  auction_id: string;
+  category: AuctionExpenseCategory;
+  description: string | null;
+  amount: number;
+  expense_date: string | null;
+  created_at?: string;
+}
+
+export interface AuctionFinanceContract {
+  id: string;
+  contract_number: string | null;
+  animal_name: string | null;
+  buyer_name: string | null;
+  lot_number: string | null;
+  total_amount: number;
+  status: Contract['status'];
+  assessoria_pct: number;
+  assessoria_amount: number;
+}
+
+export interface AuctionFinance {
+  auction_id: string;
+  lots_total: number;
+  lots_sold: number;
+  revenue_total: number;
+  revenue_by_status: Record<string, number>;
+  assessoria_estimated: number;
+  expenses_total: number;
+  expenses_by_category: Record<string, number>;
+  result_net: number;
+  contracts: AuctionFinanceContract[];
+  expenses: AuctionExpense[];
 }
 
 export interface ContractSignature {
@@ -444,6 +619,62 @@ export interface DashboardStats {
   chargesOverdue: number;
   chargesPaid: number;
   users?: number;
+  overdueAmount?: number;
+  assessoriaPaidMonth?: number;
+  auctionsOpen?: number;
+  subscriptionsSuspended?: number;
+  chargesDueSoon?: number;
+  coveringsPending?: number;
+}
+
+export interface SearchResultItem {
+  id: string;
+  name: string;
+  subtitle: string;
+  to: string;
+}
+
+export interface GlobalSearchResults {
+  people: SearchResultItem[];
+  animals: SearchResultItem[];
+  contracts: SearchResultItem[];
+  auctions: SearchResultItem[];
+}
+
+export type BreedingMethod = 'ia' | 'monta_natural' | 'te';
+export type AbccmmStatus = 'pendente' | 'comunicado' | 'confirmado';
+
+export interface BreedingCovering {
+  id: string;
+  mareAnimalId: string;
+  mareName: string | null;
+  stallionAnimalId: string | null;
+  stallionName: string | null;
+  method: BreedingMethod;
+  coveringDate: string;
+  season: string | null;
+  veterinarian: string | null;
+  abccmmStatus: AbccmmStatus;
+  notes: string | null;
+  createdAt?: string | null;
+}
+
+export interface BreedingCoveringInput {
+  mareAnimalId: string;
+  stallionAnimalId?: string | null;
+  stallionName?: string | null;
+  method: BreedingMethod;
+  coveringDate: string;
+  season?: string | null;
+  veterinarian?: string | null;
+  abccmmStatus?: AbccmmStatus;
+  notes?: string | null;
+}
+
+export interface MyModulesPayload {
+  subscriptionType: 'assessoria' | 'avulso';
+  subscriptionSuspended: boolean;
+  modules: ClientModule[];
 }
 
 export async function login(username: string, password: string) {
@@ -473,6 +704,38 @@ export async function changePassword(currentPassword: string, newPassword: strin
 
 export async function getDashboard() {
   return request<DashboardStats>('/dashboard');
+}
+
+export async function globalSearch(q: string) {
+  const qs = new URLSearchParams({ q });
+  return request<GlobalSearchResults>(`/search?${qs}`);
+}
+
+export async function getMyModules() {
+  return request<MyModulesPayload>('/me/modules');
+}
+
+export async function getBreedingCoverings(q?: string) {
+  const qs = q ? `?${new URLSearchParams({ q })}` : '';
+  return request<BreedingCovering[]>(`/breeding-coverings${qs}`);
+}
+
+export async function createBreedingCovering(data: BreedingCoveringInput) {
+  return request<{ success: boolean; id: string }>('/breeding-coverings', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateBreedingCovering(id: string, data: Partial<BreedingCoveringInput>) {
+  return request<{ success: boolean }>(`/breeding-coverings/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteBreedingCovering(id: string) {
+  return request<{ success: boolean }>(`/breeding-coverings/${id}`, { method: 'DELETE' });
 }
 
 export async function getClients(q?: string, role?: 'seller' | 'buyer' | 'assessor' | 'witness' | 'avalista') {
@@ -900,6 +1163,51 @@ export async function updateAuction(id: string, data: Record<string, unknown>) {
   });
 }
 
+export async function getAssessorAuctionFinance(auctionId: string) {
+  return request<AssessorAuctionFinance>(`/auctions/${auctionId}/assessor-finance`);
+}
+
+export async function getAuctionFinance(auctionId: string) {
+  return request<AuctionFinance>(`/auctions/${auctionId}/finance`);
+}
+
+export async function createAuctionExpense(
+  auctionId: string,
+  data: {
+    category: AuctionExpenseCategory;
+    description?: string;
+    amount: number;
+    expenseDate?: string;
+  }
+) {
+  return request<{ success: boolean; id: string }>(`/auctions/${auctionId}/expenses`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateAuctionExpense(
+  auctionId: string,
+  expenseId: string,
+  data: Partial<{
+    category: AuctionExpenseCategory;
+    description: string;
+    amount: number;
+    expenseDate: string | null;
+  }>
+) {
+  return request<{ success: boolean }>(`/auctions/${auctionId}/expenses/${expenseId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteAuctionExpense(auctionId: string, expenseId: string) {
+  return request<{ success: boolean }>(`/auctions/${auctionId}/expenses/${expenseId}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function getAuctionLots(filters?: { auctionId?: string; status?: string }) {
   const params = new URLSearchParams();
   if (filters?.auctionId) params.set('auctionId', filters.auctionId);
@@ -957,6 +1265,29 @@ export async function createContractTemplate(data: Record<string, unknown>) {
 
 export async function updateContractTemplate(id: string, data: Record<string, unknown>) {
   return request<{ success: boolean }>(`/contract-templates/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getReceivablesDashboard() {
+  return request<ReceivablesDashboard>('/receivables-dashboard');
+}
+
+export async function getCompanyFinance() {
+  return request<CompanyFinanceSummary>('/company-finance');
+}
+
+export async function getSubscriptions() {
+  return request<Client[]>('/subscriptions');
+}
+
+export async function getClientModules(clientId: string) {
+  return request<ClientSubscriptionPayload>(`/clients/${clientId}/modules`);
+}
+
+export async function updateClientModules(clientId: string, data: ClientSubscriptionPayload) {
+  return request<{ success: boolean }>(`/clients/${clientId}/modules`, {
     method: 'PUT',
     body: JSON.stringify(data),
   });

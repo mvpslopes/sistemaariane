@@ -7,9 +7,12 @@ import {
   Banknote,
   UserCircle,
   Users,
+  Gavel,
+  Split,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { clientPortalLabels } from '../constants/clientPortalLabels';
+import { assessorPortalLabels } from '../constants/assessorPortalLabels';
 
 interface NavItem {
   to: string;
@@ -17,6 +20,21 @@ interface NavItem {
   icon: LucideIcon;
   label: string;
   title?: string;
+}
+
+function assessorItems(): NavItem[] {
+  return [
+    { to: '/app', end: true, icon: LayoutDashboard, label: 'Início' },
+    {
+      to: '/app/leiloes',
+      icon: Gavel,
+      label: 'Leilões',
+      title: assessorPortalLabels.eventsNav,
+    },
+    { to: '/app/contratos', icon: FileText, label: 'Contratos' },
+    { to: '/app/repasses', icon: Split, label: 'Repasses' },
+    { to: '/app/perfil', icon: UserCircle, label: 'Perfil' },
+  ];
 }
 
 function clienteItems(): NavItem[] {
@@ -37,16 +55,21 @@ function clienteItems(): NavItem[] {
 function staffItems(): NavItem[] {
   return [
     { to: '/app', end: true, icon: LayoutDashboard, label: 'Início' },
+    { to: '/app/leiloes', icon: Gavel, label: 'Leilões' },
     { to: '/app/pessoas', icon: Users, label: 'Pessoas' },
-    { to: '/app/animais', icon: PawPrint, label: 'Animais' },
     { to: '/app/contratos', icon: FileText, label: 'Contratos' },
     { to: '/app/cobrancas', icon: Banknote, label: 'Cobranças' },
   ];
 }
 
 export default function AppBottomNav() {
-  const { hasRole } = useAuth();
-  const items = hasRole('cliente') ? clienteItems() : staffItems();
+  const { hasRole, user } = useAuth();
+  const isAssessor = !!user?.isAssessor && hasRole('cliente');
+  const items = isAssessor
+    ? assessorItems()
+    : hasRole('cliente')
+      ? clienteItems()
+      : staffItems();
 
   return (
     <nav

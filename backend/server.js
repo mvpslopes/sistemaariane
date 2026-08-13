@@ -140,6 +140,26 @@ function mapUser(row) {
   };
 }
 
+async function enrichUserWithClientProfile(user) {
+  if (!user.clientId) return user;
+  const [rows] = await pool.execute(
+    'SELECT is_assessor, is_buyer, is_seller FROM clients WHERE id = ? LIMIT 1',
+    [user.clientId]
+  );
+  if (rows[0]) {
+    user.isAssessor = Boolean(rows[0].is_assessor);
+    user.isBuyer = Boolean(rows[0].is_buyer);
+    user.isSeller = Boolean(rows[0].is_seller);
+  }
+  return user;
+}
+
+async function clientIsAssessor(clientId) {
+  if (!clientId) return false;
+  const [rows] = await pool.execute('SELECT is_assessor FROM clients WHERE id = ? LIMIT 1', [clientId]);
+  return rows[0] ? Boolean(rows[0].is_assessor) : false;
+}
+
 const DEFAULT_CLIENT_ACCESS_PASSWORD = 'ariane2026';
 
 function usernameSlugPart(value) {
@@ -364,7 +384,7 @@ app.post('/api/login', async (req, res) => {
 
     const token = signToken(user);
     await auditLog(req, { id: user.id, username: user.username, role: user.role }, 'login', 'auth', String(user.id), 'Login realizado');
-    res.json({ success: true, token, user: mapUser(user) });
+    res.json({ success: true, token, user: await enrichUserWithClientProfile(mapUser(user)) });
   } catch (error) {
     console.error('Erro no login:', error);
     res.status(500).json({ error: 'Erro ao fazer login' });
@@ -379,9 +399,31 @@ app.get('/api/me', auth(), async (req, res) => {
       [req.user.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Usuário não encontrado' });
-    res.json({ user: mapUser(rows[0]) });
+    res.json({ user: await enrichUserWithClientProfile(mapUser(rows[0])) });
   } catch (error) {
     res.status(500).json({ error: 'Erro ao buscar usuário' });
+  }
+});
+
+app.get('/api/me/modules', auth(), async (req, res) => {
+  try {
+    if (!req.user.clientId) {
+      return res.json({ subscriptionType: 'assessoria', subscriptionSuspended: false, modules: [] });
+    }
+    const cid = req.user.clientId;
+    const [rows] = await pool.execute(
+      'SELECT subscription_type, subscription_suspended FROM clients WHERE id = ? LIMIT 1',
+      [cid]
+    );
+    const c = rows[0] || {};
+    res.json({
+      subscriptionType: c.subscription_type ?? 'assessoria',
+      subscriptionSuspended: Boolean(c.subscription_suspended),
+      modules: await fetchClientModules(cid),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao carregar módulos' });
   }
 });
 
@@ -421,7 +463,7 @@ app.put('/api/me', auth(), async (req, res) => {
        FROM users WHERE id = ? LIMIT 1`,
       [req.user.id]
     );
-    res.json({ success: true, user: mapUser(rows[0]) });
+    res.json({ success: true, user: await enrichUserWithClientProfile(mapUser(rows[0])) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao atualizar perfil' });
@@ -604,6 +646,44 @@ app.get('/api/dashboard', auth(), async (req, res) => {
     );
     const [[users]] = await pool.execute('SELECT COUNT(*) AS total FROM users WHERE active = 1');
 
+    const overdueWhere = chargeOverdueSql();
+    const monthStart = `${todayBrasiliaISO().slice(0, 8)}01`;
+    const [[overdueAmt]] = await pool.query(
+      `SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+       INNER JOIN contracts c ON c.id = ch.contract_id WHERE ${overdueWhere}`
+    );
+    const [[paidMonth]] = await pool.query(
+      `SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+       INNER JOIN contracts c ON c.id = ch.contract_id
+       WHERE ch.collector = 'assessoria' AND ch.status = 'pago' AND c.status != 'cancelado'
+         AND COALESCE(ch.paid_at, ch.updated_at) >= ?`,
+      [monthStart]
+    );
+    const [[auctionsOpen]] = await pool.query(
+      "SELECT COUNT(*) AS t FROM auctions WHERE status IN ('agendado','em_andamento')"
+    );
+    const [[dueSoon]] = await pool.query(
+      `SELECT COUNT(*) AS t FROM charges ch
+       INNER JOIN contracts c ON c.id = ch.contract_id
+       WHERE c.status != 'cancelado' AND ch.status = 'pendente'
+         AND ch.due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)`
+    );
+
+    let subscriptionsSuspended = 0;
+    let coveringsPending = 0;
+    try {
+      const [[susp]] = await pool.query(
+        'SELECT COUNT(*) AS t FROM clients WHERE active = 1 AND subscription_suspended = 1'
+      );
+      subscriptionsSuspended = Number(susp.t);
+      const [[cov]] = await pool.query(
+        "SELECT COUNT(*) AS t FROM breeding_coverings WHERE abccmm_status = 'pendente'"
+      );
+      coveringsPending = Number(cov.t);
+    } catch {
+      /* migrations opcionais */
+    }
+
     res.json({
       clients: clients.total,
       buyers: buyers.total,
@@ -620,6 +700,12 @@ app.get('/api/dashboard', auth(), async (req, res) => {
       chargesOverdue: chargesOverdue.total,
       chargesPaid: chargesPaid.total,
       users: canManageUsers(req.user.role) ? users.total : undefined,
+      overdueAmount: Math.round(Number(overdueAmt.t) * 100) / 100,
+      assessoriaPaidMonth: Math.round(Number(paidMonth.t) * 100) / 100,
+      auctionsOpen: Number(auctionsOpen.t),
+      subscriptionsSuspended,
+      chargesDueSoon: Number(dueSoon.t),
+      coveringsPending,
     });
   } catch (error) {
     console.error(error);
@@ -651,6 +737,278 @@ function mapClient(r) {
     relationship_notes: r.relationship_notes ?? null,
     problems_notes: r.problems_notes ?? null,
     property_name: r.property_name ?? null,
+    subscription_type: r.subscription_type ?? 'assessoria',
+    subscription_suspended: Boolean(r.subscription_suspended ?? 0),
+    adhesion_fee: r.adhesion_fee != null ? Number(r.adhesion_fee) : null,
+    monthly_fee: r.monthly_fee != null ? Number(r.monthly_fee) : null,
+    adhesion_paid_at: r.adhesion_paid_at ?? null,
+  };
+}
+
+const CLIENT_MODULE_CODES = ['plantel', 'reproducao', 'sanitario', 'contratos', 'leiloes'];
+
+function normalizeClientModuleCode(code) {
+  return CLIENT_MODULE_CODES.includes(code) ? code : null;
+}
+
+async function fetchClientModules(clientId) {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT * FROM client_modules WHERE client_id = ? ORDER BY module_code ASC',
+      [clientId]
+    );
+    return rows.map((r) => ({
+      code: r.module_code,
+      active: Boolean(r.active),
+      monthlyFee: r.monthly_fee != null ? Number(r.monthly_fee) : null,
+      activatedAt: r.activated_at,
+      notes: r.notes,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function chargeOpenSql(chAlias = 'ch', cAlias = 'c') {
+  return `${cAlias}.status != 'cancelado' AND ${chAlias}.status IN ('pendente','atrasado')`;
+}
+
+function chargeOverdueSql(chAlias = 'ch', cAlias = 'c') {
+  return `${cAlias}.status != 'cancelado' AND ${chAlias}.status IN ('pendente','atrasado')
+    AND (${chAlias}.status = 'atrasado' OR ${chAlias}.due_date < CURDATE())`;
+}
+
+async function fetchReceivablesDashboard() {
+  const openWhere = chargeOpenSql();
+  const overdueWhere = chargeOverdueSql();
+
+  const [[totals]] = await pool.query(
+    `SELECT
+      COALESCE(SUM(CASE WHEN ${openWhere} THEN ch.amount ELSE 0 END), 0) AS open_total,
+      COALESCE(SUM(CASE WHEN ${overdueWhere} THEN ch.amount ELSE 0 END), 0) AS overdue_total,
+      COALESCE(SUM(CASE WHEN ${openWhere} THEN 1 ELSE 0 END), 0) AS open_count,
+      COALESCE(SUM(CASE WHEN ${overdueWhere} THEN 1 ELSE 0 END), 0) AS overdue_count
+     FROM charges ch
+     INNER JOIN contracts c ON c.id = ch.contract_id`
+  );
+
+  const [[aging]] = await pool.query(
+    `SELECT
+      COALESCE(SUM(CASE WHEN ch.status = 'pendente' AND ch.due_date >= CURDATE() THEN ch.amount ELSE 0 END), 0) AS current,
+      COALESCE(SUM(CASE WHEN ${overdueWhere} AND DATEDIFF(CURDATE(), ch.due_date) BETWEEN 1 AND 30 THEN ch.amount ELSE 0 END), 0) AS d1_30,
+      COALESCE(SUM(CASE WHEN ${overdueWhere} AND DATEDIFF(CURDATE(), ch.due_date) BETWEEN 31 AND 60 THEN ch.amount ELSE 0 END), 0) AS d31_60,
+      COALESCE(SUM(CASE WHEN ${overdueWhere} AND DATEDIFF(CURDATE(), ch.due_date) BETWEEN 61 AND 90 THEN ch.amount ELSE 0 END), 0) AS d61_90,
+      COALESCE(SUM(CASE WHEN ${overdueWhere} AND DATEDIFF(CURDATE(), ch.due_date) > 90 THEN ch.amount ELSE 0 END), 0) AS d90_plus
+     FROM charges ch
+     INNER JOIN contracts c ON c.id = ch.contract_id`
+  );
+
+  const [byCollector] = await pool.query(
+    `SELECT ch.collector,
+      COALESCE(SUM(CASE WHEN ${openWhere} THEN ch.amount ELSE 0 END), 0) AS open_amount,
+      COALESCE(SUM(CASE WHEN ${overdueWhere} THEN ch.amount ELSE 0 END), 0) AS overdue_amount,
+      COALESCE(SUM(CASE WHEN ${overdueWhere} THEN 1 ELSE 0 END), 0) AS overdue_count
+     FROM charges ch
+     INNER JOIN contracts c ON c.id = ch.contract_id
+     GROUP BY ch.collector`
+  );
+
+  const collectorMap = {
+    assessoria: { open: 0, overdue: 0, overdueCount: 0 },
+    seller: { open: 0, overdue: 0, overdueCount: 0 },
+  };
+  for (const row of byCollector) {
+    const key = row.collector === 'seller' ? 'seller' : 'assessoria';
+    collectorMap[key] = {
+      open: Math.round(Number(row.open_amount) * 100) / 100,
+      overdue: Math.round(Number(row.overdue_amount) * 100) / 100,
+      overdueCount: Number(row.overdue_count),
+    };
+  }
+
+  const [debtors] = await pool.query(
+    `SELECT cl.id, cl.name, cl.whatsapp, cl.phone,
+      COUNT(*) AS charges_count,
+      COALESCE(SUM(ch.amount), 0) AS overdue_amount,
+      MIN(ch.due_date) AS oldest_due
+     FROM charges ch
+     INNER JOIN contracts c ON c.id = ch.contract_id
+     INNER JOIN clients cl ON cl.id = ch.client_id
+     WHERE ${overdueWhere}
+     GROUP BY cl.id, cl.name, cl.whatsapp, cl.phone
+     ORDER BY overdue_amount DESC, oldest_due ASC
+     LIMIT 15`
+  );
+
+  const [overdueRows] = await pool.query(
+    `SELECT ch.id, ch.amount, ch.due_date, ch.status, ch.collector, ch.installment_no,
+            cl.name AS client_name, cl.whatsapp, an.name AS animal_name, c.contract_number,
+            DATEDIFF(CURDATE(), ch.due_date) AS days_overdue
+     FROM charges ch
+     INNER JOIN contracts c ON c.id = ch.contract_id
+     INNER JOIN clients cl ON cl.id = ch.client_id
+     LEFT JOIN animals an ON an.id = c.animal_id
+     WHERE ${overdueWhere}
+     ORDER BY ch.due_date ASC, ch.amount DESC
+     LIMIT 50`
+  );
+
+  return {
+    openTotal: Math.round(Number(totals.open_total) * 100) / 100,
+    overdueTotal: Math.round(Number(totals.overdue_total) * 100) / 100,
+    openCount: Number(totals.open_count),
+    overdueCount: Number(totals.overdue_count),
+    aging: {
+      current: Math.round(Number(aging.current) * 100) / 100,
+      d1_30: Math.round(Number(aging.d1_30) * 100) / 100,
+      d31_60: Math.round(Number(aging.d31_60) * 100) / 100,
+      d61_90: Math.round(Number(aging.d61_90) * 100) / 100,
+      d90_plus: Math.round(Number(aging.d90_plus) * 100) / 100,
+    },
+    byCollector: collectorMap,
+    topDebtors: debtors.map((r) => ({
+      clientId: String(r.id),
+      clientName: r.name,
+      whatsapp: r.whatsapp,
+      phone: r.phone,
+      chargesCount: Number(r.charges_count),
+      overdueAmount: Math.round(Number(r.overdue_amount) * 100) / 100,
+      oldestDue: r.oldest_due,
+    })),
+    overdueItems: overdueRows.map((r) => ({
+      id: String(r.id),
+      amount: Number(r.amount),
+      dueDate: r.due_date,
+      status: r.status,
+      collector: r.collector,
+      installmentNo: Number(r.installment_no),
+      clientName: r.client_name,
+      whatsapp: r.whatsapp,
+      animalName: r.animal_name,
+      contractNumber: r.contract_number,
+      daysOverdue: Number(r.days_overdue),
+    })),
+  };
+}
+
+async function fetchCompanyFinance() {
+  const monthStart = `${todayBrasiliaISO().slice(0, 8)}01`;
+  const yearStart = `${todayBrasiliaISO().slice(0, 4)}-01-01`;
+  const openWhere = chargeOpenSql();
+  const overdueWhere = chargeOverdueSql();
+
+  const [[paidMonth]] = await pool.query(
+    `SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+     INNER JOIN contracts c ON c.id = ch.contract_id
+     WHERE ch.collector = 'assessoria' AND ch.status = 'pago' AND c.status != 'cancelado'
+       AND COALESCE(ch.paid_at, ch.updated_at) >= ?`,
+    [monthStart]
+  );
+  const [[paidYear]] = await pool.query(
+    `SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+     INNER JOIN contracts c ON c.id = ch.contract_id
+     WHERE ch.collector = 'assessoria' AND ch.status = 'pago' AND c.status != 'cancelado'
+       AND COALESCE(ch.paid_at, ch.updated_at) >= ?`,
+    [yearStart]
+  );
+  const [[assessoriaOpen]] = await pool.query(
+    `SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+     INNER JOIN contracts c ON c.id = ch.contract_id
+     WHERE ch.collector = 'assessoria' AND ${openWhere}`
+  );
+  const [[assessoriaOverdue]] = await pool.query(
+    `SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+     INNER JOIN contracts c ON c.id = ch.contract_id
+     WHERE ch.collector = 'assessoria' AND ${overdueWhere}`
+  );
+  const [[auctionRevenue]] = await pool.query(
+    `SELECT COALESCE(SUM(c.total_amount), 0) AS t FROM contracts c
+     WHERE c.auction_id IS NOT NULL AND c.status != 'cancelado'`
+  );
+
+  let auctionExpenses = 0;
+  try {
+    const [[exp]] = await pool.query('SELECT COALESCE(SUM(amount), 0) AS t FROM auction_expenses');
+    auctionExpenses = Number(exp.t);
+  } catch {
+    /* tabela opcional */
+  }
+
+  const [[auctionCommission]] = await pool.query(
+    `SELECT COALESCE(SUM(c.total_amount * rules.pct / 100), 0) AS t
+     FROM contracts c
+     INNER JOIN (
+       SELECT contract_id, COALESCE(SUM(pct), 0) AS pct
+       FROM contract_payout_rules WHERE beneficiary_role = 'assessoria'
+       GROUP BY contract_id
+     ) rules ON rules.contract_id = c.id
+     WHERE c.auction_id IS NOT NULL AND c.status != 'cancelado'`
+  );
+  const [[payoutsPending]] = await pool.query(
+    `SELECT COALESCE(SUM(p.amount), 0) AS t FROM payouts p
+     INNER JOIN contracts c ON c.id = p.contract_id
+     WHERE c.status != 'cancelado' AND p.status IN ('pendente','aguardando')`
+  );
+
+  let saasMonthly = 0;
+  let saasClients = 0;
+  try {
+    const [[saas]] = await pool.query(
+      `SELECT COALESCE(SUM(COALESCE(cm.monthly_fee, c.monthly_fee, 0)), 0) AS t
+       FROM client_modules cm
+       INNER JOIN clients c ON c.id = cm.client_id
+       WHERE cm.active = 1 AND c.active = 1 AND c.subscription_suspended = 0`
+    );
+    const [[saasCount]] = await pool.query(
+      `SELECT COUNT(DISTINCT cm.client_id) AS t FROM client_modules cm
+       INNER JOIN clients c ON c.id = cm.client_id
+       WHERE cm.active = 1 AND c.active = 1`
+    );
+    saasMonthly = Number(saas.t);
+    saasClients = Number(saasCount.t);
+  } catch {
+    /* migration opcional */
+  }
+
+  const monthlySeries = [];
+  for (let i = 5; i >= 0; i -= 1) {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - i);
+    const start = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+    const endDate = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    const end = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+    const label = `${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+    const [[paid]] = await pool.query(
+      `SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+       INNER JOIN contracts c ON c.id = ch.contract_id
+       WHERE ch.collector = 'assessoria' AND ch.status = 'pago' AND c.status != 'cancelado'
+         AND DATE(COALESCE(ch.paid_at, ch.updated_at)) BETWEEN ? AND ?`,
+      [start, end]
+    );
+    monthlySeries.push({ label, assessoriaPaid: Math.round(Number(paid.t) * 100) / 100 });
+  }
+
+  const commission = Number(auctionCommission.t);
+  return {
+    assessoria: {
+      paidMonth: Math.round(Number(paidMonth.t) * 100) / 100,
+      paidYear: Math.round(Number(paidYear.t) * 100) / 100,
+      open: Math.round(Number(assessoriaOpen.t) * 100) / 100,
+      overdue: Math.round(Number(assessoriaOverdue.t) * 100) / 100,
+    },
+    auctions: {
+      revenue: Math.round(Number(auctionRevenue.t) * 100) / 100,
+      expenses: Math.round(auctionExpenses * 100) / 100,
+      commissionEstimated: Math.round(commission * 100) / 100,
+      resultEstimated: Math.round((commission - auctionExpenses) * 100) / 100,
+    },
+    payoutsPending: Math.round(Number(payoutsPending.t) * 100) / 100,
+    saas: {
+      monthlyEstimated: Math.round(saasMonthly * 100) / 100,
+      activeClients: saasClients,
+    },
+    monthlySeries,
   };
 }
 
@@ -1013,6 +1371,267 @@ function mapLot(r) {
     status: r.status,
     contract_id: r.contract_id ? String(r.contract_id) : null,
     created_at: r.created_at || null,
+  };
+}
+
+const AUCTION_EXPENSE_CATEGORIES = ['locacao', 'equipe', 'marketing', 'leiloeiro', 'transporte', 'outros'];
+
+function normalizeAuctionExpenseCategory(cat) {
+  return AUCTION_EXPENSE_CATEGORIES.includes(cat) ? cat : 'outros';
+}
+
+function mapAuctionExpense(r) {
+  return {
+    id: String(r.id),
+    auction_id: String(r.auction_id),
+    category: r.category,
+    description: r.description,
+    amount: Number(r.amount),
+    expense_date: r.expense_date,
+    created_at: r.created_at || null,
+  };
+}
+
+async function fetchAuctionFinance(auctionId) {
+  const [[auction]] = await pool.execute('SELECT id FROM auctions WHERE id = ?', [auctionId]);
+  if (!auction) {
+    const err = new Error('Leilão não encontrado');
+    err.status = 404;
+    throw err;
+  }
+
+  const [[lots]] = await pool.execute(
+    `SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'arrematado' THEN 1 ELSE 0 END) AS sold
+     FROM auction_lots WHERE auction_id = ?`,
+    [auctionId]
+  );
+
+  const [contracts] = await pool.execute(
+    `SELECT c.id, c.contract_number, c.total_amount, c.status,
+            an.name AS animal_name, b.name AS buyer_name, l.lot_number
+     FROM contracts c
+     LEFT JOIN animals an ON an.id = c.animal_id
+     LEFT JOIN clients b ON b.id = c.buyer_id
+     LEFT JOIN auction_lots l ON l.id = c.lot_id
+     WHERE c.auction_id = ? AND c.status != 'cancelado'
+     ORDER BY c.id ASC`,
+    [auctionId]
+  );
+
+  let revenueTotal = 0;
+  const revenueByStatus = {
+    rascunho: 0,
+    aguardando_assinatura: 0,
+    ativo: 0,
+    concluido: 0,
+  };
+  let assessoriaEstimated = 0;
+  const contractRows = [];
+
+  for (const c of contracts) {
+    const amount = Number(c.total_amount);
+    revenueTotal += amount;
+    if (revenueByStatus[c.status] !== undefined) revenueByStatus[c.status] += amount;
+
+    const [[pctRow]] = await pool.execute(
+      `SELECT COALESCE(SUM(pct), 0) AS pct FROM contract_payout_rules
+       WHERE contract_id = ? AND beneficiary_role = 'assessoria'`,
+      [c.id]
+    );
+    const assessoriaPct = Number(pctRow?.pct || 0);
+    assessoriaEstimated += (amount * assessoriaPct) / 100;
+
+    contractRows.push({
+      id: String(c.id),
+      contract_number: c.contract_number,
+      animal_name: c.animal_name,
+      buyer_name: c.buyer_name,
+      lot_number: c.lot_number,
+      total_amount: amount,
+      status: c.status,
+      assessoria_pct: assessoriaPct,
+      assessoria_amount: Math.round((amount * assessoriaPct) / 100 * 100) / 100,
+    });
+  }
+
+  const [expenseRows] = await pool.execute(
+    `SELECT * FROM auction_expenses WHERE auction_id = ?
+     ORDER BY COALESCE(expense_date, created_at) DESC, id DESC`,
+    [auctionId]
+  );
+  const expenses = expenseRows.map(mapAuctionExpense);
+
+  let expensesTotal = 0;
+  const expensesByCategory = {};
+  for (const e of expenses) {
+    expensesTotal += e.amount;
+    expensesByCategory[e.category] = (expensesByCategory[e.category] || 0) + e.amount;
+  }
+
+  return {
+    auction_id: String(auctionId),
+    lots_total: Number(lots?.total || 0),
+    lots_sold: Number(lots?.sold || 0),
+    revenue_total: Math.round(revenueTotal * 100) / 100,
+    revenue_by_status: Object.fromEntries(
+      Object.entries(revenueByStatus).map(([k, v]) => [k, Math.round(v * 100) / 100])
+    ),
+    assessoria_estimated: Math.round(assessoriaEstimated * 100) / 100,
+    expenses_total: Math.round(expensesTotal * 100) / 100,
+    expenses_by_category: Object.fromEntries(
+      Object.entries(expensesByCategory).map(([k, v]) => [k, Math.round(v * 100) / 100])
+    ),
+    result_net: Math.round((assessoriaEstimated - expensesTotal) * 100) / 100,
+    contracts: contractRows,
+    expenses,
+  };
+}
+
+async function fetchAssessorAuctions(assessorClientId) {
+  const [rows] = await pool.execute(
+    `SELECT a.*,
+        COUNT(DISTINCT c.id) AS contracts_count,
+        COALESCE(SUM(c.total_amount), 0) AS sales_total
+     FROM auctions a
+     INNER JOIN contracts c ON c.auction_id = a.id AND c.assessor_id = ? AND c.status != 'cancelado'
+     GROUP BY a.id
+     ORDER BY COALESCE(a.auction_date, a.created_at) DESC, a.id DESC`,
+    [assessorClientId]
+  );
+
+  const out = [];
+  for (const r of rows) {
+    const auctionId = Number(r.id);
+    const [[commissionRow]] = await pool.execute(
+      `SELECT COALESCE(SUM(c.total_amount * rules.pct / 100), 0) AS commission
+       FROM contracts c
+       INNER JOIN (
+         SELECT contract_id, COALESCE(SUM(pct), 0) AS pct
+         FROM contract_payout_rules
+         WHERE beneficiary_role = 'assessor'
+           AND (beneficiary_client_id IS NULL OR beneficiary_client_id = ?)
+         GROUP BY contract_id
+       ) rules ON rules.contract_id = c.id
+       WHERE c.auction_id = ? AND c.assessor_id = ? AND c.status != 'cancelado'`,
+      [assessorClientId, auctionId, assessorClientId]
+    );
+    const salesTotal = Number(r.sales_total || 0);
+    out.push({
+      ...mapAuction(r),
+      contracts_count: Number(r.contracts_count || 0),
+      sales_total: Math.round(salesTotal * 100) / 100,
+      commission_estimated: Math.round(Number(commissionRow?.commission || 0) * 100) / 100,
+    });
+  }
+  return out;
+}
+
+async function fetchAssessorAuctionFinance(auctionId, assessorClientId) {
+  const [[access]] = await pool.execute(
+    `SELECT 1 AS ok FROM contracts
+     WHERE auction_id = ? AND assessor_id = ? AND status != 'cancelado' LIMIT 1`,
+    [auctionId, assessorClientId]
+  );
+  if (!access) {
+    const err = new Error('Evento não encontrado ou sem acesso');
+    err.status = 404;
+    throw err;
+  }
+
+  const [[auction]] = await pool.execute('SELECT * FROM auctions WHERE id = ?', [auctionId]);
+  if (!auction) {
+    const err = new Error('Leilão não encontrado');
+    err.status = 404;
+    throw err;
+  }
+
+  const [contracts] = await pool.execute(
+    `SELECT c.id, c.contract_number, c.total_amount, c.status,
+            an.name AS animal_name, b.name AS buyer_name, l.lot_number
+     FROM contracts c
+     LEFT JOIN animals an ON an.id = c.animal_id
+     LEFT JOIN clients b ON b.id = c.buyer_id
+     LEFT JOIN auction_lots l ON l.id = c.lot_id
+     WHERE c.auction_id = ? AND c.assessor_id = ? AND c.status != 'cancelado'
+     ORDER BY c.id ASC`,
+    [auctionId, assessorClientId]
+  );
+
+  let salesTotal = 0;
+  let commissionEstimated = 0;
+  const contractRows = [];
+  for (const c of contracts) {
+    const amount = Number(c.total_amount);
+    salesTotal += amount;
+    const [[pctRow]] = await pool.execute(
+      `SELECT COALESCE(SUM(pct), 0) AS pct FROM contract_payout_rules
+       WHERE contract_id = ? AND beneficiary_role = 'assessor'
+         AND (beneficiary_client_id IS NULL OR beneficiary_client_id = ?)`,
+      [c.id, assessorClientId]
+    );
+    const commissionPct = Number(pctRow?.pct || 0);
+    const commissionAmount = Math.round((amount * commissionPct) / 100 * 100) / 100;
+    commissionEstimated += commissionAmount;
+    contractRows.push({
+      id: String(c.id),
+      contract_number: c.contract_number,
+      animal_name: c.animal_name,
+      buyer_name: c.buyer_name,
+      lot_number: c.lot_number,
+      total_amount: amount,
+      status: c.status,
+      commission_pct: commissionPct,
+      commission_amount: commissionAmount,
+    });
+  }
+
+  const [payoutRows] = await pool.execute(
+    `SELECT p.id, p.contract_id, p.installment_no, p.amount, p.status, p.paid_at,
+            ch.due_date AS charge_due_date, an.name AS animal_name
+     FROM payouts p
+     INNER JOIN contracts c ON c.id = p.contract_id
+     INNER JOIN charges ch ON ch.id = p.charge_id
+     INNER JOIN animals an ON an.id = c.animal_id
+     WHERE c.auction_id = ? AND c.status != 'cancelado'
+       AND p.beneficiary_role = 'assessor' AND p.beneficiary_client_id = ?
+     ORDER BY ch.due_date ASC, p.installment_no ASC, p.id ASC`,
+    [auctionId, assessorClientId]
+  );
+
+  let commissionPaid = 0;
+  let commissionPending = 0;
+  let commissionWaiting = 0;
+  const payouts = payoutRows.map((p) => {
+    const amount = Number(p.amount);
+    if (p.status === 'pago') commissionPaid += amount;
+    else if (p.status === 'pendente') commissionPending += amount;
+    else if (p.status === 'aguardando') commissionWaiting += amount;
+    return {
+      id: String(p.id),
+      contract_id: String(p.contract_id),
+      installment_no: Number(p.installment_no),
+      amount,
+      status: p.status,
+      paid_at: p.paid_at,
+      charge_due_date: p.charge_due_date,
+      animal_name: p.animal_name,
+    };
+  });
+
+  return {
+    auction_id: String(auctionId),
+    auction_name: auction.name,
+    auction_date: auction.auction_date,
+    location: auction.location,
+    auction_status: auction.status,
+    contracts_count: contractRows.length,
+    sales_total: Math.round(salesTotal * 100) / 100,
+    commission_estimated: Math.round(commissionEstimated * 100) / 100,
+    commission_paid: Math.round(commissionPaid * 100) / 100,
+    commission_pending: Math.round(commissionPending * 100) / 100,
+    commission_waiting: Math.round(commissionWaiting * 100) / 100,
+    contracts: contractRows,
+    payouts,
   };
 }
 
@@ -3289,6 +3908,11 @@ app.put('/api/charges/:id', auth(['root', 'admin']), async (req, res) => {
 
 app.get('/api/auctions', auth(), async (req, res) => {
   try {
+    if (req.user.role === 'cliente') {
+      const clientId = req.user.clientId;
+      if (!clientId || !(await clientIsAssessor(clientId))) return res.json([]);
+      return res.json(await fetchAssessorAuctions(Number(clientId)));
+    }
     const [rows] = await pool.execute(
       `SELECT a.*, (SELECT COUNT(*) FROM auction_lots l WHERE l.auction_id = a.id) AS lots_count
        FROM auctions a
@@ -3298,6 +3922,110 @@ app.get('/api/auctions', auth(), async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao listar leilões' });
+  }
+});
+
+app.get('/api/auctions/:id/assessor-finance', auth(), async (req, res) => {
+  try {
+    const clientId = req.user.clientId;
+    if (req.user.role !== 'cliente' || !clientId || !(await clientIsAssessor(clientId))) {
+      return res.status(403).json({ error: 'Acesso negado' });
+    }
+    res.json(await fetchAssessorAuctionFinance(Number(req.params.id), Number(clientId)));
+  } catch (error) {
+    if (error.status === 404) return res.status(404).json({ error: error.message });
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao carregar evento' });
+  }
+});
+
+app.get('/api/auctions/:id/finance', auth(), async (req, res) => {
+  try {
+    res.json(await fetchAuctionFinance(Number(req.params.id)));
+  } catch (error) {
+    if (error.status === 404) return res.status(404).json({ error: error.message });
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao carregar financeiro do leilão' });
+  }
+});
+
+app.post('/api/auctions/:id/expenses', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const auctionId = Number(req.params.id);
+    const amount = Number(req.body.amount);
+    if (!amount || amount <= 0) return res.status(400).json({ error: 'Informe um valor maior que zero' });
+    const [[auction]] = await pool.execute('SELECT id FROM auctions WHERE id = ?', [auctionId]);
+    if (!auction) return res.status(404).json({ error: 'Leilão não encontrado' });
+    const category = normalizeAuctionExpenseCategory(req.body.category);
+    const [result] = await pool.execute(
+      `INSERT INTO auction_expenses (auction_id, category, description, amount, expense_date, created_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        auctionId,
+        category,
+        String(req.body.description || '').trim() || null,
+        amount,
+        req.body.expenseDate || null,
+        req.user.id,
+      ]
+    );
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao registrar despesa' });
+  }
+});
+
+app.put('/api/auctions/:id/expenses/:expenseId', auth(['root', 'admin']), async (req, res) => {
+  try {
+    const auctionId = Number(req.params.id);
+    const expenseId = Number(req.params.expenseId);
+    const [[row]] = await pool.execute(
+      'SELECT id FROM auction_expenses WHERE id = ? AND auction_id = ?',
+      [expenseId, auctionId]
+    );
+    if (!row) return res.status(404).json({ error: 'Despesa não encontrada' });
+    const fields = [];
+    const params = [];
+    if (req.body.category !== undefined) {
+      fields.push('category=?');
+      params.push(normalizeAuctionExpenseCategory(req.body.category));
+    }
+    if (req.body.description !== undefined) {
+      fields.push('description=?');
+      params.push(String(req.body.description || '').trim() || null);
+    }
+    if (req.body.amount !== undefined) {
+      const amount = Number(req.body.amount);
+      if (!amount || amount <= 0) return res.status(400).json({ error: 'Valor inválido' });
+      fields.push('amount=?');
+      params.push(amount);
+    }
+    if (req.body.expenseDate !== undefined) {
+      fields.push('expense_date=?');
+      params.push(req.body.expenseDate || null);
+    }
+    if (!fields.length) return res.status(400).json({ error: 'Nada para atualizar' });
+    params.push(expenseId);
+    await pool.execute(`UPDATE auction_expenses SET ${fields.join(',')} WHERE id=?`, params);
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao atualizar despesa' });
+  }
+});
+
+app.delete('/api/auctions/:id/expenses/:expenseId', auth(['root', 'admin']), async (req, res) => {
+  try {
+    const [result] = await pool.execute(
+      'DELETE FROM auction_expenses WHERE id = ? AND auction_id = ?',
+      [Number(req.params.expenseId), Number(req.params.id)]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Despesa não encontrada' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir despesa' });
   }
 });
 
@@ -3797,6 +4525,354 @@ app.get('/api/audit-logs', auth(['root', 'admin']), async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao listar auditoria' });
+  }
+});
+
+app.get('/api/receivables-dashboard', auth(), async (req, res) => {
+  if (req.user.role === 'cliente') {
+    return res.status(403).json({ error: 'Acesso negado' });
+  }
+  try {
+    res.json(await fetchReceivablesDashboard());
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao carregar recebíveis' });
+  }
+});
+
+app.get('/api/company-finance', auth(), async (req, res) => {
+  if (req.user.role === 'cliente') {
+    return res.status(403).json({ error: 'Acesso negado' });
+  }
+  try {
+    res.json(await fetchCompanyFinance());
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao carregar financeiro' });
+  }
+});
+
+app.get('/api/subscriptions', auth(['root', 'admin']), async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT c.*,
+        (SELECT cp.name FROM client_properties cp WHERE cp.client_id = c.id ORDER BY cp.id ASC LIMIT 1) AS property_name
+       FROM clients c
+       WHERE c.active = 1
+       ORDER BY c.name ASC`
+    );
+    const out = [];
+    for (const r of rows) {
+      const mapped = mapClient(r);
+      mapped.modules = await fetchClientModules(Number(r.id));
+      out.push(mapped);
+    }
+    res.json(out);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao listar assinaturas' });
+  }
+});
+
+app.get('/api/clients/:id/modules', auth(['root', 'admin']), async (req, res) => {
+  try {
+    const cid = Number(req.params.id);
+    const [rows] = await pool.execute(
+      `SELECT subscription_type, subscription_suspended, adhesion_fee, monthly_fee, adhesion_paid_at
+       FROM clients WHERE id = ? LIMIT 1`,
+      [cid]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Cliente não encontrado' });
+    const c = rows[0];
+    res.json({
+      subscriptionType: c.subscription_type ?? 'assessoria',
+      subscriptionSuspended: Boolean(c.subscription_suspended),
+      adhesionFee: c.adhesion_fee != null ? Number(c.adhesion_fee) : null,
+      monthlyFee: c.monthly_fee != null ? Number(c.monthly_fee) : null,
+      adhesionPaidAt: c.adhesion_paid_at,
+      modules: await fetchClientModules(cid),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao carregar módulos' });
+  }
+});
+
+app.put('/api/clients/:id/modules', auth(['root', 'admin']), async (req, res) => {
+  const cid = Number(req.params.id);
+  const body = req.body || {};
+  const conn = await pool.getConnection();
+  try {
+    const [curRows] = await conn.execute(
+      'SELECT subscription_type, subscription_suspended, adhesion_fee, monthly_fee, adhesion_paid_at FROM clients WHERE id = ?',
+      [cid]
+    );
+    const cur = curRows[0];
+    if (!cur) return res.status(404).json({ error: 'Cliente não encontrado' });
+
+    await conn.beginTransaction();
+    const subType = ['assessoria', 'avulso'].includes(body.subscriptionType)
+      ? body.subscriptionType
+      : cur.subscription_type ?? 'assessoria';
+    const suspended = body.subscriptionSuspended != null ? (body.subscriptionSuspended ? 1 : 0) : Number(cur.subscription_suspended);
+    const adhesionFee =
+      body.adhesionFee !== undefined
+        ? body.adhesionFee != null && body.adhesionFee !== ''
+          ? Number(body.adhesionFee)
+          : null
+        : cur.adhesion_fee;
+    const monthlyFee =
+      body.monthlyFee !== undefined
+        ? body.monthlyFee != null && body.monthlyFee !== ''
+          ? Number(body.monthlyFee)
+          : null
+        : cur.monthly_fee;
+    const adhesionPaidAt =
+      body.adhesionPaidAt !== undefined ? body.adhesionPaidAt || null : cur.adhesion_paid_at;
+
+    await conn.execute(
+      `UPDATE clients SET subscription_type=?, subscription_suspended=?, adhesion_fee=?, monthly_fee=?, adhesion_paid_at=? WHERE id=?`,
+      [subType, suspended, adhesionFee, monthlyFee, adhesionPaidAt, cid]
+    );
+
+    if (Array.isArray(body.modules)) {
+      for (const m of body.modules) {
+        if (!m || typeof m !== 'object') continue;
+        const code = normalizeClientModuleCode(m.code);
+        if (!code) continue;
+        const active = m.active ? 1 : 0;
+        const fee =
+          m.monthlyFee !== undefined
+            ? m.monthlyFee != null && m.monthlyFee !== ''
+              ? Number(m.monthlyFee)
+              : null
+            : null;
+        await conn.execute(
+          `INSERT INTO client_modules (client_id, module_code, active, monthly_fee, activated_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE active=VALUES(active), monthly_fee=VALUES(monthly_fee),
+             activated_at=IF(VALUES(active)=1 AND activated_at IS NULL, CURDATE(), activated_at),
+             updated_at=CURRENT_TIMESTAMP`,
+          [cid, code, active, fee, active ? todayBrasiliaISO() : null]
+        );
+      }
+    }
+
+    await conn.commit();
+    res.json({ success: true });
+  } catch (error) {
+    await conn.rollback();
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao salvar assinatura' });
+  } finally {
+    conn.release();
+  }
+});
+
+function mapBreedingCovering(r) {
+  return {
+    id: String(r.id),
+    mareAnimalId: String(r.mare_animal_id),
+    mareName: r.mare_name ?? null,
+    stallionAnimalId: r.stallion_animal_id ? String(r.stallion_animal_id) : null,
+    stallionName: r.stallion_name ?? r.stallion_animal_name ?? null,
+    method: r.method,
+    coveringDate: r.covering_date,
+    season: r.season,
+    veterinarian: r.veterinarian,
+    abccmmStatus: r.abccmm_status,
+    notes: r.notes,
+    createdAt: r.created_at ?? null,
+  };
+}
+
+app.get('/api/search', auth(), async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) {
+      return res.json({ people: [], animals: [], contracts: [], auctions: [] });
+    }
+    const like = `%${q}%`;
+    const isCliente = req.user.role === 'cliente';
+    const cid = req.user.clientId;
+
+    let people = [];
+    if (!isCliente) {
+      const [rows] = await pool.execute(
+        `SELECT id, name, document, city, state FROM clients
+         WHERE active = 1 AND (name LIKE ? OR document LIKE ? OR email LIKE ?)
+         ORDER BY name ASC LIMIT 8`,
+        [like, like, like]
+      );
+      people = rows.map((r) => ({
+        id: String(r.id),
+        name: r.name,
+        subtitle: [r.city, r.state].filter(Boolean).join('/') || r.document || '',
+        to: '/app/pessoas',
+      }));
+    }
+
+    let animalSql = `SELECT a.id, a.name, a.registration_no, a.breed FROM animals a
+      WHERE (a.name LIKE ? OR a.registration_no LIKE ? OR a.chip_no LIKE ?)`;
+    const animalParams = [like, like, like];
+    if (isCliente && cid) {
+      animalSql += ` AND ${CLIENT_ANIMAL_ACCESS_SQL}`;
+      animalParams.push(...bindClientAnimalAccessParams(cid));
+    }
+    animalSql += ' ORDER BY a.name ASC LIMIT 8';
+    const [animalRows] = await pool.execute(animalSql, animalParams);
+    const animals = animalRows.map((r) => ({
+      id: String(r.id),
+      name: r.name,
+      subtitle: r.registration_no || r.breed || 'Animal',
+      to: `/app/animais/${r.id}`,
+    }));
+
+    let contractSql = `SELECT c.id, c.contract_number, an.name AS animal_name, sb.name AS seller_name, bb.name AS buyer_name
+      FROM contracts c
+      LEFT JOIN animals an ON an.id = c.animal_id
+      LEFT JOIN clients sb ON sb.id = c.seller_id
+      LEFT JOIN clients bb ON bb.id = c.buyer_id
+      WHERE c.status != 'cancelado'
+        AND (an.name LIKE ? OR c.contract_number LIKE ? OR sb.name LIKE ? OR bb.name LIKE ?)`;
+    const contractParams = [like, like, like, like];
+    if (isCliente && cid) {
+      contractSql += ` AND ${CLIENT_CONTRACT_ACCESS_SQL}`;
+      contractParams.push(...bindClientContractAccessParams(cid));
+    }
+    contractSql += ' ORDER BY c.created_at DESC LIMIT 8';
+    const [contractRows] = await pool.execute(contractSql, contractParams);
+    const contracts = contractRows.map((r) => ({
+      id: String(r.id),
+      name: r.contract_number ? `Contrato ${r.contract_number}` : 'Contrato',
+      subtitle: `${r.animal_name || 'Animal'} · ${r.seller_name || ''} → ${r.buyer_name || ''}`,
+      to: '/app/contratos',
+    }));
+
+    let auctions = [];
+    if (!isCliente) {
+      const [auctionRows] = await pool.execute(
+        `SELECT id, name, auction_date, status FROM auctions
+         WHERE name LIKE ? OR location LIKE ?
+         ORDER BY auction_date DESC LIMIT 6`,
+        [like, like]
+      );
+      auctions = auctionRows.map((r) => ({
+        id: String(r.id),
+        name: r.name,
+        subtitle: r.auction_date || r.status,
+        to: '/app/leiloes',
+      }));
+    }
+
+    res.json({ people, animals, contracts, auctions });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro na busca' });
+  }
+});
+
+app.get('/api/breeding-coverings', auth(), async (req, res) => {
+  if (req.user.role === 'cliente') return res.status(403).json({ error: 'Acesso negado' });
+  try {
+    const q = String(req.query.q || '').trim();
+    let sql = `SELECT bc.*, mare.name AS mare_name, stallion.name AS stallion_animal_name
+      FROM breeding_coverings bc
+      INNER JOIN animals mare ON mare.id = bc.mare_animal_id
+      LEFT JOIN animals stallion ON stallion.id = bc.stallion_animal_id WHERE 1=1`;
+    const params = [];
+    if (q) {
+      sql += ' AND (mare.name LIKE ? OR bc.stallion_name LIKE ? OR stallion.name LIKE ? OR bc.season LIKE ?)';
+      const like = `%${q}%`;
+      params.push(like, like, like, like);
+    }
+    sql += ' ORDER BY bc.covering_date DESC LIMIT 200';
+    const [rows] = await pool.execute(sql, params);
+    res.json(rows.map(mapBreedingCovering));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Tabela de reprodução não disponível — rode a migration' });
+  }
+});
+
+app.post('/api/breeding-coverings', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const mareId = Number(body.mareAnimalId || 0);
+    if (!mareId) return res.status(400).json({ error: 'Égua é obrigatória' });
+    const method = ['ia', 'monta_natural', 'te'].includes(body.method) ? body.method : 'ia';
+    const date = String(body.coveringDate || '').trim();
+    if (!date) return res.status(400).json({ error: 'Data da cobertura é obrigatória' });
+    const abccmm = ['pendente', 'comunicado', 'confirmado'].includes(body.abccmmStatus)
+      ? body.abccmmStatus
+      : 'pendente';
+    const stallionId = Number(body.stallionAnimalId || 0) || null;
+    const [result] = await pool.execute(
+      `INSERT INTO breeding_coverings (mare_animal_id, stallion_animal_id, stallion_name, method, covering_date, season, veterinarian, abccmm_status, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        mareId,
+        stallionId,
+        body.stallionName || null,
+        method,
+        date,
+        body.season || null,
+        body.veterinarian || null,
+        abccmm,
+        body.notes || null,
+        req.user.id,
+      ]
+    );
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao registrar cobertura' });
+  }
+});
+
+app.put('/api/breeding-coverings/:id', auth(['root', 'admin']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [curRows] = await pool.execute('SELECT * FROM breeding_coverings WHERE id = ?', [id]);
+    const cur = curRows[0];
+    if (!cur) return res.status(404).json({ error: 'Cobertura não encontrada' });
+    const body = req.body || {};
+    const method = ['ia', 'monta_natural', 'te'].includes(body.method) ? body.method : cur.method;
+    const abccmm = ['pendente', 'comunicado', 'confirmado'].includes(body.abccmmStatus)
+      ? body.abccmmStatus
+      : cur.abccmm_status;
+    await pool.execute(
+      `UPDATE breeding_coverings SET mare_animal_id=?, stallion_animal_id=?, stallion_name=?, method=?, covering_date=?, season=?, veterinarian=?, abccmm_status=?, notes=? WHERE id=?`,
+      [
+        Number(body.mareAnimalId || cur.mare_animal_id),
+        body.stallionAnimalId != null ? Number(body.stallionAnimalId) || null : cur.stallion_animal_id,
+        body.stallionName !== undefined ? body.stallionName || null : cur.stallion_name,
+        method,
+        body.coveringDate || cur.covering_date,
+        body.season !== undefined ? body.season || null : cur.season,
+        body.veterinarian !== undefined ? body.veterinarian || null : cur.veterinarian,
+        abccmm,
+        body.notes !== undefined ? body.notes || null : cur.notes,
+        id,
+      ]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao atualizar cobertura' });
+  }
+});
+
+app.delete('/api/breeding-coverings/:id', auth(['root', 'admin']), async (req, res) => {
+  try {
+    const [result] = await pool.execute('DELETE FROM breeding_coverings WHERE id = ?', [
+      Number(req.params.id),
+    ]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Cobertura não encontrada' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir cobertura' });
   }
 });
 

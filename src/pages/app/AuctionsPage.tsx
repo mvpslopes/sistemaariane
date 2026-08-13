@@ -26,6 +26,7 @@ import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, cmpNum, sortRows } from '../../hooks/useSortableTable';
 import { formatDateBR } from '../../utils/dateTime';
 import ContractForm from './ContractForm';
+import AuctionFinancePanel from './AuctionFinancePanel';
 
 type StatusFilter = 'all' | 'agendado' | 'em_andamento' | 'encerrado' | 'cancelado';
 type SortKey = 'name' | 'date' | 'location' | 'lots' | 'status';
@@ -76,7 +77,7 @@ const money = (v: number | null) =>
   v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 export default function AuctionsPage() {
-  const { canWrite } = useAuth();
+  const { canCreate, canUpdate, canWrite } = useAuth();
   const { success, error: toastError } = useToast();
   const [items, setItems] = useState<Auction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,6 +87,7 @@ export default function AuctionsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailTab, setDetailTab] = useState<'lots' | 'finance'>('lots');
   const [detail, setDetail] = useState<Auction | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [lotOpen, setLotOpen] = useState(false);
@@ -120,6 +122,7 @@ export default function AuctionsPage() {
 
   const openDetail = async (id: string) => {
     setDetailId(id);
+    setDetailTab('lots');
     setDetailLoading(true);
     try {
       setDetail(await getAuction(id));
@@ -510,10 +513,11 @@ export default function AuctionsPage() {
       <Modal
         open={!!detailId}
         title={detail?.name || 'Leilão'}
-        subtitle="Lotes e arremates"
+        subtitle={detailTab === 'lots' ? 'Lotes e arremates' : 'Receitas, despesas e resultado'}
         onClose={() => {
           setDetailId(null);
           setDetail(null);
+          setDetailTab('lots');
         }}
         size="2xl"
       >
@@ -541,6 +545,45 @@ export default function AuctionsPage() {
               )}
             </div>
 
+            <div className="flex gap-1 rounded-xl border border-brand-beige bg-brand-off-white p-1">
+              <button
+                type="button"
+                onClick={() => setDetailTab('lots')}
+                className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                  detailTab === 'lots'
+                    ? 'bg-white text-brand-dark-brown shadow-sm'
+                    : 'text-brand-olive hover:text-brand-dark-brown'
+                }`}
+              >
+                Lotes
+              </button>
+              <button
+                type="button"
+                onClick={() => setDetailTab('finance')}
+                className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                  detailTab === 'finance'
+                    ? 'bg-white text-brand-dark-brown shadow-sm'
+                    : 'text-brand-olive hover:text-brand-dark-brown'
+                }`}
+              >
+                Financeiro
+              </button>
+            </div>
+
+            {detailTab === 'finance' ? (
+              <AuctionFinancePanel
+                auctionId={detail.id}
+                auctionMeta={{
+                  name: detail.name,
+                  auctionDate: detail.auction_date,
+                  location: detail.location,
+                  status: detail.status,
+                }}
+                canCreate={canCreate}
+                canUpdate={canUpdate}
+              />
+            ) : (
+              <>
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-semibold text-brand-dark-brown">Lotes</h3>
               {canWrite && (
@@ -600,6 +643,8 @@ export default function AuctionsPage() {
                 </tbody>
               </table>
             </div>
+              </>
+            )}
           </div>
         )}
       </Modal>

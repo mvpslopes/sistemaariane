@@ -6,9 +6,10 @@ import Loading from './Loading';
 interface ProtectedRouteProps {
   children: React.ReactNode;
   roles?: Role[];
+  assessorOnly?: boolean;
 }
 
-export default function ProtectedRoute({ children, roles }: ProtectedRouteProps) {
+export default function ProtectedRoute({ children, roles, assessorOnly }: ProtectedRouteProps) {
   const { isAuthenticated, user, authChecking } = useAuth();
 
   if (authChecking) {
@@ -24,6 +25,10 @@ export default function ProtectedRoute({ children, roles }: ProtectedRouteProps)
   }
 
   if (roles && !roles.includes(user.role)) {
+    return <Navigate to="/app" replace />;
+  }
+
+  if (assessorOnly && !user.isAssessor) {
     return <Navigate to="/app" replace />;
   }
 

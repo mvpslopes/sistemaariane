@@ -1,3 +1,5 @@
+import { assessorPortalLabels } from './assessorPortalLabels';
+
 /** Rótulos do portal quando o usuário logado é cliente (comprador/vendedor etc.). */
 export const clientPortalLabels = {
   animalsNav: 'Minhas compras',
@@ -21,13 +23,18 @@ export const clientPortalLabels = {
   tableAnimal: 'Animal / item',
 } as const;
 
-export function resolvePageMeta(pathname: string, isCliente: boolean) {
+export function resolvePageMeta(pathname: string, isCliente: boolean, isAssessor = false) {
+  if (pathname.startsWith('/app/animais/') && pathname !== '/app/animais') {
+    return { title: 'Ficha do animal', subtitle: 'Dados, proprietários e contratos vinculados' };
+  }
   const defaults: Record<string, { title: string; subtitle: string }> = {
     '/app': {
       title: 'Dashboard',
-      subtitle: isCliente
-        ? clientPortalLabels.dashboardSubtitle
-        : 'Visão geral do plantel e cadastros',
+      subtitle: isAssessor
+        ? assessorPortalLabels.dashboardSubtitle
+        : isCliente
+          ? clientPortalLabels.dashboardSubtitle
+          : 'Visão geral do plantel e cadastros',
     },
     '/app/pessoas': {
       title: 'Pessoas',
@@ -39,7 +46,17 @@ export function resolvePageMeta(pathname: string, isCliente: boolean) {
         ? clientPortalLabels.animalsPageSubtitle
         : 'Plantel e documentação básica',
     },
+    '/app/reproducao': {
+      title: 'Reprodução',
+      subtitle: 'Cobrições, estações e status ABCCMM (manual)',
+    },
     '/app/leiloes': {
+      title: 'Leilões',
+      subtitle: isAssessor
+        ? assessorPortalLabels.eventsPageSubtitle
+        : 'Eventos, lotes e registro de arremates',
+    },
+    '/app/eventos': {
       title: 'Leilões',
       subtitle: 'Eventos, lotes e registro de arremates',
     },
@@ -49,12 +66,29 @@ export function resolvePageMeta(pathname: string, isCliente: boolean) {
       subtitle: 'Versos (cláusulas) reutilizáveis na nota de leilão',
     },
     '/app/cobrancas': { title: 'Cobranças', subtitle: 'Parcelas, PIX e boletos' },
+    '/app/recebiveis': {
+      title: 'Recebíveis',
+      subtitle: 'Inadimplência, envelhecimento e alertas',
+    },
+    '/app/financeiro-empresa': {
+      title: 'Financeiro da empresa',
+      subtitle: 'Consolidado assessoria, leilões e SaaS',
+    },
+    '/app/assinaturas': {
+      title: 'Assinaturas SaaS',
+      subtitle: 'Planos, módulos e mensalidade por haras',
+    },
     '/app/repasses': {
       title: 'Repasses',
       subtitle: 'Assessoria, dono do animal e assessores por parcela',
     },
     '/app/perfil': { title: 'Meu perfil', subtitle: 'Dados de exibição da conta' },
+    '/app/ajuda': {
+      title: 'Central de ajuda',
+      subtitle: 'Guias de cadastro, consulta e fluxos do sistema',
+    },
     '/app/usuarios': { title: 'Usuários', subtitle: 'Acessos ao sistema' },
+    '/app/auditoria': { title: 'Auditoria', subtitle: 'Registro de ações no sistema' },
     '/app/alterar-senha': { title: 'Alterar senha', subtitle: 'Segurança da sua conta' },
   };
 

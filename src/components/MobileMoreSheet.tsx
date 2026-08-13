@@ -8,6 +8,9 @@ import {
   KeyRound,
   UserCircle,
   X,
+  PieChart,
+  Landmark,
+  Dna,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAnimatedPresence } from '../hooks/useAnimatedPresence';
@@ -21,13 +24,22 @@ const linkClass =
   'flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-brand-dark-brown transition hover:bg-brand-off-white active:scale-[0.99]';
 
 export default function MobileMoreSheet({ open, onClose }: MobileMoreSheetProps) {
-  const { canManageUsers, canViewAudit } = useAuth();
+  const { canManageUsers, canViewAudit, canUpdate, hasRole } = useAuth();
+  const isStaff = !hasRole('cliente');
   const { mounted, visible, duration } = useAnimatedPresence(open, 320);
 
   if (!mounted) return null;
 
   const items = [
     { to: '/app/leiloes', icon: Gavel, label: 'Leilões' },
+    ...(isStaff
+      ? [
+          { to: '/app/reproducao', icon: Dna, label: 'Reprodução' },
+          { to: '/app/recebiveis', icon: PieChart, label: 'Recebíveis' },
+          { to: '/app/financeiro-empresa', icon: Landmark, label: 'Financeiro da empresa' },
+        ]
+      : []),
+    ...(canUpdate ? [{ to: '/app/assinaturas', icon: Package, label: 'Assinaturas SaaS' }] : []),
     { to: '/app/repasses', icon: Split, label: 'Repasses' },
     { to: '/app/modelos-contrato', icon: FileStack, label: 'Modelos de contrato' },
     ...(canManageUsers ? [{ to: '/app/usuarios', icon: UserCog, label: 'Usuários' }] : []),

@@ -4,11 +4,17 @@ import AnimalsPage from './pages/app/AnimalsPage';
 import UsersPage from './pages/app/UsersPage';
 import ContractsPage from './pages/app/ContractsPage';
 import ChargesPage from './pages/app/ChargesPage';
-import AuctionsPage from './pages/app/AuctionsPage';
 import PayoutsPage from './pages/app/PayoutsPage';
 import ContractTemplatesPage from './pages/app/ContractTemplatesPage';
 import ContractPrintView from './pages/app/ContractPrintView';
+import EventsPage from './pages/app/EventsPage';
 import AuditPage from './pages/app/AuditPage';
+import ReceivablesPage from './pages/app/ReceivablesPage';
+import CompanyFinancePage from './pages/app/CompanyFinancePage';
+import SubscriptionsPage from './pages/app/SubscriptionsPage';
+import AnimalDetailPage from './pages/app/AnimalDetailPage';
+import ReproductionPage from './pages/app/ReproductionPage';
+import HelpPage from './pages/app/HelpPage';
 import ChangePassword from './pages/ChangePassword';
 import ProfilePage from './pages/app/ProfilePage';
 import SessionWarning from './components/SessionWarning';
@@ -95,15 +101,17 @@ function AppContent() {
           <Route path="vendedores" element={<Navigate to="/app/pessoas" replace />} />
           <Route path="assessores" element={<Navigate to="/app/pessoas" replace />} />
           <Route path="animais" element={<AnimalsPage />} />
-          <Route path="animais/:id" element={<Navigate to="/app/animais" replace />} />
+          <Route path="animais/:id" element={<AnimalDetailPage />} />
           <Route
-            path="leiloes"
+            path="reproducao"
             element={
               <ProtectedRoute roles={['root', 'admin', 'user']}>
-                <AuctionsPage />
+                <ReproductionPage />
               </ProtectedRoute>
             }
           />
+          <Route path="leiloes" element={<EventsPage />} />
+          <Route path="eventos" element={<Navigate to="/app/leiloes" replace />} />
           <Route path="contratos" element={<ContractsPage />} />
           <Route
             path="modelos-contrato"
@@ -115,13 +123,30 @@ function AppContent() {
           />
           <Route path="cobrancas" element={<ChargesPage />} />
           <Route
-            path="repasses"
+            path="recebiveis"
             element={
               <ProtectedRoute roles={['root', 'admin', 'user']}>
-                <PayoutsPage />
+                <ReceivablesPage />
               </ProtectedRoute>
             }
           />
+          <Route
+            path="financeiro-empresa"
+            element={
+              <ProtectedRoute roles={['root', 'admin', 'user']}>
+                <CompanyFinancePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="assinaturas"
+            element={
+              <ProtectedRoute roles={['root', 'admin']}>
+                <SubscriptionsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="repasses" element={<PayoutsPage />} />
           <Route
             path="usuarios"
             element={
@@ -139,6 +164,7 @@ function AppContent() {
             }
           />
           <Route path="perfil" element={<ProfilePage />} />
+          <Route path="ajuda" element={<HelpPage />} />
           <Route path="alterar-senha" element={<ChangePassword />} />
         </Route>
 

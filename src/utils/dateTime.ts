@@ -65,6 +65,17 @@ export function formatLongDateBR(value: Date = new Date()): string {
   }).format(value);
 }
 
+/** Ex.: 14:30:45 (horário de Brasília) */
+export function formatTimeBR(value: Date = new Date()): string {
+  return new Intl.DateTimeFormat(APP_LOCALE, {
+    timeZone: APP_TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(value);
+}
+
 /** Ex.: 10 de novembro de 2026 */
 export function formatDateLongBR(value: string | Date | null | undefined): string {
   const d = parseAppDate(value);

@@ -243,8 +243,8 @@ function map_audit_row(array $r): array {
     ];
 }
 
-function map_user(array $row): array {
-    return [
+function map_user(array $row, ?PDO $pdo = null): array {
+    $user = [
         'id' => (string)$row['id'],
         'username' => $row['username'],
         'email' => $row['email'],
@@ -256,6 +256,17 @@ function map_user(array $row): array {
         'mustChangePassword' => (bool)$row['must_change_password'],
         'permissions' => permissions_for_role($row['role']),
     ];
+    if ($pdo && !empty($row['client_id'])) {
+        $stmt = $pdo->prepare('SELECT is_assessor, is_buyer, is_seller FROM clients WHERE id = ? LIMIT 1');
+        $stmt->execute([(int)$row['client_id']]);
+        $client = $stmt->fetch();
+        if ($client) {
+            $user['isAssessor'] = (bool)$client['is_assessor'];
+            $user['isBuyer'] = (bool)$client['is_buyer'];
+            $user['isSeller'] = (bool)$client['is_seller'];
+        }
+    }
+    return $user;
 }
 
 const DEFAULT_CLIENT_ACCESS_PASSWORD = 'ariane2026';
@@ -298,7 +309,7 @@ function get_client_access_user(PDO $pdo, int $clientId): ?array {
     );
     $stmt->execute([$clientId, 'cliente']);
     $row = $stmt->fetch();
-    return $row ? map_user($row) : null;
+    return $row ? map_user($row, $pdo) : null;
 }
 
 function client_party_match_sql(string $alias = 'c'): string {
@@ -429,7 +440,7 @@ if ($resource === 'login' && $method === 'POST') {
     ];
     audit_log($pdo, $authUser, 'login', 'auth', (string)$user['id'], 'Login realizado');
 
-    json_out(['success' => true, 'token' => $token, 'user' => map_user($user)]);
+    json_out(['success' => true, 'token' => $token, 'user' => map_user($user, $pdo)]);
 }
 
 // Upload de foto (animais ou avatar)
@@ -494,8 +505,31 @@ if ($resource === 'upload' && $method === 'POST') {
     ]);
 }
 
+// Me — módulos do haras (portal cliente)
+if ($resource === 'me' && $id === 'modules' && $method === 'GET') {
+    $auth = require_auth($config['jwt_secret']);
+    if (!$auth['clientId']) {
+        json_out([
+            'subscriptionType' => 'assessoria',
+            'subscriptionSuspended' => false,
+            'modules' => [],
+        ]);
+    }
+    $cid = (int)$auth['clientId'];
+    $stmt = $pdo->prepare(
+        'SELECT subscription_type, subscription_suspended FROM clients WHERE id = ? LIMIT 1'
+    );
+    $stmt->execute([$cid]);
+    $client = $stmt->fetch();
+    json_out([
+        'subscriptionType' => $client['subscription_type'] ?? 'assessoria',
+        'subscriptionSuspended' => (bool)($client['subscription_suspended'] ?? 0),
+        'modules' => fetch_client_modules($pdo, $cid),
+    ]);
+}
+
 // Me
-if ($resource === 'me' && $method === 'GET') {
+if ($resource === 'me' && !$id && $method === 'GET') {
     $auth = require_auth($config['jwt_secret']);
     $stmt = $pdo->prepare(
         'SELECT id, username, email, name, avatar_url, role, client_id, active, must_change_password FROM users WHERE id = ?'
@@ -503,10 +537,10 @@ if ($resource === 'me' && $method === 'GET') {
     $stmt->execute([$auth['id']]);
     $user = $stmt->fetch();
     if (!$user) json_out(['error' => 'Usuário não encontrado'], 404);
-    json_out(['user' => map_user($user)]);
+    json_out(['user' => map_user($user, $pdo)]);
 }
 
-if ($resource === 'me' && $method === 'PUT') {
+if ($resource === 'me' && !$id && $method === 'PUT') {
     $auth = require_auth($config['jwt_secret']);
     $name = trim((string)($body['name'] ?? ''));
     if ($name === '') {
@@ -536,7 +570,7 @@ if ($resource === 'me' && $method === 'PUT') {
         'SELECT id, username, email, name, avatar_url, role, client_id, active, must_change_password FROM users WHERE id = ?'
     );
     $stmt->execute([$auth['id']]);
-    json_out(['success' => true, 'user' => map_user($stmt->fetch())]);
+    json_out(['success' => true, 'user' => map_user($stmt->fetch(), $pdo)]);
 }
 
 // Change password
@@ -691,6 +725,49 @@ if ($resource === 'dashboard' && $method === 'GET') {
         ? (int)$pdo->query('SELECT COUNT(*) AS t FROM users WHERE active = 1')->fetch()['t']
         : null;
 
+    $overdueWhere = charge_overdue_sql();
+    $overdueAmount = (float)$pdo->query(
+        "SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id WHERE {$overdueWhere}"
+    )->fetch()['t'];
+
+    $monthStart = date('Y-m-01');
+    $assessoriaPaidMonth = (float)$pdo->query(
+        "SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE ch.collector = 'assessoria' AND ch.status = 'pago' AND c.status != 'cancelado'
+           AND COALESCE(ch.paid_at, ch.updated_at) >= '{$monthStart}'"
+    )->fetch()['t'];
+
+    $auctionsOpen = (int)$pdo->query(
+        "SELECT COUNT(*) AS t FROM auctions WHERE status IN ('agendado','em_andamento')"
+    )->fetch()['t'];
+
+    $subscriptionsSuspended = 0;
+    try {
+        $subscriptionsSuspended = (int)$pdo->query(
+            'SELECT COUNT(*) AS t FROM clients WHERE active = 1 AND subscription_suspended = 1'
+        )->fetch()['t'];
+    } catch (Throwable $e) {
+        /* migration opcional */
+    }
+
+    $chargesDueSoon = (int)$pdo->query(
+        "SELECT COUNT(*) AS t FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE c.status != 'cancelado' AND ch.status = 'pendente'
+           AND ch.due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)"
+    )->fetch()['t'];
+
+    $coveringsPending = 0;
+    try {
+        $coveringsPending = (int)$pdo->query(
+            "SELECT COUNT(*) AS t FROM breeding_coverings WHERE abccmm_status = 'pendente'"
+        )->fetch()['t'];
+    } catch (Throwable $e) {
+        /* migration opcional */
+    }
+
     json_out([
         'clients' => $clients,
         'buyers' => $buyers,
@@ -707,6 +784,12 @@ if ($resource === 'dashboard' && $method === 'GET') {
         'chargesOverdue' => $chargesOverdue,
         'chargesPaid' => $chargesPaid,
         'users' => $users,
+        'overdueAmount' => round($overdueAmount, 2),
+        'assessoriaPaidMonth' => round($assessoriaPaidMonth, 2),
+        'auctionsOpen' => $auctionsOpen,
+        'subscriptionsSuspended' => $subscriptionsSuspended,
+        'chargesDueSoon' => $chargesDueSoon,
+        'coveringsPending' => $coveringsPending,
     ]);
 }
 
@@ -743,6 +826,11 @@ function map_client(array $r): array {
         'is_witness' => (bool)($r['is_witness'] ?? 0),
         'is_avalista' => (bool)($r['is_avalista'] ?? 0),
         'property_name' => $r['property_name'] ?? null,
+        'subscription_type' => $r['subscription_type'] ?? 'assessoria',
+        'subscription_suspended' => (bool)($r['subscription_suspended'] ?? 0),
+        'adhesion_fee' => isset($r['adhesion_fee']) && $r['adhesion_fee'] !== null ? (float)$r['adhesion_fee'] : null,
+        'monthly_fee' => isset($r['monthly_fee']) && $r['monthly_fee'] !== null ? (float)$r['monthly_fee'] : null,
+        'adhesion_paid_at' => $r['adhesion_paid_at'] ?? null,
         'created_at' => $r['created_at'] ?? null,
     ];
 }
@@ -1632,6 +1720,550 @@ function map_lot_row(array $r): array {
     ];
 }
 
+const AUCTION_EXPENSE_CATEGORIES = ['locacao', 'equipe', 'marketing', 'leiloeiro', 'transporte', 'outros'];
+
+function normalize_auction_expense_category(?string $cat): string {
+    $cat = $cat ?? 'outros';
+    return in_array($cat, AUCTION_EXPENSE_CATEGORIES, true) ? $cat : 'outros';
+}
+
+function map_auction_expense_row(array $r): array {
+    return [
+        'id' => (string)$r['id'],
+        'auction_id' => (string)$r['auction_id'],
+        'category' => $r['category'],
+        'description' => $r['description'],
+        'amount' => (float)$r['amount'],
+        'expense_date' => $r['expense_date'],
+        'created_at' => $r['created_at'] ?? null,
+    ];
+}
+
+function fetch_auction_finance(PDO $pdo, int $auctionId): array {
+    $stmt = $pdo->prepare('SELECT id FROM auctions WHERE id = ?');
+    $stmt->execute([$auctionId]);
+    if (!$stmt->fetch()) {
+        throw new InvalidArgumentException('Leilão não encontrado');
+    }
+
+    $lotsStmt = $pdo->prepare(
+        "SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN status = 'arrematado' THEN 1 ELSE 0 END) AS sold
+         FROM auction_lots WHERE auction_id = ?"
+    );
+    $lotsStmt->execute([$auctionId]);
+    $lots = $lotsStmt->fetch() ?: ['total' => 0, 'sold' => 0];
+
+    $contractsStmt = $pdo->prepare(
+        "SELECT c.id, c.contract_number, c.total_amount, c.status, c.sale_type,
+                an.name AS animal_name, b.name AS buyer_name, l.lot_number
+         FROM contracts c
+         LEFT JOIN animals an ON an.id = c.animal_id
+         LEFT JOIN clients b ON b.id = c.buyer_id
+         LEFT JOIN auction_lots l ON l.id = c.lot_id
+         WHERE c.auction_id = ? AND c.status != 'cancelado'
+         ORDER BY c.id ASC"
+    );
+    $contractsStmt->execute([$auctionId]);
+    $contracts = $contractsStmt->fetchAll();
+
+    $revenueTotal = 0.0;
+    $revenueByStatus = [
+        'rascunho' => 0.0,
+        'aguardando_assinatura' => 0.0,
+        'ativo' => 0.0,
+        'concluido' => 0.0,
+    ];
+    $assessoriaEstimated = 0.0;
+    $contractRows = [];
+
+    $pctStmt = $pdo->prepare(
+        "SELECT COALESCE(SUM(pct), 0) AS pct
+         FROM contract_payout_rules
+         WHERE contract_id = ? AND beneficiary_role = 'assessoria'"
+    );
+
+    foreach ($contracts as $c) {
+        $amount = (float)$c['total_amount'];
+        $status = (string)$c['status'];
+        $revenueTotal += $amount;
+        if (isset($revenueByStatus[$status])) {
+            $revenueByStatus[$status] += $amount;
+        }
+        $pctStmt->execute([(int)$c['id']]);
+        $assessoriaPct = (float)($pctStmt->fetch()['pct'] ?? 0);
+        $assessoriaEstimated += $amount * $assessoriaPct / 100;
+
+        $contractRows[] = [
+            'id' => (string)$c['id'],
+            'contract_number' => $c['contract_number'],
+            'animal_name' => $c['animal_name'],
+            'buyer_name' => $c['buyer_name'],
+            'lot_number' => $c['lot_number'],
+            'total_amount' => $amount,
+            'status' => $status,
+            'assessoria_pct' => $assessoriaPct,
+            'assessoria_amount' => round($amount * $assessoriaPct / 100, 2),
+        ];
+    }
+
+    $expStmt = $pdo->prepare(
+        'SELECT * FROM auction_expenses WHERE auction_id = ? ORDER BY COALESCE(expense_date, created_at) DESC, id DESC'
+    );
+    $expStmt->execute([$auctionId]);
+    $expenses = array_map('map_auction_expense_row', $expStmt->fetchAll());
+
+    $expensesTotal = 0.0;
+    $expensesByCategory = [];
+    foreach ($expenses as $e) {
+        $expensesTotal += $e['amount'];
+        $cat = $e['category'];
+        if (!isset($expensesByCategory[$cat])) $expensesByCategory[$cat] = 0.0;
+        $expensesByCategory[$cat] += $e['amount'];
+    }
+
+    $resultNet = $assessoriaEstimated - $expensesTotal;
+
+    return [
+        'auction_id' => (string)$auctionId,
+        'lots_total' => (int)$lots['total'],
+        'lots_sold' => (int)$lots['sold'],
+        'revenue_total' => round($revenueTotal, 2),
+        'revenue_by_status' => array_map(fn($v) => round($v, 2), $revenueByStatus),
+        'assessoria_estimated' => round($assessoriaEstimated, 2),
+        'expenses_total' => round($expensesTotal, 2),
+        'expenses_by_category' => array_map(fn($v) => round($v, 2), $expensesByCategory),
+        'result_net' => round($resultNet, 2),
+        'contracts' => $contractRows,
+        'expenses' => $expenses,
+    ];
+}
+
+function client_is_assessor(PDO $pdo, ?int $clientId): bool {
+    if (!$clientId) return false;
+    $stmt = $pdo->prepare('SELECT is_assessor FROM clients WHERE id = ? LIMIT 1');
+    $stmt->execute([$clientId]);
+    $row = $stmt->fetch();
+    return $row ? (bool)$row['is_assessor'] : false;
+}
+
+function fetch_assessor_auctions(PDO $pdo, int $assessorClientId): array {
+    $stmt = $pdo->prepare(
+        "SELECT a.*,
+            COUNT(DISTINCT c.id) AS contracts_count,
+            COALESCE(SUM(c.total_amount), 0) AS sales_total
+         FROM auctions a
+         INNER JOIN contracts c ON c.auction_id = a.id AND c.assessor_id = ? AND c.status != 'cancelado'
+         GROUP BY a.id
+         ORDER BY COALESCE(a.auction_date, a.created_at) DESC, a.id DESC"
+    );
+    $stmt->execute([$assessorClientId]);
+    $rows = $stmt->fetchAll();
+
+    $out = [];
+    $commissionStmt = $pdo->prepare(
+        "SELECT COALESCE(SUM(c.total_amount * rules.pct / 100), 0) AS commission
+         FROM contracts c
+         INNER JOIN (
+           SELECT contract_id, COALESCE(SUM(pct), 0) AS pct
+           FROM contract_payout_rules
+           WHERE beneficiary_role = 'assessor'
+             AND (beneficiary_client_id IS NULL OR beneficiary_client_id = ?)
+           GROUP BY contract_id
+         ) rules ON rules.contract_id = c.id
+         WHERE c.auction_id = ? AND c.assessor_id = ? AND c.status != 'cancelado'"
+    );
+    foreach ($rows as $r) {
+        $auctionId = (int)$r['id'];
+        $commissionStmt->execute([$assessorClientId, $auctionId, $assessorClientId]);
+        $commissionEstimated = (float)($commissionStmt->fetch()['commission'] ?? 0);
+        $salesTotal = (float)$r['sales_total'];
+        $mapped = map_auction_row($r);
+        $mapped['contracts_count'] = (int)$r['contracts_count'];
+        $mapped['sales_total'] = round($salesTotal, 2);
+        $mapped['commission_estimated'] = round($commissionEstimated, 2);
+        $out[] = $mapped;
+    }
+    return $out;
+}
+
+function fetch_assessor_auction_finance(PDO $pdo, int $auctionId, int $assessorClientId): array {
+    $accessStmt = $pdo->prepare(
+        "SELECT 1 FROM contracts WHERE auction_id = ? AND assessor_id = ? AND status != 'cancelado' LIMIT 1"
+    );
+    $accessStmt->execute([$auctionId, $assessorClientId]);
+    if (!$accessStmt->fetch()) {
+        throw new InvalidArgumentException('Evento não encontrado ou sem acesso');
+    }
+
+    $auctionStmt = $pdo->prepare('SELECT * FROM auctions WHERE id = ?');
+    $auctionStmt->execute([$auctionId]);
+    $auction = $auctionStmt->fetch();
+    if (!$auction) {
+        throw new InvalidArgumentException('Leilão não encontrado');
+    }
+
+    $contractsStmt = $pdo->prepare(
+        "SELECT c.id, c.contract_number, c.total_amount, c.status,
+                an.name AS animal_name, b.name AS buyer_name, l.lot_number
+         FROM contracts c
+         LEFT JOIN animals an ON an.id = c.animal_id
+         LEFT JOIN clients b ON b.id = c.buyer_id
+         LEFT JOIN auction_lots l ON l.id = c.lot_id
+         WHERE c.auction_id = ? AND c.assessor_id = ? AND c.status != 'cancelado'
+         ORDER BY c.id ASC"
+    );
+    $contractsStmt->execute([$auctionId, $assessorClientId]);
+    $contracts = $contractsStmt->fetchAll();
+
+    $pctStmt = $pdo->prepare(
+        "SELECT COALESCE(SUM(pct), 0) AS pct
+         FROM contract_payout_rules
+         WHERE contract_id = ? AND beneficiary_role = 'assessor'
+           AND (beneficiary_client_id IS NULL OR beneficiary_client_id = ?)"
+    );
+
+    $salesTotal = 0.0;
+    $commissionEstimated = 0.0;
+    $contractRows = [];
+    foreach ($contracts as $c) {
+        $amount = (float)$c['total_amount'];
+        $salesTotal += $amount;
+        $pctStmt->execute([(int)$c['id'], $assessorClientId]);
+        $commissionPct = (float)($pctStmt->fetch()['pct'] ?? 0);
+        $commissionAmount = round($amount * $commissionPct / 100, 2);
+        $commissionEstimated += $commissionAmount;
+        $contractRows[] = [
+            'id' => (string)$c['id'],
+            'contract_number' => $c['contract_number'],
+            'animal_name' => $c['animal_name'],
+            'buyer_name' => $c['buyer_name'],
+            'lot_number' => $c['lot_number'],
+            'total_amount' => $amount,
+            'status' => $c['status'],
+            'commission_pct' => $commissionPct,
+            'commission_amount' => $commissionAmount,
+        ];
+    }
+
+    $payoutsStmt = $pdo->prepare(
+        "SELECT p.id, p.contract_id, p.installment_no, p.amount, p.status, p.paid_at,
+                ch.due_date AS charge_due_date, an.name AS animal_name
+         FROM payouts p
+         INNER JOIN contracts c ON c.id = p.contract_id
+         INNER JOIN charges ch ON ch.id = p.charge_id
+         INNER JOIN animals an ON an.id = c.animal_id
+         WHERE c.auction_id = ? AND c.status != 'cancelado'
+           AND p.beneficiary_role = 'assessor' AND p.beneficiary_client_id = ?
+         ORDER BY ch.due_date ASC, p.installment_no ASC, p.id ASC"
+    );
+    $payoutsStmt->execute([$auctionId, $assessorClientId]);
+    $payoutRows = $payoutsStmt->fetchAll();
+
+    $commissionPaid = 0.0;
+    $commissionPending = 0.0;
+    $commissionWaiting = 0.0;
+    $payouts = [];
+    foreach ($payoutRows as $p) {
+        $amount = (float)$p['amount'];
+        $status = (string)$p['status'];
+        if ($status === 'pago') $commissionPaid += $amount;
+        elseif ($status === 'pendente') $commissionPending += $amount;
+        elseif ($status === 'aguardando') $commissionWaiting += $amount;
+        $payouts[] = [
+            'id' => (string)$p['id'],
+            'contract_id' => (string)$p['contract_id'],
+            'installment_no' => (int)$p['installment_no'],
+            'amount' => $amount,
+            'status' => $status,
+            'paid_at' => $p['paid_at'],
+            'charge_due_date' => $p['charge_due_date'],
+            'animal_name' => $p['animal_name'],
+        ];
+    }
+
+    return [
+        'auction_id' => (string)$auctionId,
+        'auction_name' => $auction['name'],
+        'auction_date' => $auction['auction_date'],
+        'location' => $auction['location'],
+        'auction_status' => $auction['status'],
+        'contracts_count' => count($contractRows),
+        'sales_total' => round($salesTotal, 2),
+        'commission_estimated' => round($commissionEstimated, 2),
+        'commission_paid' => round($commissionPaid, 2),
+        'commission_pending' => round($commissionPending, 2),
+        'commission_waiting' => round($commissionWaiting, 2),
+        'contracts' => $contractRows,
+        'payouts' => $payouts,
+    ];
+}
+
+const CLIENT_MODULE_CODES = ['plantel', 'reproducao', 'sanitario', 'contratos', 'leiloes'];
+
+function normalize_client_module_code(?string $code): ?string {
+    $code = $code ?? '';
+    return in_array($code, CLIENT_MODULE_CODES, true) ? $code : null;
+}
+
+function fetch_client_modules(PDO $pdo, int $clientId): array {
+    try {
+        $stmt = $pdo->prepare('SELECT * FROM client_modules WHERE client_id = ? ORDER BY module_code ASC');
+        $stmt->execute([$clientId]);
+        return array_map(function ($r) {
+            return [
+                'code' => $r['module_code'],
+                'active' => (bool)$r['active'],
+                'monthlyFee' => $r['monthly_fee'] !== null ? (float)$r['monthly_fee'] : null,
+                'activatedAt' => $r['activated_at'],
+                'notes' => $r['notes'],
+            ];
+        }, $stmt->fetchAll());
+    } catch (Throwable $e) {
+        return [];
+    }
+}
+
+function charge_open_sql(string $chAlias = 'ch', string $cAlias = 'c'): string {
+    return "{$cAlias}.status != 'cancelado' AND {$chAlias}.status IN ('pendente','atrasado')";
+}
+
+function charge_overdue_sql(string $chAlias = 'ch', string $cAlias = 'c'): string {
+    return "{$cAlias}.status != 'cancelado' AND {$chAlias}.status IN ('pendente','atrasado')
+        AND ({$chAlias}.status = 'atrasado' OR {$chAlias}.due_date < CURDATE())";
+}
+
+function fetch_receivables_dashboard(PDO $pdo): array {
+    $openWhere = charge_open_sql();
+    $overdueWhere = charge_overdue_sql();
+
+    $totals = $pdo->query(
+        "SELECT
+            COALESCE(SUM(CASE WHEN {$openWhere} THEN ch.amount ELSE 0 END), 0) AS open_total,
+            COALESCE(SUM(CASE WHEN {$overdueWhere} THEN ch.amount ELSE 0 END), 0) AS overdue_total,
+            COALESCE(SUM(CASE WHEN {$openWhere} THEN 1 ELSE 0 END), 0) AS open_count,
+            COALESCE(SUM(CASE WHEN {$overdueWhere} THEN 1 ELSE 0 END), 0) AS overdue_count
+         FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id"
+    )->fetch() ?: [];
+
+    $aging = $pdo->query(
+        "SELECT
+            COALESCE(SUM(CASE WHEN ch.status = 'pendente' AND ch.due_date >= CURDATE() THEN ch.amount ELSE 0 END), 0) AS current,
+            COALESCE(SUM(CASE WHEN {$overdueWhere} AND DATEDIFF(CURDATE(), ch.due_date) BETWEEN 1 AND 30 THEN ch.amount ELSE 0 END), 0) AS d1_30,
+            COALESCE(SUM(CASE WHEN {$overdueWhere} AND DATEDIFF(CURDATE(), ch.due_date) BETWEEN 31 AND 60 THEN ch.amount ELSE 0 END), 0) AS d31_60,
+            COALESCE(SUM(CASE WHEN {$overdueWhere} AND DATEDIFF(CURDATE(), ch.due_date) BETWEEN 61 AND 90 THEN ch.amount ELSE 0 END), 0) AS d61_90,
+            COALESCE(SUM(CASE WHEN {$overdueWhere} AND DATEDIFF(CURDATE(), ch.due_date) > 90 THEN ch.amount ELSE 0 END), 0) AS d90_plus
+         FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id"
+    )->fetch() ?: [];
+
+    $byCollector = $pdo->query(
+        "SELECT ch.collector,
+            COALESCE(SUM(CASE WHEN {$openWhere} THEN ch.amount ELSE 0 END), 0) AS open_amount,
+            COALESCE(SUM(CASE WHEN {$overdueWhere} THEN ch.amount ELSE 0 END), 0) AS overdue_amount,
+            COALESCE(SUM(CASE WHEN {$overdueWhere} THEN 1 ELSE 0 END), 0) AS overdue_count
+         FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         GROUP BY ch.collector"
+    )->fetchAll();
+
+    $collectorMap = ['assessoria' => ['open' => 0, 'overdue' => 0, 'overdueCount' => 0], 'seller' => ['open' => 0, 'overdue' => 0, 'overdueCount' => 0]];
+    foreach ($byCollector as $row) {
+        $key = $row['collector'] === 'seller' ? 'seller' : 'assessoria';
+        $collectorMap[$key] = [
+            'open' => round((float)$row['open_amount'], 2),
+            'overdue' => round((float)$row['overdue_amount'], 2),
+            'overdueCount' => (int)$row['overdue_count'],
+        ];
+    }
+
+    $debtorsStmt = $pdo->query(
+        "SELECT cl.id, cl.name, cl.whatsapp, cl.phone,
+            COUNT(*) AS charges_count,
+            COALESCE(SUM(ch.amount), 0) AS overdue_amount,
+            MIN(ch.due_date) AS oldest_due
+         FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         INNER JOIN clients cl ON cl.id = ch.client_id
+         WHERE {$overdueWhere}
+         GROUP BY cl.id, cl.name, cl.whatsapp, cl.phone
+         ORDER BY overdue_amount DESC, oldest_due ASC
+         LIMIT 15"
+    );
+    $topDebtors = array_map(function ($r) {
+        return [
+            'clientId' => (string)$r['id'],
+            'clientName' => $r['name'],
+            'whatsapp' => $r['whatsapp'],
+            'phone' => $r['phone'],
+            'chargesCount' => (int)$r['charges_count'],
+            'overdueAmount' => round((float)$r['overdue_amount'], 2),
+            'oldestDue' => $r['oldest_due'],
+        ];
+    }, $debtorsStmt->fetchAll());
+
+    $itemsStmt = $pdo->query(
+        "SELECT ch.id, ch.amount, ch.due_date, ch.status, ch.collector, ch.installment_no,
+                cl.name AS client_name, cl.whatsapp, an.name AS animal_name, c.contract_number,
+                DATEDIFF(CURDATE(), ch.due_date) AS days_overdue
+         FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         INNER JOIN clients cl ON cl.id = ch.client_id
+         LEFT JOIN animals an ON an.id = c.animal_id
+         WHERE {$overdueWhere}
+         ORDER BY ch.due_date ASC, ch.amount DESC
+         LIMIT 50"
+    );
+    $overdueItems = array_map(function ($r) {
+        return [
+            'id' => (string)$r['id'],
+            'amount' => (float)$r['amount'],
+            'dueDate' => $r['due_date'],
+            'status' => $r['status'],
+            'collector' => $r['collector'],
+            'installmentNo' => (int)$r['installment_no'],
+            'clientName' => $r['client_name'],
+            'whatsapp' => $r['whatsapp'],
+            'animalName' => $r['animal_name'],
+            'contractNumber' => $r['contract_number'],
+            'daysOverdue' => (int)$r['days_overdue'],
+        ];
+    }, $itemsStmt->fetchAll());
+
+    return [
+        'openTotal' => round((float)($totals['open_total'] ?? 0), 2),
+        'overdueTotal' => round((float)($totals['overdue_total'] ?? 0), 2),
+        'openCount' => (int)($totals['open_count'] ?? 0),
+        'overdueCount' => (int)($totals['overdue_count'] ?? 0),
+        'aging' => [
+            'current' => round((float)($aging['current'] ?? 0), 2),
+            'd1_30' => round((float)($aging['d1_30'] ?? 0), 2),
+            'd31_60' => round((float)($aging['d31_60'] ?? 0), 2),
+            'd61_90' => round((float)($aging['d61_90'] ?? 0), 2),
+            'd90_plus' => round((float)($aging['d90_plus'] ?? 0), 2),
+        ],
+        'byCollector' => $collectorMap,
+        'topDebtors' => $topDebtors,
+        'overdueItems' => $overdueItems,
+    ];
+}
+
+function fetch_company_finance(PDO $pdo): array {
+    $monthStart = date('Y-m-01');
+    $yearStart = date('Y-01-01');
+
+    $assessoriaPaidMonth = (float)$pdo->query(
+        "SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE ch.collector = 'assessoria' AND ch.status = 'pago' AND c.status != 'cancelado'
+           AND COALESCE(ch.paid_at, ch.updated_at) >= '{$monthStart}'"
+    )->fetch()['t'];
+
+    $assessoriaPaidYear = (float)$pdo->query(
+        "SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE ch.collector = 'assessoria' AND ch.status = 'pago' AND c.status != 'cancelado'
+           AND COALESCE(ch.paid_at, ch.updated_at) >= '{$yearStart}'"
+    )->fetch()['t'];
+
+    $openWhere = charge_open_sql();
+    $overdueWhere = charge_overdue_sql();
+    $assessoriaOpen = (float)$pdo->query(
+        "SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE ch.collector = 'assessoria' AND {$openWhere}"
+    )->fetch()['t'];
+    $assessoriaOverdue = (float)$pdo->query(
+        "SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE ch.collector = 'assessoria' AND {$overdueWhere}"
+    )->fetch()['t'];
+
+    $auctionRevenue = (float)$pdo->query(
+        "SELECT COALESCE(SUM(c.total_amount), 0) AS t FROM contracts c
+         WHERE c.auction_id IS NOT NULL AND c.status != 'cancelado'"
+    )->fetch()['t'];
+
+    $auctionExpenses = 0.0;
+    try {
+        $auctionExpenses = (float)$pdo->query('SELECT COALESCE(SUM(amount), 0) AS t FROM auction_expenses')->fetch()['t'];
+    } catch (Throwable $e) {
+        /* tabela opcional */
+    }
+
+    $auctionCommission = (float)$pdo->query(
+        "SELECT COALESCE(SUM(c.total_amount * rules.pct / 100), 0) AS t
+         FROM contracts c
+         INNER JOIN (
+           SELECT contract_id, COALESCE(SUM(pct), 0) AS pct
+           FROM contract_payout_rules WHERE beneficiary_role = 'assessoria'
+           GROUP BY contract_id
+         ) rules ON rules.contract_id = c.id
+         WHERE c.auction_id IS NOT NULL AND c.status != 'cancelado'"
+    )->fetch()['t'];
+
+    $payoutsPending = (float)$pdo->query(
+        "SELECT COALESCE(SUM(p.amount), 0) AS t FROM payouts p
+         INNER JOIN contracts c ON c.id = p.contract_id
+         WHERE c.status != 'cancelado' AND p.status IN ('pendente','aguardando')"
+    )->fetch()['t'];
+
+    $saasMonthly = 0.0;
+    $saasClients = 0;
+    try {
+        $saasMonthly = (float)$pdo->query(
+            "SELECT COALESCE(SUM(COALESCE(cm.monthly_fee, c.monthly_fee, 0)), 0) AS t
+             FROM client_modules cm
+             INNER JOIN clients c ON c.id = cm.client_id
+             WHERE cm.active = 1 AND c.active = 1 AND c.subscription_suspended = 0"
+        )->fetch()['t'];
+        $saasClients = (int)$pdo->query(
+            "SELECT COUNT(DISTINCT cm.client_id) AS t FROM client_modules cm
+             INNER JOIN clients c ON c.id = cm.client_id
+             WHERE cm.active = 1 AND c.active = 1"
+        )->fetch()['t'];
+    } catch (Throwable $e) {
+        /* migration opcional */
+    }
+
+    $monthlySeries = [];
+    for ($i = 5; $i >= 0; $i--) {
+        $start = date('Y-m-01', strtotime("-{$i} months"));
+        $end = date('Y-m-t', strtotime($start));
+        $label = date('m/Y', strtotime($start));
+        $paid = (float)$pdo->query(
+            "SELECT COALESCE(SUM(ch.amount), 0) AS t FROM charges ch
+             INNER JOIN contracts c ON c.id = ch.contract_id
+             WHERE ch.collector = 'assessoria' AND ch.status = 'pago' AND c.status != 'cancelado'
+               AND DATE(COALESCE(ch.paid_at, ch.updated_at)) BETWEEN '{$start}' AND '{$end}'"
+        )->fetch()['t'];
+        $monthlySeries[] = ['label' => $label, 'assessoriaPaid' => round($paid, 2)];
+    }
+
+    return [
+        'assessoria' => [
+            'paidMonth' => round($assessoriaPaidMonth, 2),
+            'paidYear' => round($assessoriaPaidYear, 2),
+            'open' => round($assessoriaOpen, 2),
+            'overdue' => round($assessoriaOverdue, 2),
+        ],
+        'auctions' => [
+            'revenue' => round($auctionRevenue, 2),
+            'expenses' => round($auctionExpenses, 2),
+            'commissionEstimated' => round($auctionCommission, 2),
+            'resultEstimated' => round($auctionCommission - $auctionExpenses, 2),
+        ],
+        'payoutsPending' => round($payoutsPending, 2),
+        'saas' => [
+            'monthlyEstimated' => round($saasMonthly, 2),
+            'activeClients' => $saasClients,
+        ],
+        'monthlySeries' => $monthlySeries,
+    ];
+}
+
 function normalize_lot_sellers(array $body): ?array {
     $list = [];
     if (!empty($body['sellers']) && is_array($body['sellers'])) {
@@ -1969,6 +2601,83 @@ if ($resource === 'clients') {
         }
     }
 
+    if ($id && $action === 'modules') {
+        require_update($config['jwt_secret']);
+        $cid = (int)$id;
+        if ($method === 'GET' && !$subId) {
+            $stmt = $pdo->prepare(
+                'SELECT subscription_type, subscription_suspended, adhesion_fee, monthly_fee, adhesion_paid_at
+                 FROM clients WHERE id = ? LIMIT 1'
+            );
+            $stmt->execute([$cid]);
+            $client = $stmt->fetch();
+            if (!$client) json_out(['error' => 'Cliente não encontrado'], 404);
+            json_out([
+                'subscriptionType' => $client['subscription_type'] ?? 'assessoria',
+                'subscriptionSuspended' => (bool)($client['subscription_suspended'] ?? 0),
+                'adhesionFee' => $client['adhesion_fee'] !== null ? (float)$client['adhesion_fee'] : null,
+                'monthlyFee' => $client['monthly_fee'] !== null ? (float)$client['monthly_fee'] : null,
+                'adhesionPaidAt' => $client['adhesion_paid_at'],
+                'modules' => fetch_client_modules($pdo, $cid),
+            ]);
+        }
+        if ($method === 'PUT' && !$subId) {
+            try {
+                $curStmt = $pdo->prepare(
+                    'SELECT subscription_type, subscription_suspended, adhesion_fee, monthly_fee, adhesion_paid_at FROM clients WHERE id = ?'
+                );
+                $curStmt->execute([$cid]);
+                $cur = $curStmt->fetch();
+                if (!$cur) json_out(['error' => 'Cliente não encontrado'], 404);
+
+                $pdo->beginTransaction();
+                $subType = array_key_exists('subscriptionType', $body) || array_key_exists('subscription_type', $body)
+                    ? ($body['subscriptionType'] ?? $body['subscription_type'] ?? 'assessoria')
+                    : $cur['subscription_type'];
+                if (!in_array($subType, ['assessoria', 'avulso'], true)) $subType = 'assessoria';
+                $suspended = array_key_exists('subscriptionSuspended', $body) || array_key_exists('subscription_suspended', $body)
+                    ? (!empty($body['subscriptionSuspended']) || !empty($body['subscription_suspended']) ? 1 : 0)
+                    : (int)$cur['subscription_suspended'];
+                $adhesionFee = array_key_exists('adhesionFee', $body)
+                    ? ($body['adhesionFee'] !== null && $body['adhesionFee'] !== '' ? (float)$body['adhesionFee'] : null)
+                    : $cur['adhesion_fee'];
+                $monthlyFee = array_key_exists('monthlyFee', $body)
+                    ? ($body['monthlyFee'] !== null && $body['monthlyFee'] !== '' ? (float)$body['monthlyFee'] : null)
+                    : $cur['monthly_fee'];
+                $adhesionPaidAt = array_key_exists('adhesionPaidAt', $body)
+                    ? ($body['adhesionPaidAt'] ?: null)
+                    : $cur['adhesion_paid_at'];
+
+                $pdo->prepare(
+                    'UPDATE clients SET subscription_type=?, subscription_suspended=?, adhesion_fee=?, monthly_fee=?, adhesion_paid_at=? WHERE id=?'
+                )->execute([$subType, $suspended, $adhesionFee, $monthlyFee, $adhesionPaidAt, $cid]);
+                if (isset($body['modules']) && is_array($body['modules'])) {
+                    foreach ($body['modules'] as $m) {
+                        if (!is_array($m)) continue;
+                        $code = normalize_client_module_code($m['code'] ?? ($m['moduleCode'] ?? null));
+                        if (!$code) continue;
+                        $active = !empty($m['active']) ? 1 : 0;
+                        $fee = array_key_exists('monthlyFee', $m)
+                            ? ($m['monthlyFee'] !== null && $m['monthlyFee'] !== '' ? (float)$m['monthlyFee'] : null)
+                            : null;
+                        $pdo->prepare(
+                            'INSERT INTO client_modules (client_id, module_code, active, monthly_fee, activated_at)
+                             VALUES (?, ?, ?, ?, ?)
+                             ON DUPLICATE KEY UPDATE active=VALUES(active), monthly_fee=VALUES(monthly_fee),
+                               activated_at=IF(VALUES(active)=1 AND activated_at IS NULL, CURDATE(), activated_at),
+                               updated_at=CURRENT_TIMESTAMP'
+                        )->execute([$cid, $code, $active, $fee, $active ? date('Y-m-d') : null]);
+                    }
+                }
+                $pdo->commit();
+                json_out(['success' => true]);
+            } catch (Throwable $e) {
+                if ($pdo->inTransaction()) $pdo->rollBack();
+                json_out(['error' => 'Erro ao salvar módulos. Migration aplicada?'], 500);
+            }
+        }
+    }
+
     if ($id && $action === 'contacts') {
         $auth = require_auth($config['jwt_secret']);
         $cid = (int)$id;
@@ -2056,7 +2765,7 @@ if ($resource === 'clients') {
                 $stmt->execute([$userId]);
                 json_out([
                     'success' => true,
-                    'user' => map_user($stmt->fetch()),
+                    'user' => map_user($stmt->fetch(), $pdo),
                     'defaultPassword' => DEFAULT_CLIENT_ACCESS_PASSWORD,
                     'message' => 'Usuário de acesso criado com sucesso',
                 ]);
@@ -3219,13 +3928,112 @@ if ($resource === 'charges') {
 // Auctions
 if ($resource === 'auctions') {
     if ($method === 'GET' && !$id) {
-        require_auth($config['jwt_secret']);
+        $auth = require_auth($config['jwt_secret']);
+        if ($auth['role'] === 'cliente') {
+            $clientId = $auth['clientId'] ?? null;
+            if (!$clientId || !client_is_assessor($pdo, (int)$clientId)) {
+                json_out([]);
+            }
+            json_out(fetch_assessor_auctions($pdo, (int)$clientId));
+        }
         $rows = $pdo->query(
             "SELECT a.*, (SELECT COUNT(*) FROM auction_lots l WHERE l.auction_id = a.id) AS lots_count
              FROM auctions a
              ORDER BY COALESCE(a.auction_date, a.created_at) DESC, a.id DESC"
         )->fetchAll();
         json_out(array_map('map_auction_row', $rows));
+    }
+
+    if ($method === 'GET' && $id && $action === 'assessor-finance') {
+        $auth = require_auth($config['jwt_secret']);
+        $clientId = $auth['clientId'] ?? null;
+        if ($auth['role'] !== 'cliente' || !$clientId || !client_is_assessor($pdo, (int)$clientId)) {
+            json_out(['error' => 'Acesso negado'], 403);
+        }
+        try {
+            json_out(fetch_assessor_auction_finance($pdo, (int)$id, (int)$clientId));
+        } catch (InvalidArgumentException $e) {
+            json_out(['error' => $e->getMessage()], 404);
+        }
+    }
+
+    if ($method === 'GET' && $id && $action === 'finance') {
+        require_auth($config['jwt_secret']);
+        try {
+            json_out(fetch_auction_finance($pdo, (int)$id));
+        } catch (InvalidArgumentException $e) {
+            json_out(['error' => $e->getMessage()], 404);
+        }
+    }
+
+    if ($resource === 'auctions' && $id && $action === 'expenses') {
+        $auctionId = (int)$id;
+        if ($method === 'POST' && !$subId) {
+            $auth = require_create($config['jwt_secret']);
+            $stmt = $pdo->prepare('SELECT id FROM auctions WHERE id = ?');
+            $stmt->execute([$auctionId]);
+            if (!$stmt->fetch()) json_out(['error' => 'Leilão não encontrado'], 404);
+            $amount = (float)($body['amount'] ?? 0);
+            if ($amount <= 0) json_out(['error' => 'Informe um valor maior que zero'], 400);
+            $category = normalize_auction_expense_category($body['category'] ?? null);
+            $pdo->prepare(
+                'INSERT INTO auction_expenses (auction_id, category, description, amount, expense_date, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $auctionId,
+                $category,
+                trim((string)($body['description'] ?? '')) ?: null,
+                $amount,
+                !empty($body['expenseDate']) ? $body['expenseDate'] : null,
+                $auth['id'],
+            ]);
+            $newId = (string)$pdo->lastInsertId();
+            audit_log($pdo, $auth, 'create', 'auction_expenses', $newId, "Despesa leilão #{$auctionId}");
+            json_out(['success' => true, 'id' => $newId]);
+        }
+
+        if ($method === 'PUT' && $subId) {
+            $auth = require_update($config['jwt_secret']);
+            $expenseId = (int)$subId;
+            $stmt = $pdo->prepare('SELECT id FROM auction_expenses WHERE id = ? AND auction_id = ?');
+            $stmt->execute([$expenseId, $auctionId]);
+            if (!$stmt->fetch()) json_out(['error' => 'Despesa não encontrada'], 404);
+            $fields = [];
+            $params = [];
+            if (array_key_exists('category', $body)) {
+                $fields[] = 'category=?';
+                $params[] = normalize_auction_expense_category($body['category'] ?? null);
+            }
+            if (array_key_exists('description', $body)) {
+                $fields[] = 'description=?';
+                $params[] = trim((string)($body['description'])) ?: null;
+            }
+            if (array_key_exists('amount', $body)) {
+                $amount = (float)$body['amount'];
+                if ($amount <= 0) json_out(['error' => 'Valor inválido'], 400);
+                $fields[] = 'amount=?';
+                $params[] = $amount;
+            }
+            if (array_key_exists('expenseDate', $body)) {
+                $fields[] = 'expense_date=?';
+                $params[] = $body['expenseDate'] ?: null;
+            }
+            if (!$fields) json_out(['error' => 'Nada para atualizar'], 400);
+            $params[] = $expenseId;
+            $pdo->prepare('UPDATE auction_expenses SET ' . implode(',', $fields) . ' WHERE id=?')->execute($params);
+            audit_log($pdo, $auth, 'update', 'auction_expenses', (string)$expenseId, "Despesa leilão #{$auctionId}");
+            json_out(['success' => true]);
+        }
+
+        if ($method === 'DELETE' && $subId) {
+            $auth = require_update($config['jwt_secret']);
+            $expenseId = (int)$subId;
+            $stmt = $pdo->prepare('DELETE FROM auction_expenses WHERE id = ? AND auction_id = ?');
+            $stmt->execute([$expenseId, $auctionId]);
+            if ($stmt->rowCount() === 0) json_out(['error' => 'Despesa não encontrada'], 404);
+            audit_log($pdo, $auth, 'delete', 'auction_expenses', (string)$expenseId, "Despesa leilão #{$auctionId}");
+            json_out(['success' => true]);
+        }
     }
 
     if ($method === 'GET' && $id && !$action) {
@@ -3669,6 +4477,261 @@ if ($resource === 'audit-logs' && $method === 'GET') {
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     json_out(array_map('map_audit_row', $stmt->fetchAll()));
+}
+
+if ($resource === 'receivables-dashboard' && $method === 'GET') {
+    $auth = require_auth($config['jwt_secret']);
+    if ($auth['role'] === 'cliente') {
+        json_out(['error' => 'Acesso negado'], 403);
+    }
+    json_out(fetch_receivables_dashboard($pdo));
+}
+
+if ($resource === 'company-finance' && $method === 'GET') {
+    $auth = require_auth($config['jwt_secret']);
+    if ($auth['role'] === 'cliente') {
+        json_out(['error' => 'Acesso negado'], 403);
+    }
+    json_out(fetch_company_finance($pdo));
+}
+
+if ($resource === 'subscriptions' && $method === 'GET') {
+    require_update($config['jwt_secret']);
+    try {
+        $rows = $pdo->query(
+            "SELECT c.*,
+                (SELECT cp.name FROM client_properties cp WHERE cp.client_id = c.id ORDER BY cp.id ASC LIMIT 1) AS property_name
+             FROM clients c
+             WHERE c.active = 1
+             ORDER BY c.name ASC"
+        )->fetchAll();
+        $out = [];
+        foreach ($rows as $r) {
+            $mapped = map_client($r);
+            $mapped['modules'] = fetch_client_modules($pdo, (int)$r['id']);
+            $out[] = $mapped;
+        }
+        json_out($out);
+    } catch (Throwable $e) {
+        json_out(['error' => 'Erro ao listar assinaturas'], 500);
+    }
+}
+
+function map_breeding_covering(array $r): array {
+    return [
+        'id' => (string)$r['id'],
+        'mareAnimalId' => (string)$r['mare_animal_id'],
+        'mareName' => $r['mare_name'] ?? null,
+        'stallionAnimalId' => $r['stallion_animal_id'] ? (string)$r['stallion_animal_id'] : null,
+        'stallionName' => $r['stallion_name'] ?? ($r['stallion_animal_name'] ?? null),
+        'method' => $r['method'],
+        'coveringDate' => $r['covering_date'],
+        'season' => $r['season'],
+        'veterinarian' => $r['veterinarian'],
+        'abccmmStatus' => $r['abccmm_status'],
+        'notes' => $r['notes'],
+        'createdAt' => $r['created_at'] ?? null,
+    ];
+}
+
+if ($resource === 'search' && $method === 'GET') {
+    $auth = require_auth($config['jwt_secret']);
+    $q = trim($_GET['q'] ?? '');
+    if (mb_strlen($q) < 2) {
+        json_out(['people' => [], 'animals' => [], 'contracts' => [], 'auctions' => []]);
+    }
+    $like = '%' . $q . '%';
+    $isCliente = $auth['role'] === 'cliente';
+    $cid = $auth['clientId'] ? (int)$auth['clientId'] : 0;
+
+    $people = [];
+    if (!$isCliente) {
+        $stmt = $pdo->prepare(
+            'SELECT id, name, document, city, state FROM clients
+             WHERE active = 1 AND (name LIKE ? OR document LIKE ? OR email LIKE ?)
+             ORDER BY name ASC LIMIT 8'
+        );
+        $stmt->execute([$like, $like, $like]);
+        $people = array_map(function ($r) {
+            return [
+                'id' => (string)$r['id'],
+                'name' => $r['name'],
+                'subtitle' => trim(($r['city'] ?? '') . ' ' . ($r['state'] ?? '')) ?: ($r['document'] ?? ''),
+                'to' => '/app/pessoas',
+            ];
+        }, $stmt->fetchAll());
+    }
+
+    $animalSql = "SELECT a.id, a.name, a.registration_no, a.breed FROM animals a WHERE (a.name LIKE ? OR a.registration_no LIKE ? OR a.chip_no LIKE ?)";
+    $animalParams = [$like, $like, $like];
+    if ($isCliente && $cid) {
+        $animalSql .= ' AND ' . client_animal_access_sql('a');
+        bind_client_animal_access($animalParams, $cid);
+    }
+    $animalSql .= ' ORDER BY a.name ASC LIMIT 8';
+    $stmt = $pdo->prepare($animalSql);
+    $stmt->execute($animalParams);
+    $animals = array_map(function ($r) {
+        return [
+            'id' => (string)$r['id'],
+            'name' => $r['name'],
+            'subtitle' => $r['registration_no'] ?: ($r['breed'] ?? 'Animal'),
+            'to' => '/app/animais/' . $r['id'],
+        ];
+    }, $stmt->fetchAll());
+
+    $contractSql = "SELECT c.id, c.contract_number, c.status, an.name AS animal_name,
+                           sb.name AS seller_name, bb.name AS buyer_name
+                    FROM contracts c
+                    LEFT JOIN animals an ON an.id = c.animal_id
+                    LEFT JOIN clients sb ON sb.id = c.seller_id
+                    LEFT JOIN clients bb ON bb.id = c.buyer_id
+                    WHERE c.status != 'cancelado'
+                      AND (an.name LIKE ? OR c.contract_number LIKE ? OR sb.name LIKE ? OR bb.name LIKE ?)";
+    $contractParams = [$like, $like, $like, $like];
+    if ($isCliente && $cid) {
+        $contractSql .= ' AND ' . client_contract_access_sql();
+        bind_client_contract_access($contractParams, $cid);
+    }
+    $contractSql .= ' ORDER BY c.created_at DESC LIMIT 8';
+    $stmt = $pdo->prepare($contractSql);
+    $stmt->execute($contractParams);
+    $contracts = array_map(function ($r) {
+        return [
+            'id' => (string)$r['id'],
+            'name' => $r['contract_number'] ? 'Contrato ' . $r['contract_number'] : 'Contrato',
+            'subtitle' => ($r['animal_name'] ?? 'Animal') . ' · ' . ($r['seller_name'] ?? '') . ' → ' . ($r['buyer_name'] ?? ''),
+            'to' => '/app/contratos',
+        ];
+    }, $stmt->fetchAll());
+
+    $auctions = [];
+    if (!$isCliente) {
+        $stmt = $pdo->prepare(
+            "SELECT id, name, auction_date, status FROM auctions
+             WHERE name LIKE ? OR location LIKE ?
+             ORDER BY auction_date DESC LIMIT 6"
+        );
+        $stmt->execute([$like, $like]);
+        $auctions = array_map(function ($r) {
+            return [
+                'id' => (string)$r['id'],
+                'name' => $r['name'],
+                'subtitle' => $r['auction_date'] ?? $r['status'],
+                'to' => '/app/leiloes',
+            ];
+        }, $stmt->fetchAll());
+    }
+
+    json_out(compact('people', 'animals', 'contracts', 'auctions'));
+}
+
+if ($resource === 'breeding-coverings') {
+    $auth = require_auth($config['jwt_secret']);
+    if ($auth['role'] === 'cliente') {
+        json_out(['error' => 'Acesso negado'], 403);
+    }
+
+    if ($method === 'GET' && !$id) {
+        try {
+            $q = trim($_GET['q'] ?? '');
+            $sql = "SELECT bc.*,
+                        mare.name AS mare_name,
+                        stallion.name AS stallion_animal_name
+                     FROM breeding_coverings bc
+                     INNER JOIN animals mare ON mare.id = bc.mare_animal_id
+                     LEFT JOIN animals stallion ON stallion.id = bc.stallion_animal_id
+                     WHERE 1=1";
+            $params = [];
+            if ($q !== '') {
+                $sql .= ' AND (mare.name LIKE ? OR bc.stallion_name LIKE ? OR stallion.name LIKE ? OR bc.season LIKE ?)';
+                $like = "%$q%";
+                array_push($params, $like, $like, $like, $like);
+            }
+            $sql .= ' ORDER BY bc.covering_date DESC, bc.id DESC LIMIT 200';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            json_out(array_map('map_breeding_covering', $stmt->fetchAll()));
+        } catch (Throwable $e) {
+            json_out(['error' => 'Tabela de reprodução não disponível — rode a migration'], 500);
+        }
+    }
+
+    if ($method === 'POST' && !$id) {
+        require_create($config['jwt_secret']);
+        $mareId = (int)($body['mareAnimalId'] ?? $body['mare_animal_id'] ?? 0);
+        if ($mareId <= 0) json_out(['error' => 'Égua é obrigatória'], 400);
+        $methodVal = $body['method'] ?? 'ia';
+        if (!in_array($methodVal, ['ia', 'monta_natural', 'te'], true)) $methodVal = 'ia';
+        $date = trim($body['coveringDate'] ?? $body['covering_date'] ?? '');
+        if ($date === '') json_out(['error' => 'Data da cobertura é obrigatória'], 400);
+        $stallionId = (int)($body['stallionAnimalId'] ?? $body['stallion_animal_id'] ?? 0);
+        $stallionName = trim($body['stallionName'] ?? $body['stallion_name'] ?? '') ?: null;
+        $abccmm = $body['abccmmStatus'] ?? $body['abccmm_status'] ?? 'pendente';
+        if (!in_array($abccmm, ['pendente', 'comunicado', 'confirmado'], true)) $abccmm = 'pendente';
+        try {
+            $pdo->prepare(
+                'INSERT INTO breeding_coverings (mare_animal_id, stallion_animal_id, stallion_name, method, covering_date, season, veterinarian, abccmm_status, notes, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $mareId,
+                $stallionId > 0 ? $stallionId : null,
+                $stallionName,
+                $methodVal,
+                $date,
+                $body['season'] ?? null,
+                $body['veterinarian'] ?? null,
+                $abccmm,
+                $body['notes'] ?? null,
+                $auth['id'],
+            ]);
+            json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao registrar cobertura'], 500);
+        }
+    }
+
+    if ($method === 'PUT' && $id) {
+        require_update($config['jwt_secret']);
+        $stmt = $pdo->prepare('SELECT * FROM breeding_coverings WHERE id = ?');
+        $stmt->execute([(int)$id]);
+        $cur = $stmt->fetch();
+        if (!$cur) json_out(['error' => 'Cobertura não encontrada'], 404);
+        $methodVal = $body['method'] ?? $cur['method'];
+        if (!in_array($methodVal, ['ia', 'monta_natural', 'te'], true)) $methodVal = $cur['method'];
+        $abccmm = $body['abccmmStatus'] ?? $body['abccmm_status'] ?? $cur['abccmm_status'];
+        if (!in_array($abccmm, ['pendente', 'comunicado', 'confirmado'], true)) $abccmm = $cur['abccmm_status'];
+        $stallionId = array_key_exists('stallionAnimalId', $body)
+            ? ((int)($body['stallionAnimalId'] ?? 0) ?: null)
+            : $cur['stallion_animal_id'];
+        try {
+            $pdo->prepare(
+                'UPDATE breeding_coverings SET mare_animal_id=?, stallion_animal_id=?, stallion_name=?, method=?, covering_date=?, season=?, veterinarian=?, abccmm_status=?, notes=? WHERE id=?'
+            )->execute([
+                (int)($body['mareAnimalId'] ?? $cur['mare_animal_id']),
+                $stallionId,
+                array_key_exists('stallionName', $body) ? ($body['stallionName'] ?: null) : $cur['stallion_name'],
+                $methodVal,
+                $body['coveringDate'] ?? $cur['covering_date'],
+                array_key_exists('season', $body) ? ($body['season'] ?: null) : $cur['season'],
+                array_key_exists('veterinarian', $body) ? ($body['veterinarian'] ?: null) : $cur['veterinarian'],
+                $abccmm,
+                array_key_exists('notes', $body) ? ($body['notes'] ?: null) : $cur['notes'],
+                (int)$id,
+            ]);
+            json_out(['success' => true]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao atualizar cobertura'], 500);
+        }
+    }
+
+    if ($method === 'DELETE' && $id) {
+        require_delete($config['jwt_secret']);
+        $stmt = $pdo->prepare('DELETE FROM breeding_coverings WHERE id = ?');
+        $stmt->execute([(int)$id]);
+        if ($stmt->rowCount() === 0) json_out(['error' => 'Cobertura não encontrada'], 404);
+        json_out(['success' => true]);
+    }
 }
 
 json_out(['error' => 'Rota não encontrada'], 404);

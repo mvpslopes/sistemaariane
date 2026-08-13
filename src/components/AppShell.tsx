@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Users,
   PawPrint,
   UserCog,
   LogOut,
-  ChevronDown,
   KeyRound,
   FileText,
   Banknote,
@@ -21,15 +20,34 @@ import {
   X,
   Shield,
   MoreHorizontal,
+  PieChart,
+  Landmark,
+  Package,
+  Dna,
+  Wallet,
+  Settings,
+  HelpCircle,
 } from 'lucide-react';
+import {
+  NavAccordion,
+  NavSectionLabel,
+  NavSubLink,
+  NavTopLink,
+  sectionIsActive,
+} from './SidebarNav';
 import { useAuth } from '../contexts/AuthContext';
 import UserAvatar from './UserAvatar';
 import AppBottomNav from './AppBottomNav';
 import MobileMoreSheet from './MobileMoreSheet';
 import { clientPortalLabels, resolvePageMeta } from '../constants/clientPortalLabels';
-import { formatLongDateBR } from '../utils/dateTime';
+import HeaderDateTime from './HeaderDateTime';
+import NotificationBell from './NotificationBell';
+import SupportMenu from './SupportMenu';
+import HelpMenu from './HelpMenu';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useOperationalAlerts } from '../hooks/useOperationalAlerts';
 import PageTransition from './PageTransition';
+import AppBrandMark from './AppBrandMark';
 
 const roleLabel: Record<string, string> = {
   root: 'Root',
@@ -38,12 +56,20 @@ const roleLabel: Record<string, string> = {
   cliente: 'Cliente',
 };
 
-const cadastroPaths = ['/app/pessoas', '/app/animais'];
-
-const contaPaths = ['/app/perfil', '/app/alterar-senha'];
+const cadastroPaths = ['/app/pessoas', '/app/animais', '/app/reproducao'];
+const operacaoPaths = ['/app/leiloes', '/app/contratos', '/app/modelos-contrato'];
+const financeiroPaths = [
+  '/app/cobrancas',
+  '/app/recebiveis',
+  '/app/financeiro-empresa',
+  '/app/repasses',
+  '/app/assinaturas',
+];
+const sistemaPaths = ['/app/usuarios', '/app/auditoria'];
+const contaPaths = ['/app/perfil', '/app/alterar-senha', '/app/ajuda'];
 
 export default function AppShell() {
-  const { user, logout, canManageUsers, canViewAudit, hasRole } = useAuth();
+  const { user, logout, canManageUsers, canViewAudit, canUpdate, hasRole } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
@@ -51,22 +77,36 @@ export default function AppShell() {
   const [moreOpen, setMoreOpen] = useState(false);
   const isMobile = useIsMobile();
   const [cadastrosOpen, setCadastrosOpen] = useState(true);
+  const [operacaoOpen, setOperacaoOpen] = useState(true);
+  const [financeiroOpen, setFinanceiroOpen] = useState(true);
+  const [sistemaOpen, setSistemaOpen] = useState(false);
   const [contaOpen, setContaOpen] = useState(false);
   const isCliente = hasRole('cliente');
-  const onCadastros = cadastroPaths.some(
-    (p) => location.pathname === p || location.pathname.startsWith(`${p}/`)
-  );
-  const onConta = contaPaths.some((p) => location.pathname === p);
+  const isAssessor = !!user?.isAssessor && isCliente;
+  const pathname = location.pathname;
+  const { stats: alertStats, loading: alertsLoading } = useOperationalAlerts(!!user);
 
   const compact = !isMobile && collapsed;
 
   useEffect(() => {
-    if (onCadastros) setCadastrosOpen(true);
-  }, [onCadastros]);
+    if (sectionIsActive(cadastroPaths, pathname)) setCadastrosOpen(true);
+  }, [pathname]);
 
   useEffect(() => {
-    if (onConta) setContaOpen(true);
-  }, [onConta]);
+    if (sectionIsActive(operacaoPaths, pathname)) setOperacaoOpen(true);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (sectionIsActive(financeiroPaths, pathname)) setFinanceiroOpen(true);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (sectionIsActive(sistemaPaths, pathname)) setSistemaOpen(true);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (sectionIsActive(contaPaths, pathname)) setContaOpen(true);
+  }, [pathname]);
 
   useEffect(() => {
     setMobileOpen(false);
@@ -93,45 +133,41 @@ export default function AppShell() {
     navigate('/login');
   };
 
-  const linkClass = ({ isActive }: { isActive: boolean }) =>
-    `group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
-      isActive
-        ? 'bg-white/10 text-white'
-        : 'text-brand-beige/70 hover:bg-white/5 hover:text-white'
-    } ${compact ? 'justify-center' : ''}`;
+  const meta = resolvePageMeta(location.pathname, isCliente, isAssessor);
 
-  const subLinkClass = ({ isActive }: { isActive: boolean }) =>
-    `group relative flex items-center gap-3 rounded-xl py-2 text-sm font-medium transition-all duration-200 ${
-      compact ? 'justify-center px-3' : 'px-3 pl-10'
-    } ${
-      isActive
-        ? 'bg-white/10 text-white'
-        : 'text-brand-beige/65 hover:bg-white/5 hover:text-white'
-    }`;
-
-  const meta = resolvePageMeta(location.pathname, isCliente);
-  const today = formatLongDateBR();
-
-  const showCadastrosChildren = compact || cadastrosOpen;
-  const showContaChildren = compact || contaOpen;
+  const showSistemaSection = canManageUsers || canViewAudit;
 
   if (isMobile) {
-    const firstName = user?.name?.split(' ')[0];
-
     return (
       <div className="flex min-h-[100dvh] flex-col bg-brand-off-white text-brand-dark-brown">
         <header className="sticky top-0 z-20 shrink-0 border-b border-brand-beige/70 bg-white/95 px-4 py-3 backdrop-blur-md pt-[max(0.75rem,env(safe-area-inset-top))]">
           <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium text-brand-olive">
-                {isCliente ? 'Portal do cliente' : 'Sistema Ariane · Gestão de Haras'}
-              </p>
-              <h1 className="truncate text-lg font-semibold text-brand-dark-brown">{meta.title}</h1>
-              {firstName && location.pathname === '/app' && (
-                <p className="truncate text-xs text-brand-olive">Olá, {firstName}</p>
-              )}
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              <Link to="/app" className="flex shrink-0 items-center gap-2">
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-brand-gold/30 bg-gradient-to-br from-brand-gold/20 to-brand-dark-brown/10 text-xs font-bold text-brand-brown shadow-sm">
+                  AA
+                </span>
+                <span className="hidden min-w-0 sm:block">
+                  <span className="block truncate text-[10px] font-semibold uppercase tracking-wider text-brand-gold">
+                    {isAssessor ? 'Portal assessor' : isCliente ? 'Portal cliente' : 'Gestão de Haras'}
+                  </span>
+                  <span className="block truncate text-sm font-semibold text-brand-dark-brown">{meta.title}</span>
+                </span>
+              </Link>
+              <div className="min-w-0 sm:hidden">
+                <h1 className="truncate text-lg font-semibold text-brand-dark-brown">{meta.title}</h1>
+              </div>
             </div>
             <div className="flex shrink-0 items-center gap-2">
+              <HelpMenu isCliente={isCliente} isAssessor={isAssessor} compact />
+              <NotificationBell
+                userId={user?.id}
+                stats={alertStats}
+                canManageSubs={canUpdate}
+                loading={alertsLoading}
+                compact
+              />
+              <SupportMenu userName={user?.name} compact />
               {!isCliente && (
                 <button
                   type="button"
@@ -190,280 +226,151 @@ export default function AppShell() {
           mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         } ${compact ? 'md:w-[76px]' : 'md:w-64'} md:shrink-0`}
       >
-        <div className={`flex items-start gap-2 px-4 py-4 ${compact ? 'md:justify-center md:px-2' : ''}`}>
-          {!compact ? (
-            <p className="min-w-0 flex-1 text-sm font-semibold leading-snug tracking-wide text-white">
-              Sistema Ariane
-              <br />
-              <span className="font-medium text-brand-beige/80">Gestão de Haras</span>
-            </p>
-          ) : (
-            <p
-              className="hidden text-center text-[10px] font-semibold leading-tight text-white md:block"
-              title="Sistema Ariane Gestão de Haras"
-            >
-              Sistema Ariane
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={() => setMobileOpen(false)}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-brand-beige/80 hover:bg-white/10 hover:text-white md:hidden"
-            aria-label="Fechar menu"
+        <div
+          className={`border-b border-white/10 pb-3 ${compact ? 'px-2 pt-3 md:px-2' : 'px-3 pt-3'}`}
+        >
+          <div
+            className={`relative flex items-start gap-2 ${compact ? 'md:flex-col md:items-center' : ''}`}
           >
-            <X className="h-5 w-5" />
-          </button>
+            <AppBrandMark compact={compact} />
+            <button
+              type="button"
+              onClick={() => setMobileOpen(false)}
+              className="absolute right-0 top-0 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-brand-beige/80 hover:bg-white/10 hover:text-white md:hidden"
+              aria-label="Fechar menu"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
-        <nav className="scrollbar-sidebar flex flex-1 flex-col gap-1 overflow-y-auto px-3 pb-2 pt-1">
-          {!compact && (
-            <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-widest text-brand-beige/35">
-              Principal
-            </p>
-          )}
-          <NavLink to="/app" end className={linkClass} title="Dashboard">
-            {({ isActive }) => (
-              <>
-                {isActive && (
-                  <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                )}
-                <LayoutDashboard className="h-[18px] w-[18px] shrink-0" />
-                {!compact && <span>Dashboard</span>}
-              </>
-            )}
-          </NavLink>
+        <nav className="scrollbar-sidebar flex flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pb-2 pt-1">
+          <NavSectionLabel compact={compact}>Principal</NavSectionLabel>
+          <NavTopLink to="/app" end icon={LayoutDashboard} label="Dashboard" compact={compact} />
 
+          {/* ——— Staff ——— */}
           {!isCliente && (
-            <div className="mt-1">
-              {!compact ? (
-                <button
-                  type="button"
-                  onClick={() => setCadastrosOpen((v) => !v)}
-                  className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
-                    onCadastros
-                      ? 'bg-white/5 text-white'
-                      : 'text-brand-beige/70 hover:bg-white/5 hover:text-white'
-                  }`}
-                  title="Cadastros"
-                >
-                  <FolderOpen className="h-[18px] w-[18px] shrink-0" />
-                  <span className="flex-1 text-left">Cadastros</span>
-                  <ChevronDown
-                    className={`h-4 w-4 shrink-0 opacity-60 transition-transform ${
-                      cadastrosOpen ? 'rotate-0' : '-rotate-90'
-                    }`}
-                  />
-                </button>
-              ) : (
-                <div
-                  className={`mb-1 flex justify-center rounded-xl py-2 ${
-                    onCadastros ? 'bg-white/5 text-white' : 'text-brand-beige/70'
-                  }`}
-                  title="Cadastros"
-                >
-                  <FolderOpen className="h-[18px] w-[18px]" />
-                </div>
-              )}
-
-              {showCadastrosChildren && (
-                <div className={`flex flex-col gap-0.5 ${compact ? '' : 'mt-0.5'}`}>
-                  <NavLink to="/app/pessoas" className={subLinkClass} title="Pessoas">
-                    {({ isActive }) => (
-                      <>
-                        {isActive && (
-                          <span className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                        )}
-                        <Users className="h-4 w-4 shrink-0" />
-                        {!compact && <span>Pessoas</span>}
-                      </>
-                    )}
-                  </NavLink>
-                  <NavLink to="/app/animais" className={subLinkClass} title="Animais">
-                    {({ isActive }) => (
-                      <>
-                        {isActive && (
-                          <span className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                        )}
-                        <PawPrint className="h-4 w-4 shrink-0" />
-                        {!compact && <span>Animais</span>}
-                      </>
-                    )}
-                  </NavLink>
-                </div>
-              )}
-            </div>
-          )}
-
-          {isCliente && (
-            <NavLink to="/app/animais" className={linkClass} title={clientPortalLabels.animalsNav}>
-              {({ isActive }) => (
-                <>
-                  {isActive && (
-                    <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                  )}
-                  <PawPrint className="h-[18px] w-[18px] shrink-0" />
-                  {!compact && <span>{clientPortalLabels.animalsNav}</span>}
-                </>
-              )}
-            </NavLink>
-          )}
-
-          {!compact && (
-            <p className="mb-1 mt-3 px-3 text-[10px] font-semibold uppercase tracking-widest text-brand-beige/35">
-              Operação
-            </p>
-          )}
-          {!isCliente && (
-            <NavLink to="/app/leiloes" className={linkClass} title="Leilões">
-              {({ isActive }) => (
-                <>
-                  {isActive && (
-                    <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                  )}
-                  <Gavel className="h-[18px] w-[18px] shrink-0" />
-                  {!compact && <span>Leilões</span>}
-                </>
-              )}
-            </NavLink>
-          )}
-          <NavLink to="/app/contratos" className={linkClass} title="Contratos">
-            {({ isActive }) => (
-              <>
-                {isActive && (
-                  <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                )}
-                <FileText className="h-[18px] w-[18px] shrink-0" />
-                {!compact && <span>Contratos</span>}
-              </>
-            )}
-          </NavLink>
-          {!isCliente && (
-            <NavLink to="/app/modelos-contrato" className={linkClass} title="Modelos de contrato">
-              {({ isActive }) => (
-                <>
-                  {isActive && (
-                    <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                  )}
-                  <FileStack className="h-[18px] w-[18px] shrink-0" />
-                  {!compact && <span>Modelos</span>}
-                </>
-              )}
-            </NavLink>
-          )}
-          <NavLink to="/app/cobrancas" className={linkClass} title="Cobranças">
-            {({ isActive }) => (
-              <>
-                {isActive && (
-                  <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                )}
-                <Banknote className="h-[18px] w-[18px] shrink-0" />
-                {!compact && <span>Cobranças</span>}
-              </>
-            )}
-          </NavLink>
-          {!isCliente && (
-            <NavLink to="/app/repasses" className={linkClass} title="Repasses">
-              {({ isActive }) => (
-                <>
-                  {isActive && (
-                    <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                  )}
-                  <Split className="h-[18px] w-[18px] shrink-0" />
-                  {!compact && <span>Repasses</span>}
-                </>
-              )}
-            </NavLink>
-          )}
-          {canManageUsers && (
-            <NavLink to="/app/usuarios" className={linkClass} title="Usuários">
-              {({ isActive }) => (
-                <>
-                  {isActive && (
-                    <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                  )}
-                  <UserCog className="h-[18px] w-[18px] shrink-0" />
-                  {!compact && <span>Usuários</span>}
-                </>
-              )}
-            </NavLink>
-          )}
-          {canViewAudit && (
-            <NavLink to="/app/auditoria" className={linkClass} title="Auditoria">
-              {({ isActive }) => (
-                <>
-                  {isActive && (
-                    <span className="absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                  )}
-                  <Shield className="h-[18px] w-[18px] shrink-0" />
-                  {!compact && <span>Auditoria</span>}
-                </>
-              )}
-            </NavLink>
-          )}
-
-          {!compact && (
-            <p className="mb-1 mt-3 px-3 text-[10px] font-semibold uppercase tracking-widest text-brand-beige/35">
-              Conta
-            </p>
-          )}
-          <div className="mt-0.5">
-            {!compact ? (
-              <button
-                type="button"
-                onClick={() => setContaOpen((v) => !v)}
-                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200 ${
-                  onConta
-                    ? 'bg-white/5 text-white'
-                    : 'text-brand-beige/70 hover:bg-white/5 hover:text-white'
-                }`}
-                title="Minha conta"
+            <>
+              <NavAccordion
+                label="Cadastros"
+                icon={FolderOpen}
+                paths={cadastroPaths}
+                open={cadastrosOpen}
+                onToggle={() => setCadastrosOpen((v) => !v)}
+                compact={compact}
               >
-                <UserCircle className="h-[18px] w-[18px] shrink-0" />
-                <span className="flex-1 text-left">Minha conta</span>
-                <ChevronDown
-                  className={`h-4 w-4 shrink-0 opacity-60 transition-transform ${
-                    contaOpen ? 'rotate-0' : '-rotate-90'
-                  }`}
+                <NavSubLink to="/app/pessoas" icon={Users} label="Pessoas" compact={compact} />
+                <NavSubLink to="/app/animais" icon={PawPrint} label="Animais" compact={compact} />
+                <NavSubLink to="/app/reproducao" icon={Dna} label="Reprodução" compact={compact} />
+              </NavAccordion>
+
+              <NavAccordion
+                label="Operação"
+                icon={Gavel}
+                paths={operacaoPaths}
+                open={operacaoOpen}
+                onToggle={() => setOperacaoOpen((v) => !v)}
+                compact={compact}
+              >
+                <NavSubLink to="/app/leiloes" icon={Gavel} label="Leilões" compact={compact} />
+                <NavSubLink to="/app/contratos" icon={FileText} label="Contratos" compact={compact} />
+                <NavSubLink to="/app/modelos-contrato" icon={FileStack} label="Modelos" compact={compact} />
+              </NavAccordion>
+
+              <NavAccordion
+                label="Financeiro"
+                icon={Wallet}
+                paths={financeiroPaths}
+                open={financeiroOpen}
+                onToggle={() => setFinanceiroOpen((v) => !v)}
+                compact={compact}
+              >
+                <NavSubLink to="/app/cobrancas" icon={Banknote} label="Cobranças" compact={compact} />
+                <NavSubLink to="/app/recebiveis" icon={PieChart} label="Recebíveis" compact={compact} />
+                <NavSubLink
+                  to="/app/financeiro-empresa"
+                  icon={Landmark}
+                  label="Financeiro empresa"
+                  compact={compact}
                 />
-              </button>
-            ) : (
-              <div
-                className={`mb-1 flex justify-center rounded-xl py-2 ${
-                  onConta ? 'bg-white/5 text-white' : 'text-brand-beige/70'
-                }`}
-                title="Minha conta"
-              >
-                <UserCircle className="h-[18px] w-[18px]" />
-              </div>
-            )}
+                <NavSubLink to="/app/repasses" icon={Split} label="Repasses" compact={compact} />
+                {canUpdate && (
+                  <NavSubLink to="/app/assinaturas" icon={Package} label="Assinaturas" compact={compact} />
+                )}
+              </NavAccordion>
 
-            {showContaChildren && (
-              <div className={`flex flex-col gap-0.5 ${compact ? '' : 'mt-0.5'}`}>
-                <NavLink to="/app/perfil" className={subLinkClass} title="Meu perfil">
-                  {({ isActive }) => (
-                    <>
-                      {isActive && (
-                        <span className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                      )}
-                      <UserCircle className="h-4 w-4 shrink-0" />
-                      {!compact && <span>Meu perfil</span>}
-                    </>
+              {showSistemaSection && (
+                <NavAccordion
+                  label="Sistema"
+                  icon={Settings}
+                  paths={sistemaPaths}
+                  open={sistemaOpen}
+                  onToggle={() => setSistemaOpen((v) => !v)}
+                  compact={compact}
+                >
+                  {canManageUsers && (
+                    <NavSubLink to="/app/usuarios" icon={UserCog} label="Usuários" compact={compact} />
                   )}
-                </NavLink>
-                <NavLink to="/app/alterar-senha" className={subLinkClass} title="Alterar senha">
-                  {({ isActive }) => (
-                    <>
-                      {isActive && (
-                        <span className="absolute left-0 top-1/2 h-4 w-1 -translate-y-1/2 rounded-r-full bg-brand-gold" />
-                      )}
-                      <KeyRound className="h-4 w-4 shrink-0" />
-                      {!compact && <span>Alterar senha</span>}
-                    </>
+                  {canViewAudit && (
+                    <NavSubLink to="/app/auditoria" icon={Shield} label="Auditoria" compact={compact} />
                   )}
-                </NavLink>
-              </div>
-            )}
-          </div>
+                </NavAccordion>
+              )}
+            </>
+          )}
+
+          {/* ——— Cliente comprador/vendedor ——— */}
+          {isCliente && !isAssessor && (
+            <>
+              <NavSectionLabel compact={compact}>Minhas compras</NavSectionLabel>
+              <NavTopLink
+                to="/app/animais"
+                icon={PawPrint}
+                label={clientPortalLabels.animalsNav}
+                compact={compact}
+              />
+              <NavAccordion
+                label="Operação"
+                icon={FileText}
+                paths={['/app/contratos', '/app/cobrancas']}
+                open={operacaoOpen}
+                onToggle={() => setOperacaoOpen((v) => !v)}
+                compact={compact}
+              >
+                <NavSubLink to="/app/contratos" icon={FileText} label="Contratos" compact={compact} />
+                <NavSubLink to="/app/cobrancas" icon={Banknote} label="Cobranças" compact={compact} />
+              </NavAccordion>
+            </>
+          )}
+
+          {isAssessor && (
+            <NavAccordion
+              label="Assessoria"
+              icon={Gavel}
+              paths={['/app/leiloes', '/app/contratos', '/app/repasses']}
+              open={operacaoOpen}
+              onToggle={() => setOperacaoOpen((v) => !v)}
+              compact={compact}
+            >
+              <NavSubLink to="/app/leiloes" icon={Gavel} label="Leilões" compact={compact} />
+              <NavSubLink to="/app/contratos" icon={FileText} label="Contratos" compact={compact} />
+              <NavSubLink to="/app/repasses" icon={Split} label="Repasses" compact={compact} />
+            </NavAccordion>
+          )}
+
+          <NavSectionLabel compact={compact}>Conta</NavSectionLabel>
+          <NavAccordion
+            label="Minha conta"
+            icon={UserCircle}
+            paths={contaPaths}
+            open={contaOpen}
+            onToggle={() => setContaOpen((v) => !v)}
+            compact={compact}
+          >
+            <NavSubLink to="/app/perfil" icon={UserCircle} label="Meu perfil" compact={compact} />
+            <NavSubLink to="/app/ajuda" icon={HelpCircle} label="Ajuda" compact={compact} />
+            <NavSubLink to="/app/alterar-senha" icon={KeyRound} label="Alterar senha" compact={compact} />
+          </NavAccordion>
         </nav>
 
         <div className="border-t border-white/10 p-3">
@@ -513,7 +420,15 @@ export default function AppShell() {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-            <p className="mr-1 hidden text-xs capitalize text-brand-olive/70 lg:block">{today}</p>
+            <HelpMenu isCliente={isCliente} isAssessor={isAssessor} />
+            <SupportMenu userName={user?.name} />
+            <NotificationBell
+              userId={user?.id}
+              stats={alertStats}
+              canManageSubs={canUpdate}
+              loading={alertsLoading}
+            />
+            <HeaderDateTime className="mr-1 hidden lg:block" />
 
             <button
               type="button"

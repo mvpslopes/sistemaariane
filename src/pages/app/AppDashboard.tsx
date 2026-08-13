@@ -18,17 +18,22 @@ import {
   getClients,
   getAnimals,
   getContracts,
+  getMyModules,
   mediaUrl,
   type DashboardStats,
   type Client,
   type Animal,
   type Contract,
+  type MyModulesPayload,
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useAppMobile } from '../../hooks/useAppMobile';
 import DashboardSkeleton from '../../components/skeletons/DashboardSkeleton';
 import DonutChart from '../../components/DonutChart';
+import DashboardHubSection from '../../components/DashboardHubSection';
+import DashboardAlertsPanel from '../../components/DashboardAlertsPanel';
+import ClientModulesPanel from '../../components/ClientModulesPanel';
 import { clientPortalLabels } from '../../constants/clientPortalLabels';
 
 interface RecentItem {
@@ -72,9 +77,10 @@ const ASSOC_LABELS: Record<Animal['association'], string> = {
 };
 
 export default function AppDashboard() {
-  const { user, canWrite, canManageUsers, hasRole } = useAuth();
+  const { user, canWrite, canManageUsers, canUpdate, hasRole } = useAuth();
   const { error: toastError } = useToast();
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [myModules, setMyModules] = useState<MyModulesPayload | null>(null);
   const [animals, setAnimals] = useState<Animal[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [recent, setRecent] = useState<RecentItem[]>([]);
@@ -84,10 +90,11 @@ export default function AppDashboard() {
 
   useEffect(() => {
     const loadCliente = async () => {
-      const [dashRes, animalsRes, contractsRes] = await Promise.allSettled([
+      const [dashRes, animalsRes, contractsRes, modRes] = await Promise.allSettled([
         getDashboard(),
         getAnimals(),
         getContracts(),
+        getMyModules(),
       ]);
 
       if (dashRes.status === 'fulfilled') setStats(dashRes.value);
@@ -105,6 +112,7 @@ export default function AppDashboard() {
 
       setAnimals(animalList);
       setContracts(contractList);
+      if (modRes.status === 'fulfilled') setMyModules(modRes.value);
       setRecent(buildRecent([], animalList, contractList));
     };
 
@@ -255,13 +263,13 @@ export default function AppDashboard() {
 
   if (appMobile) {
     return (
-      <div className="space-y-5">
+      <div className="dashboard-high-contrast space-y-5">
         <div>
-          <h2 className="text-xl font-semibold text-brand-dark-brown">
+          <h2 className="text-xl font-semibold text-neutral-950">
             {greetingBR()}
             {firstName ? `, ${firstName}` : ''}
           </h2>
-          <p className="mt-1 text-sm text-brand-olive">
+          <p className="mt-1 text-sm text-neutral-600">
             {isCliente
               ? clientPortalLabels.dashboardSubtitle
               : 'Visão geral de cadastros, contratos e cobranças'}
@@ -276,6 +284,15 @@ export default function AppDashboard() {
             <span className="font-semibold">{s?.chargesOverdue} cobrança(s) atrasada(s)</span>
             <span className="mt-0.5 block text-xs text-amber-800/80">Toque para ver detalhes</span>
           </Link>
+        )}
+
+        {myModules && <ClientModulesPanel data={myModules} />}
+
+        {!isCliente && s && (
+          <>
+            <DashboardHubSection stats={s} />
+            <DashboardAlertsPanel stats={s} canManageSubs={canUpdate} />
+          </>
         )}
 
         <div className="grid grid-cols-2 gap-3">
@@ -322,7 +339,7 @@ export default function AppDashboard() {
 
         {recent.length > 0 && (
           <section className="space-y-3">
-            <h3 className="text-xs font-semibold uppercase tracking-widest text-brand-olive/70">
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-neutral-500">
               Atividade recente
             </h3>
             <ul className="space-y-2">
@@ -344,8 +361,8 @@ export default function AppDashboard() {
                       )}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-brand-dark-brown">{item.title}</p>
-                      <p className="truncate text-xs text-brand-olive">{item.subtitle}</p>
+                      <p className="truncate text-sm font-medium text-neutral-950">{item.title}</p>
+                      <p className="truncate text-xs text-neutral-600">{item.subtitle}</p>
                     </div>
                     <ArrowRight className="h-4 w-4 shrink-0 text-brand-olive/50" />
                   </Link>
@@ -359,14 +376,14 @@ export default function AppDashboard() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="dashboard-high-contrast space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-semibold text-brand-dark-brown">
+          <h2 className="text-2xl font-semibold text-neutral-950">
             {greetingBR()}
             {firstName ? `, ${firstName}` : ''}
           </h2>
-          <p className="text-sm text-brand-olive">
+          <p className="text-sm text-neutral-600">
             {isCliente
               ? 'Visão geral das suas compras, contratos e cobranças'
               : 'Visão geral de cadastros, contratos e cobranças'}
@@ -382,13 +399,13 @@ export default function AppDashboard() {
             </Link>
             <Link
               to="/app/animais"
-              className="inline-flex items-center gap-2 rounded-xl border border-brand-beige bg-white px-4 py-2 text-sm font-medium text-brand-dark-brown/80 transition hover:bg-brand-off-white"
+              className="inline-flex items-center gap-2 rounded-xl border border-brand-beige bg-white px-4 py-2 text-sm font-medium text-neutral-800 transition hover:bg-brand-off-white"
             >
               <Plus className="h-4 w-4" /> Animal
             </Link>
             <Link
               to="/app/contratos"
-              className="inline-flex items-center gap-2 rounded-xl border border-brand-beige bg-white px-4 py-2 text-sm font-medium text-brand-dark-brown/80 transition hover:bg-brand-off-white"
+              className="inline-flex items-center gap-2 rounded-xl border border-brand-beige bg-white px-4 py-2 text-sm font-medium text-neutral-800 transition hover:bg-brand-off-white"
             >
               <Plus className="h-4 w-4" /> Contrato
             </Link>
@@ -396,10 +413,19 @@ export default function AppDashboard() {
         )}
       </div>
 
+      {myModules && isCliente && <ClientModulesPanel data={myModules} />}
+
+      {!isCliente && s && (
+        <>
+          <DashboardHubSection stats={s} />
+          <DashboardAlertsPanel stats={s} canManageSubs={canUpdate} />
+        </>
+      )}
+
       {/* Cadastros / papéis */}
       {!isCliente && (
         <section className="space-y-3">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-brand-olive/70">
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-neutral-500">
             Cadastros
           </h3>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -416,7 +442,7 @@ export default function AppDashboard() {
 
       {/* Operação */}
       <section className="space-y-3">
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-brand-olive/70">
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-neutral-500">
           {isCliente ? clientPortalLabels.sectionOperation : 'Plantel e operação'}
         </h3>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -482,26 +508,29 @@ export default function AppDashboard() {
 
       {/* Relatórios / gráficos */}
       <section className="space-y-3">
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-brand-olive/70">
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-neutral-500">
           Relatórios
         </h3>
         <div className="grid items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3">
           {!isCliente && partySlices.some((p) => p.value > 0) && (
-            <DonutChart title="Perfis nos cadastros" slices={partySlices} />
+            <DonutChart title="Perfis nos cadastros" slices={partySlices} highContrast />
           )}
-          <DonutChart title="Contratos por status" slices={contractSlices} />
-          <DonutChart title="Cobranças" slices={chargeSlices} />
+          <DonutChart title="Contratos por status" slices={contractSlices} highContrast />
+          <DonutChart title="Cobranças" slices={chargeSlices} highContrast />
           <DonutChart
             title={isCliente ? clientPortalLabels.chartByStatus : 'Animais por status'}
             slices={statusSlices}
+            highContrast
           />
           <DonutChart
             title={isCliente ? clientPortalLabels.chartBySex : 'Animais por sexo'}
             slices={sexSlices}
+            highContrast
           />
           <DonutChart
             title={isCliente ? clientPortalLabels.chartByAssociation : 'Animais por associação'}
             slices={associationSlices}
+            highContrast
           />
         </div>
       </section>
@@ -509,12 +538,12 @@ export default function AppDashboard() {
       <div className="grid gap-4 lg:grid-cols-5">
         <div className="rounded-2xl border border-brand-beige bg-white p-6 shadow-card lg:col-span-3">
           <div className="mb-4 flex items-center justify-between">
-            <h3 className="flex items-center gap-2 text-base font-semibold text-brand-dark-brown">
-              <Clock className="h-4 w-4 text-brand-olive" /> Atividade recente
+            <h3 className="flex items-center gap-2 text-base font-semibold text-neutral-950">
+              <Clock className="h-4 w-4 text-neutral-500" /> Atividade recente
             </h3>
           </div>
           {recent.length === 0 ? (
-            <p className="py-8 text-center text-sm text-brand-olive">Nenhum cadastro recente.</p>
+            <p className="py-8 text-center text-sm text-neutral-600">Nenhum cadastro recente.</p>
           ) : (
             <ul className="divide-y divide-brand-beige/60">
               {recent.map((item) => (
@@ -531,8 +560,8 @@ export default function AppDashboard() {
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-brand-dark-brown">{item.title}</p>
-                    <p className="truncate text-xs text-brand-olive">{item.subtitle}</p>
+                    <p className="truncate text-sm font-medium text-neutral-950">{item.title}</p>
+                    <p className="truncate text-xs text-neutral-600">{item.subtitle}</p>
                   </div>
                   <Link
                     to={item.to}
@@ -635,7 +664,7 @@ function buildRecent(
       title: a.name,
       subtitle: a.breed || 'Animal',
       photo: a.photo_url,
-      to: '/app/animais',
+      to: `/app/animais/${a.id}`,
       createdAt: a.created_at!,
     }));
 
@@ -685,9 +714,9 @@ function StatCard({
       >
         <Icon className="h-5 w-5" />
       </div>
-      <p className="text-sm text-brand-olive">{label}</p>
+      <p className="text-sm text-neutral-600">{label}</p>
       <div className="mt-1 flex items-end justify-between">
-        <p className="text-3xl font-semibold text-brand-dark-brown">{value}</p>
+        <p className="text-3xl font-semibold text-neutral-950">{value}</p>
         <ArrowRight className="h-4 w-4 text-brand-olive/0 transition group-hover:text-brand-olive/60" />
       </div>
     </Link>
@@ -722,8 +751,8 @@ function MobileStatCard({
       className={`rounded-2xl border bg-white p-4 shadow-card transition active:scale-[0.98] ${border}`}
     >
       <Icon className="mb-2 h-5 w-5 text-brand-brown" />
-      <p className="text-[11px] leading-tight text-brand-olive">{label}</p>
-      <p className="mt-1 text-2xl font-semibold text-brand-dark-brown">{value}</p>
+      <p className="text-[11px] leading-tight text-neutral-600">{label}</p>
+      <p className="mt-1 text-2xl font-semibold text-neutral-950">{value}</p>
     </Link>
   );
 }

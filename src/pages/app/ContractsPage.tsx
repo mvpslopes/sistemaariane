@@ -90,6 +90,8 @@ interface ContractsPageProps {
 
 export default function ContractsPage({ initialAnimalId = null }: ContractsPageProps) {
   const { canCreate, canUpdate } = useAuth();
+  /** Operador pode compartilhar links; edição/envio administrativo continua só admin. */
+  const canShareSignLinks = canCreate;
   const appMobile = useAppMobile();
   const { success, error: toastError } = useToast();
   const [items, setItems] = useState<Contract[]>([]);
@@ -749,7 +751,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                               {s.email && (
                                 <p className="truncate text-xs text-brand-olive">{s.email}</p>
                               )}
-                              {!s.signed && canUpdate && (
+                              {!s.signed && canShareSignLinks && (
                                 <div className="space-y-1.5">
                                   <div className="flex flex-wrap gap-1.5">
                                     <button
@@ -770,17 +772,19 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                                       <MessageCircle className="h-3 w-3" />
                                       WhatsApp
                                     </button>
-                                    <button
-                                      type="button"
-                                      disabled={!s.signerId || !!notifyingClicksign}
-                                      onClick={() => onNotifyClicksign(s.signerId)}
-                                      className="inline-flex items-center gap-1 rounded-lg border border-brand-beige bg-white px-2.5 py-1 text-[11px] font-medium text-brand-brown hover:bg-brand-beige/40 disabled:opacity-40"
-                                    >
-                                      <Mail className="h-3 w-3" />
-                                      {notifyingClicksign === s.signerId
-                                        ? 'Reenviando...'
-                                        : 'Reenviar e-mail'}
-                                    </button>
+                                    {canUpdate && (
+                                      <button
+                                        type="button"
+                                        disabled={!s.signerId || !!notifyingClicksign}
+                                        onClick={() => onNotifyClicksign(s.signerId)}
+                                        className="inline-flex items-center gap-1 rounded-lg border border-brand-beige bg-white px-2.5 py-1 text-[11px] font-medium text-brand-brown hover:bg-brand-beige/40 disabled:opacity-40"
+                                      >
+                                        <Mail className="h-3 w-3" />
+                                        {notifyingClicksign === s.signerId
+                                          ? 'Reenviando...'
+                                          : 'Reenviar e-mail'}
+                                      </button>
+                                    )}
                                   </div>
                                   <p className="text-[11px] text-brand-olive/80">
                                     O link abre a assinatura no sistema (widget Clicksign). Contratos
