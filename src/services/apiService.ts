@@ -1398,3 +1398,20 @@ export async function saveDailyReport(report: DailyReportPayload) {
 export async function deleteDailyReport(id: string) {
   return request<{ success: boolean }>(`/daily-reports/${id}`, { method: 'DELETE' });
 }
+
+export interface AssistantMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export async function askAssistant(payload: {
+  messages: AssistantMessage[];
+  context: string;
+  userName?: string;
+  userRole?: string;
+}) {
+  return request<{ reply: string }>('/ai-assistant', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}

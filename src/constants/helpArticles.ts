@@ -115,6 +115,21 @@ export const HELP_ARTICLES: HelpArticle[] = [
     toLabel: 'Ir para Leilões',
   },
 
+  {
+    id: 'cadastro-registro-diario',
+    category: 'cadastro',
+    audience: ['staff'],
+    title: 'Registro diário de atendimento',
+    summary: 'Formulário obrigatório ao final do expediente para operadores.',
+    steps: [
+      'Operação → Registro diário → Novo registro.',
+      'Informe faixa de atendimentos, pendências e autoavaliação.',
+      'Confirme a declaração e salve — apenas um registro por dia.',
+    ],
+    to: '/app/registro-diario',
+    toLabel: 'Ir para Registro diário',
+  },
+
   // ——— Staff: visualização ———
   {
     id: 'vis-dashboard',

@@ -16,7 +16,6 @@ import AnimalDetailPage from './pages/app/AnimalDetailPage';
 import ReproductionPage from './pages/app/ReproductionPage';
 import DailyReportsPage from './pages/app/DailyReportsPage';
 import DailyReportFormPage from './pages/app/DailyReportFormPage';
-import HelpPage from './pages/app/HelpPage';
 import ChangePassword from './pages/ChangePassword';
 import ProfilePage from './pages/app/ProfilePage';
 import SessionWarning from './components/SessionWarning';
@@ -183,7 +182,7 @@ function AppContent() {
             }
           />
           <Route path="perfil" element={<ProfilePage />} />
-          <Route path="ajuda" element={<HelpPage />} />
+          <Route path="ajuda" element={<Navigate to="/app?assistente=1" replace />} />
           <Route path="alterar-senha" element={<ChangePassword />} />
         </Route>
 

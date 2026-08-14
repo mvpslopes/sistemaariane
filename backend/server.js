@@ -5167,6 +5167,99 @@ app.delete('/api/daily-reports/:id', auth(['root', 'admin', 'user']), async (req
   }
 });
 
+function loadGroqConfig() {
+  let apiKey = process.env.GROQ_API_KEY || '';
+  let model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+  try {
+    const php = fs.readFileSync(path.join(__dirname, 'config.local.php'), 'utf8');
+    const k = php.match(/'groq_api_key'\s*=>\s*'([^']*)'/);
+    const m = php.match(/'groq_model'\s*=>\s*'([^']*)'/);
+    if (!apiKey && k?.[1]) apiKey = k[1];
+    if (m?.[1]) model = m[1];
+  } catch {
+    /* optional */
+  }
+  if (!apiKey) {
+    const err = new Error('Assistente IA não configurado (groq_api_key em config.local.php)');
+    err.status = 503;
+    throw err;
+  }
+  return { apiKey, model };
+}
+
+async function groqAssistantChat(systemPrompt, messages) {
+  const { apiKey, model } = loadGroqConfig();
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'system', content: systemPrompt }, ...messages],
+      temperature: 0.35,
+      max_tokens: 900,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = data?.error?.message || 'Falha no serviço de IA';
+    const err = new Error(msg);
+    err.status = 502;
+    throw err;
+  }
+  const reply = String(data?.choices?.[0]?.message?.content || '').trim();
+  if (!reply) {
+    const err = new Error('Resposta vazia do assistente');
+    err.status = 502;
+    throw err;
+  }
+  return reply;
+}
+
+app.post('/api/ai-assistant', auth(), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const incoming = Array.isArray(body.messages) ? body.messages : [];
+    const messages = [];
+    for (const m of incoming.slice(-16)) {
+      const role = m?.role;
+      let content = String(m?.content || '').trim();
+      if (!['user', 'assistant'].includes(role) || !content) continue;
+      if (content.length > 4000) content = content.slice(0, 4000);
+      messages.push({ role, content });
+    }
+    if (!messages.length || messages[messages.length - 1].role !== 'user') {
+      return res.status(400).json({ error: 'Envie uma mensagem válida' });
+    }
+
+    let context = String(body.context || '').trim();
+    if (context.length > 28000) context = context.slice(0, 28000);
+    const userName = String(body.userName || req.user?.name || '').trim();
+    const userRole = String(body.userRole || req.user?.role || '').trim();
+
+    const system = [
+      'Você é o Assistente Ariane, copiloto do sistema Gestão de Haras (assessoria equestre).',
+      'Responda SEMPRE em português do Brasil, de forma clara, cordial e objetiva.',
+      'Use SOMENTE o contexto abaixo sobre o sistema. Não invente dados de clientes, valores, contratos ou prazos.',
+      'Se a pergunta não estiver no contexto, diga que não tem essa informação e sugira Suporte técnico ou a equipe da assessoria.',
+      'Não dê conselho jurídico ou financeiro.',
+      'Quando orientar o usuário a abrir uma tela, inclua NO FINAL da resposta exatamente um botão no formato: [LINK:/app/rota|Texto do botão]',
+      `Usuário logado: ${userName || 'equipe'} (perfil: ${userRole || 'user'}).`,
+      '',
+      '--- CONTEXTO ---',
+      context || '(sem contexto adicional)',
+    ].join('\n');
+
+    const reply = await groqAssistantChat(system, messages);
+    res.json({ reply });
+  } catch (error) {
+    console.error(error);
+    res.status(error.status || 500).json({ error: error.message || 'Erro no assistente' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 API MVP na porta ${PORT}`);
   console.log(`📡 http://localhost:${PORT}/api`);

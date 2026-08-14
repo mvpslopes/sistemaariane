@@ -91,10 +91,6 @@ export function resolvePageMeta(pathname: string, isCliente: boolean, isAssessor
       subtitle: 'Assessoria, dono do animal e assessores por parcela',
     },
     '/app/perfil': { title: 'Meu perfil', subtitle: 'Dados de exibição da conta' },
-    '/app/ajuda': {
-      title: 'Central de ajuda',
-      subtitle: 'Guias de cadastro, consulta e fluxos do sistema',
-    },
     '/app/usuarios': { title: 'Usuários', subtitle: 'Acessos ao sistema' },
     '/app/auditoria': { title: 'Auditoria', subtitle: 'Registro de ações no sistema' },
     '/app/alterar-senha': { title: 'Alterar senha', subtitle: 'Segurança da sua conta' },

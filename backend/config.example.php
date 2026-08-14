@@ -15,4 +15,8 @@ return [
     // Clicksign (NÃO versionar o token real — use config.local.php)
     'clicksign_access_token' => '',
     'clicksign_base_url' => 'https://app.clicksign.com', // sandbox: https://sandbox.clicksign.com
+
+    // Groq — assistente IA (chave em https://console.groq.com)
+    'groq_api_key' => '',
+    'groq_model' => 'llama-3.3-70b-versatile',
 ];

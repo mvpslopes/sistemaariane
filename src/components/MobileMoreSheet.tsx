@@ -12,26 +12,28 @@ import {
   Landmark,
   Dna,
   Package,
-  HelpCircle,
   Headphones,
   LogOut,
   MessageCircle,
   ClipboardList,
+  type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAnimatedPresence } from '../hooks/useAnimatedPresence';
 import { buildSupportMessage, supportWhatsAppHref, TECH_SUPPORT } from '../constants/support';
+import AssistantMark from './AssistantMark';
 
 interface MobileMoreSheetProps {
   open: boolean;
   onClose: () => void;
   onLogout: () => void;
+  onOpenAssistant?: () => void;
 }
 
 const linkClass =
   'flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-brand-dark-brown transition hover:bg-brand-off-white active:scale-[0.99]';
 
-export default function MobileMoreSheet({ open, onClose, onLogout }: MobileMoreSheetProps) {
+export default function MobileMoreSheet({ open, onClose, onLogout, onOpenAssistant }: MobileMoreSheetProps) {
   const { user, canManageUsers, canViewAudit, canUpdate, hasRole } = useAuth();
   const isStaff = !hasRole('cliente');
   const isAssessor = !!user?.isAssessor && hasRole('cliente');
@@ -42,10 +44,9 @@ export default function MobileMoreSheet({ open, onClose, onLogout }: MobileMoreS
   const supportHref = supportWhatsAppHref(buildSupportMessage(user?.name));
 
   const items: Array<
-    | { type: 'link'; to: string; icon: typeof HelpCircle; label: string }
+    | { type: 'link'; to: string; icon: LucideIcon; label: string }
     | { type: 'external'; href: string; icon: typeof Headphones; label: string; subtitle?: string }
   > = [
-    { type: 'link', to: '/app/ajuda', icon: HelpCircle, label: 'Central de ajuda' },
     {
       type: 'external',
       href: supportHref,
@@ -118,6 +119,19 @@ export default function MobileMoreSheet({ open, onClose, onLogout }: MobileMoreS
           </button>
         </div>
         <nav className="max-h-[min(60vh,24rem)] space-y-1 overflow-y-auto">
+          {onOpenAssistant && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenAssistant();
+              }}
+              className={linkClass}
+            >
+              <AssistantMark size="sm" className="shrink-0" />
+              Assistente IA
+            </button>
+          )}
           {items.map((item) => {
             if (item.type === 'external') {
               return (

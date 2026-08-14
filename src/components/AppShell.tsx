@@ -26,7 +26,6 @@ import {
   Dna,
   Wallet,
   Settings,
-  HelpCircle,
   ClipboardList,
 } from 'lucide-react';
 import {
@@ -44,7 +43,9 @@ import { clientPortalLabels, resolvePageMeta } from '../constants/clientPortalLa
 import HeaderDateTime from './HeaderDateTime';
 import NotificationBell from './NotificationBell';
 import SupportMenu from './SupportMenu';
-import HelpMenu from './HelpMenu';
+import { AiAssistantProvider, useAiAssistant } from '../contexts/AiAssistantContext';
+import AiAssistantFab from './AiAssistantFab';
+import AssistantSidebarButton from './AssistantSidebarButton';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useOperationalAlerts } from '../hooks/useOperationalAlerts';
 import PageTransition from './PageTransition';
@@ -69,11 +70,12 @@ const financeiroPaths = [
   '/app/assinaturas',
 ];
 const sistemaPaths = ['/app/usuarios', '/app/auditoria'];
-const contaPaths = ['/app/perfil', '/app/alterar-senha', '/app/ajuda'];
+const contaPaths = ['/app/perfil', '/app/alterar-senha'];
 
-export default function AppShell() {
+function AppShellInner() {
   const { user, logout, canManageUsers, canViewAudit, canUpdate, hasRole } = useAuth();
   const navigate = useNavigate();
+  const { openAssistant } = useAiAssistant();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -90,6 +92,16 @@ export default function AppShell() {
   const { stats: alertStats, loading: alertsLoading } = useOperationalAlerts(!!user);
 
   const compact = !isMobile && collapsed;
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('assistente') === '1') {
+      openAssistant();
+      params.delete('assistente');
+      const qs = params.toString();
+      navigate({ pathname: location.pathname, search: qs ? `?${qs}` : '' }, { replace: true });
+    }
+  }, [location.pathname, location.search, navigate, openAssistant]);
 
   useEffect(() => {
     if (sectionIsActive(cadastroPaths, pathname)) setCadastrosOpen(true);
@@ -188,7 +200,16 @@ export default function AppShell() {
 
         <AppBottomNav />
         <PwaInstallBanner />
-        <MobileMoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} onLogout={handleLogout} />
+        <MobileMoreSheet
+          open={moreOpen}
+          onClose={() => setMoreOpen(false)}
+          onLogout={handleLogout}
+          onOpenAssistant={() => {
+            setMoreOpen(false);
+            openAssistant();
+          }}
+        />
+        <AiAssistantFab />
       </div>
     );
   }
@@ -351,7 +372,7 @@ export default function AppShell() {
             compact={compact}
           >
             <NavSubLink to="/app/perfil" icon={UserCircle} label="Meu perfil" compact={compact} />
-            <NavSubLink to="/app/ajuda" icon={HelpCircle} label="Ajuda" compact={compact} />
+            <AssistantSidebarButton compact={compact} />
             <NavSubLink to="/app/alterar-senha" icon={KeyRound} label="Alterar senha" compact={compact} />
           </NavAccordion>
         </nav>
@@ -410,7 +431,6 @@ export default function AppShell() {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-            <HelpMenu isCliente={isCliente} isAssessor={isAssessor} />
             <SupportMenu userName={user?.name} />
             <NotificationBell
               userId={user?.id}
@@ -454,6 +474,15 @@ export default function AppShell() {
           </PageTransition>
         </main>
       </div>
+      <AiAssistantFab />
     </div>
+  );
+}
+
+export default function AppShell() {
+  return (
+    <AiAssistantProvider>
+      <AppShellInner />
+    </AiAssistantProvider>
   );
 }

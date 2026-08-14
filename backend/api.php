@@ -5029,6 +5029,89 @@ function daily_report_can_manage_all(array $auth): bool {
     return in_array($auth['role'], ['root', 'admin'], true);
 }
 
+function groq_assistant_chat(array $config, string $systemPrompt, array $messages): string {
+    $key = trim((string)($config['groq_api_key'] ?? ''));
+    if ($key === '') {
+        json_out(['error' => 'Assistente IA não configurado no servidor (groq_api_key)'], 503);
+    }
+    $model = trim((string)($config['groq_model'] ?? 'llama-3.3-70b-versatile')) ?: 'llama-3.3-70b-versatile';
+
+    $payload = json_encode([
+        'model' => $model,
+        'messages' => array_merge([['role' => 'system', 'content' => $systemPrompt]], $messages),
+        'temperature' => 0.35,
+        'max_tokens' => 900,
+    ], JSON_UNESCAPED_UNICODE);
+
+    $ctx = stream_context_create([
+        'http' => [
+            'method' => 'POST',
+            'header' => "Content-Type: application/json\r\nAuthorization: Bearer {$key}\r\n",
+            'content' => $payload,
+            'timeout' => 45,
+            'ignore_errors' => true,
+        ],
+    ]);
+
+    $raw = @file_get_contents('https://api.groq.com/openai/v1/chat/completions', false, $ctx);
+    if ($raw === false) {
+        json_out(['error' => 'Falha ao contactar o serviço de IA'], 502);
+    }
+    $data = json_decode($raw, true);
+    if (!is_array($data)) {
+        json_out(['error' => 'Resposta inválida do serviço de IA'], 502);
+    }
+    if (!empty($data['error']['message'])) {
+        json_out(['error' => 'IA: ' . $data['error']['message']], 502);
+    }
+    $reply = trim((string)($data['choices'][0]['message']['content'] ?? ''));
+    if ($reply === '') {
+        json_out(['error' => 'Resposta vazia do assistente'], 502);
+    }
+    return $reply;
+}
+
+if ($resource === 'ai-assistant' && $method === 'POST') {
+    $auth = require_auth($config['jwt_secret']);
+
+    $incoming = is_array($body['messages'] ?? null) ? $body['messages'] : [];
+    $messages = [];
+    foreach (array_slice($incoming, -16) as $m) {
+        if (!is_array($m)) continue;
+        $role = $m['role'] ?? '';
+        $content = trim((string)($m['content'] ?? ''));
+        if (!in_array($role, ['user', 'assistant'], true) || $content === '') continue;
+        if (mb_strlen($content) > 4000) $content = mb_substr($content, 0, 4000);
+        $messages[] = ['role' => $role, 'content' => $content];
+    }
+    if (!$messages || end($messages)['role'] !== 'user') {
+        json_out(['error' => 'Envie uma mensagem válida'], 400);
+    }
+
+    $context = trim((string)($body['context'] ?? ''));
+    if (mb_strlen($context) > 28000) $context = mb_substr($context, 0, 28000);
+
+    $userName = trim((string)($body['userName'] ?? ''));
+    $userRole = trim((string)($body['userRole'] ?? $auth['role'] ?? ''));
+
+    $system = implode("\n", [
+        'Você é o Assistente Ariane, copiloto do sistema Gestão de Haras (assessoria equestre).',
+        'Responda SEMPRE em português do Brasil, de forma clara, cordial e objetiva.',
+        'Use SOMENTE o contexto abaixo sobre o sistema. Não invente dados de clientes, valores, contratos ou prazos.',
+        'Se a pergunta não estiver no contexto, diga que não tem essa informação e sugira Suporte técnico ou a equipe da assessoria.',
+        'Não dê conselho jurídico ou financeiro.',
+        'Quando orientar o usuário a abrir uma tela, inclua NO FINAL da resposta exatamente um botão no formato: [LINK:/app/rota|Texto do botão]',
+        'Exemplo: [LINK:/app/registro-diario|Abrir registro diário]',
+        'Usuário logado: ' . ($userName !== '' ? $userName : 'equipe') . ' (perfil: ' . $userRole . ').',
+        '',
+        '--- CONTEXTO ---',
+        $context !== '' ? $context : '(sem contexto adicional)',
+    ]);
+
+    $reply = groq_assistant_chat($config, $system, $messages);
+    json_out(['reply' => $reply]);
+}
+
 if ($resource === 'daily-reports') {
     $auth = require_auth($config['jwt_secret']);
     if (!in_array($auth['role'], ['root', 'admin', 'user'], true)) {
