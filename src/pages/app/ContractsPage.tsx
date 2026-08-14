@@ -9,6 +9,7 @@ import {
   notifyClicksign,
   cancelClicksignEnvelope,
   updateContract,
+  refreshContractsSignatureProgress,
   type Contract,
   type ClicksignTracking,
   type ClicksignSignerStatus,
@@ -29,22 +30,13 @@ import { MobileCard } from '../../components/MobileCard';
 import ContractForm from './ContractForm';
 import ContractDocument, { ContractVerso } from './ContractDocument';
 import { getContractPdfBase64 } from './printContractPdf';
-
-const statusLabel: Record<Contract['status'], string> = {
-  rascunho: 'Rascunho',
-  aguardando_assinatura: 'Aguardando assinatura',
-  ativo: 'Ativo',
-  concluido: 'Concluído',
-  cancelado: 'Cancelado',
-};
-
-const statusTone: Record<Contract['status'], string> = {
-  rascunho: 'bg-slate-100 text-slate-700',
-  aguardando_assinatura: 'bg-amber-100 text-amber-800',
-  ativo: 'bg-emerald-100 text-emerald-800',
-  concluido: 'bg-sky-100 text-sky-800',
-  cancelado: 'bg-red-100 text-red-700',
-};
+import ContractSignatureProgress from '../../components/ContractSignatureProgress';
+import {
+  contractStatusDisplay,
+  hasPendingSignatures,
+  isAwaitingSignatures,
+  isSignatureNotSent,
+} from '../../utils/contractStatusDisplay';
 
 const saleLabel = (type: string) => {
   const map: Record<string, string> = {
@@ -65,10 +57,16 @@ const FINALIZED_STATUSES: Contract['status'][] = ['ativo', 'concluido'];
 
 const STATUS_FILTER_OPTIONS: { id: StatusFilter; label: string }[] = [
   { id: 'all', label: 'Todos' },
-  { id: 'aguardando_assinatura', label: 'Aguardando assinatura' },
+  { id: 'aguardando_assinatura', label: 'Assinaturas pendentes' },
   { id: 'finalizados', label: 'Finalizados' },
   { id: 'cancelado', label: 'Cancelados' },
 ];
+
+function statusSortRank(c: Contract) {
+  if (isSignatureNotSent(c)) return 0.5;
+  if (isAwaitingSignatures(c)) return 1;
+  return STATUS_SORT_ORDER[c.status];
+}
 
 const STATUS_SORT_ORDER: Record<Contract['status'], number> = {
   rascunho: 0,
@@ -110,7 +108,37 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const [loadingClicksign, setLoadingClicksign] = useState(false);
   const [notifyingClicksign, setNotifyingClicksign] = useState<string | null>(null);
   const [cancellingClicksign, setCancellingClicksign] = useState(false);
+  const [signatureProgressLoading, setSignatureProgressLoading] = useState(false);
+  const [notifyingContractId, setNotifyingContractId] = useState<string | null>(null);
   const preselectedAnimal = initialAnimalId;
+
+  const needsSignatureProgress = (c: Contract) => isAwaitingSignatures(c);
+
+  const refreshSignatureProgress = async (list: Contract[]) => {
+    const ids = list.filter(needsSignatureProgress).map((c) => c.id);
+    if (!ids.length) return;
+    setSignatureProgressLoading(true);
+    try {
+      const { items } = await refreshContractsSignatureProgress(ids, canUpdate);
+      if (!items.length) return;
+      const byId = Object.fromEntries(items.map((i) => [i.contractId, i]));
+      setItems((prev) =>
+        prev.map((c) => {
+          const p = byId[c.id];
+          if (!p) return c;
+          return {
+            ...c,
+            clicksign_signed_count: p.signedCount,
+            clicksign_total_count: p.totalCount,
+          };
+        })
+      );
+    } catch {
+      /* silencioso — cache local ou migration pendente */
+    } finally {
+      setSignatureProgressLoading(false);
+    }
+  };
 
   const clicksignStatusPt = (status?: string | null) => {
     const map: Record<string, string> = {
@@ -126,7 +154,9 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const load = async () => {
     setLoading(true);
     try {
-      setItems(await getContracts(preselectedAnimal ? { animalId: preselectedAnimal } : undefined));
+      const list = await getContracts(preselectedAnimal ? { animalId: preselectedAnimal } : undefined);
+      setItems(list);
+      void refreshSignatureProgress(list);
     } catch (e: any) {
       toastError(e.message || 'Erro ao carregar contratos');
     } finally {
@@ -145,8 +175,25 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
       setClicksignTracking(tracking);
       setDetail((prev) =>
         prev && prev.id === id
-          ? { ...prev, clicksign_status: tracking.status }
+          ? {
+              ...prev,
+              clicksign_status: tracking.status,
+              clicksign_signed_count: tracking.signedCount,
+              clicksign_total_count: tracking.totalCount,
+            }
           : prev
+      );
+      setItems((prev) =>
+        prev.map((c) =>
+          c.id === id
+            ? {
+                ...c,
+                clicksign_status: tracking.status,
+                clicksign_signed_count: tracking.signedCount,
+                clicksign_total_count: tracking.totalCount,
+              }
+            : c
+        )
       );
       if (!silent) success('Status das assinaturas atualizado');
     } catch (e: any) {
@@ -266,6 +313,21 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
     window.open(wa, '_blank', 'noopener,noreferrer');
   };
 
+  const onNotifyFromList = async (contractId: string) => {
+    if (!canUpdate) return;
+    setNotifyingContractId(contractId);
+    try {
+      const res = await notifyClicksign(contractId);
+      success(res.message || 'Lembretes de assinatura reenviados');
+      const target = items.find((c) => c.id === contractId);
+      if (target) await refreshSignatureProgress([target]);
+    } catch (e: any) {
+      toastError(e.message || 'Erro ao reenviar lembretes');
+    } finally {
+      setNotifyingContractId(null);
+    }
+  };
+
   const onNotifyClicksign = async (signerId?: string | null) => {
     if (!detail || !canUpdate) return;
     const key = signerId || 'all';
@@ -371,7 +433,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
         case 'value':
           return cmpNum(a.total_amount, b.total_amount);
         case 'status':
-          return STATUS_SORT_ORDER[a.status] - STATUS_SORT_ORDER[b.status];
+          return statusSortRank(a) - statusSortRank(b);
         default:
           return 0;
       }
@@ -426,7 +488,9 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
           <p className="py-12 text-center text-sm text-brand-olive">Nenhum contrato encontrado</p>
         ) : (
           <ul className="space-y-3">
-            {filtered.map((c) => (
+            {filtered.map((c) => {
+              const display = contractStatusDisplay(c);
+              return (
               <li key={c.id}>
                 <MobileCard onClick={() => openDetail(c.id)}>
                   <div className="flex items-start justify-between gap-2">
@@ -445,24 +509,59 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     </div>
                     <div className="shrink-0 text-right">
                       <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${statusTone[c.status]}`}
+                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${display.tone}`}
                       >
-                        {statusLabel[c.status]}
+                        {display.label}
                       </span>
+                      {needsSignatureProgress(c) && (
+                        <div className="mt-2 flex justify-end">
+                          <ContractSignatureProgress
+                            signedCount={c.clicksign_signed_count}
+                            totalCount={c.clicksign_total_count}
+                            compact
+                            loading={signatureProgressLoading && c.clicksign_total_count == null}
+                          />
+                        </div>
+                      )}
+                      {isSignatureNotSent(c) && (
+                        <p className="mt-1.5 max-w-[9rem] text-[10px] leading-snug text-slate-500">
+                          Envie à Clicksign no detalhe do contrato
+                        </p>
+                      )}
                       <p className="mt-2 text-sm font-semibold text-brand-dark-brown">
                         {money(c.total_amount)}
                       </p>
                     </div>
                   </div>
+                  {canUpdate && hasPendingSignatures(c) && (
+                    <div className="mt-3 border-t border-brand-beige/60 pt-3">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void onNotifyFromList(c.id);
+                        }}
+                        disabled={notifyingContractId === c.id}
+                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-brand-beige bg-white px-3 py-2 text-xs font-medium text-brand-brown transition hover:bg-brand-off-white disabled:opacity-60"
+                      >
+                        {notifyingContractId === c.id ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Mail className="h-3.5 w-3.5" />
+                        )}
+                        Reenviar lembretes de assinatura
+                      </button>
+                    </div>
+                  )}
                 </MobileCard>
               </li>
-            ))}
+            );})}
           </ul>
         )
       ) : (
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
           <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
+            <table className="w-full table-fixed text-left text-sm">
               <thead className="bg-brand-off-white text-brand-olive">
                 <tr>
                   <SortTh
@@ -471,7 +570,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     sortKey={sortKey}
                     sortDir={sortDir}
                     onSort={toggleSort}
-                    className="px-3 sm:px-4"
+                    className="px-2 py-2.5 sm:px-3"
                   />
                   <SortTh
                     label="Tipo"
@@ -479,7 +578,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     sortKey={sortKey}
                     sortDir={sortDir}
                     onSort={toggleSort}
-                    className="hidden md:table-cell"
+                    className="hidden px-2 py-2.5 xl:table-cell"
                   />
                   <SortTh
                     label="Comprador"
@@ -487,7 +586,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     sortKey={sortKey}
                     sortDir={sortDir}
                     onSort={toggleSort}
-                    className="hidden lg:table-cell"
+                    className="hidden px-2 py-2.5 lg:table-cell"
                   />
                   <SortTh
                     label="Valor"
@@ -495,7 +594,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     sortKey={sortKey}
                     sortDir={sortDir}
                     onSort={toggleSort}
-                    className="px-3 sm:px-4"
+                    className="px-2 py-2.5 sm:px-3"
                   />
                   <SortTh
                     label="Status"
@@ -503,9 +602,9 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     sortKey={sortKey}
                     sortDir={sortDir}
                     onSort={toggleSort}
-                    className="px-3 sm:px-4"
+                    className="px-2 py-2.5 sm:px-3"
                   />
-                  <th className="px-2 py-3 font-medium sm:px-4"></th>
+                  <th className="px-1 py-2.5 font-medium sm:px-2" aria-label="Ações" />
                 </tr>
               </thead>
               <tbody>
@@ -516,58 +615,98 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     </td>
                   </tr>
                 )}
-                {filtered.map((c) => (
+                {filtered.map((c) => {
+                  const display = contractStatusDisplay(c, true);
+                  const sale =
+                    saleLabel(c.sale_type) +
+                    (c.share_pct != null && c.sale_type !== 'inteiro' ? ` (${c.share_pct}%)` : '');
+                  return (
                   <tr key={c.id} className="border-t border-brand-beige/60 hover:bg-brand-off-white/70">
-                    <td className="px-3 py-3 font-medium text-brand-dark-brown sm:px-4">
-                      <div className="max-w-[9.5rem] truncate sm:max-w-none">{c.animal_name}</div>
+                    <td className="px-2 py-2.5 font-medium text-brand-dark-brown sm:px-3">
+                      <div className="truncate" title={c.animal_name || ''}>
+                        {c.animal_name}
+                      </div>
                       {c.contract_number && (
-                        <div className="text-xs font-normal text-brand-olive">{c.contract_number}</div>
+                        <div className="truncate text-xs font-normal text-brand-olive">{c.contract_number}</div>
                       )}
-                      <div className="mt-0.5 truncate text-xs font-normal text-brand-olive lg:hidden">
+                      <div className="mt-0.5 truncate text-[11px] font-normal text-brand-olive xl:hidden" title={sale}>
+                        {sale}
+                      </div>
+                      <div className="mt-0.5 truncate text-[11px] font-normal text-brand-olive lg:hidden" title={c.buyer_name || ''}>
                         {c.buyer_name}
                       </div>
                     </td>
-                    <td className="hidden px-4 py-3 text-brand-brown md:table-cell">
-                      {saleLabel(c.sale_type)}
-                      {c.share_pct != null && c.sale_type !== 'inteiro' ? ` (${c.share_pct}%)` : ''}
+                    <td className="hidden truncate px-2 py-2.5 text-brand-brown xl:table-cell" title={sale}>
+                      {sale}
                     </td>
-                    <td className="hidden px-4 py-3 text-brand-brown lg:table-cell">{c.buyer_name}</td>
-                    <td className="whitespace-nowrap px-3 py-3 text-brand-brown sm:px-4">
+                    <td className="hidden truncate px-2 py-2.5 text-brand-brown lg:table-cell" title={c.buyer_name || ''}>
+                      {c.buyer_name}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-2.5 text-brand-brown sm:px-3">
                       {money(c.total_amount)}
                     </td>
-                    <td className="px-3 py-3 sm:px-4">
-                      <span
-                        className={`inline-flex max-w-[7.5rem] rounded-full px-2 py-0.5 text-center text-[11px] font-medium leading-tight sm:max-w-none sm:px-2.5 sm:text-xs ${statusTone[c.status]}`}
-                      >
-                        {statusLabel[c.status]}
-                      </span>
+                    <td className="px-2 py-2.5 sm:px-3">
+                      <div className="flex min-w-0 flex-col gap-1">
+                        <span
+                          className={`inline-flex w-fit max-w-full truncate rounded-full px-2 py-0.5 text-[10px] font-medium leading-tight sm:text-[11px] ${display.tone}`}
+                          title={contractStatusDisplay(c).label}
+                        >
+                          {display.label}
+                        </span>
+                        {needsSignatureProgress(c) && (
+                          <div className="flex min-w-0 flex-wrap items-center gap-1">
+                            <ContractSignatureProgress
+                              variant="table"
+                              signedCount={c.clicksign_signed_count}
+                              totalCount={c.clicksign_total_count}
+                              loading={signatureProgressLoading && c.clicksign_total_count == null}
+                            />
+                            {canUpdate && hasPendingSignatures(c) && (
+                              <button
+                                type="button"
+                                onClick={() => void onNotifyFromList(c.id)}
+                                disabled={notifyingContractId === c.id}
+                                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-brand-brown hover:bg-brand-beige/50 disabled:opacity-60"
+                                title="Reenviar lembretes de assinatura"
+                                aria-label="Reenviar lembretes de assinatura"
+                              >
+                                {notifyingContractId === c.id ? (
+                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Mail className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </td>
-                    <td className="px-2 py-3 text-right sm:px-4">
-                      <div className="inline-flex items-center gap-0.5 sm:gap-1">
+                    <td className="px-1 py-2.5 text-right sm:px-2">
+                      <div className="inline-flex items-center justify-end gap-0.5">
                         <button
                           type="button"
                           onClick={() => openDetail(c.id)}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-brown hover:bg-brand-beige/50"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-brand-brown hover:bg-brand-beige/50"
                           title="Abrir"
+                          aria-label="Abrir"
                         >
                           <FileText className="h-4 w-4" />
-                          <span className="hidden sm:inline">Abrir</span>
                         </button>
                         {canUpdate && c.status !== 'cancelado' && c.status !== 'concluido' && (
                           <button
                             type="button"
                             onClick={() => setEditId(c.id)}
-                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-brown hover:bg-brand-beige/50"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-brand-brown hover:bg-brand-beige/50"
                             title="Editar"
+                            aria-label="Editar"
                           >
                             <Pencil className="h-4 w-4" />
-                            <span className="hidden sm:inline">Editar</span>
                           </button>
                         )}
                       </div>
                     </td>
                   </tr>
-                ))}
+                );})}
               </tbody>
             </table>
           </div>
@@ -625,9 +764,9 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                 label="Status"
                 value={
                   <span
-                    className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${statusTone[detail.status]}`}
+                    className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${contractStatusDisplay(detail).tone}`}
                   >
-                    {statusLabel[detail.status]}
+                    {contractStatusDisplay(detail).label}
                   </span>
                 }
               />

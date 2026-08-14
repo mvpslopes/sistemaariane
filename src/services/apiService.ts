@@ -374,6 +374,8 @@ export interface Contract {
   clicksign_document_id?: string | null;
   clicksign_status?: string | null;
   clicksign_sent_at?: string | null;
+  clicksign_signed_count?: number | null;
+  clicksign_total_count?: number | null;
   total_amount: number;
   payment_method: PaymentMethod;
   installments: number;
@@ -1016,6 +1018,20 @@ export async function getContracts(filters?: { animalId?: string; status?: strin
   if (filters?.status) params.set('status', filters.status);
   const qs = params.toString() ? `?${params}` : '';
   return request<Contract[]>(`/contracts${qs}`);
+}
+
+export interface ContractSignatureProgressItem {
+  contractId: string;
+  signedCount: number;
+  totalCount: number;
+  pendingCount: number;
+}
+
+export async function refreshContractsSignatureProgress(ids: string[], refresh = true) {
+  return request<{ items: ContractSignatureProgressItem[] }>('/contracts/clicksign-progress', {
+    method: 'POST',
+    body: JSON.stringify({ ids, refresh }),
+  });
 }
 
 export async function getContract(id: string) {

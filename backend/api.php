@@ -1606,6 +1606,22 @@ function clicksign_fetch_status(array $config, array $contract): array {
     ];
 }
 
+function clicksign_persist_progress(PDO $pdo, int $contractId, int $signedCount, int $totalCount, ?string $status = null): void {
+    try {
+        if ($status !== null) {
+            $pdo->prepare(
+                'UPDATE contracts SET clicksign_signed_count=?, clicksign_total_count=?, clicksign_status=? WHERE id=?'
+            )->execute([$signedCount, $totalCount, $status, $contractId]);
+        } else {
+            $pdo->prepare(
+                'UPDATE contracts SET clicksign_signed_count=?, clicksign_total_count=? WHERE id=?'
+            )->execute([$signedCount, $totalCount, $contractId]);
+        }
+    } catch (Throwable $e) {
+        // colunas ainda não migradas
+    }
+}
+
 function clicksign_get_signed_file_url(array $config, array $contract): ?string {
     $envelopeId = trim((string)($contract['clicksign_envelope_id'] ?? ''));
     $documentId = trim((string)($contract['clicksign_document_id'] ?? ''));
@@ -1691,6 +1707,8 @@ function map_contract_row(array $r): array {
         'clicksign_document_id' => $r['clicksign_document_id'] ?? null,
         'clicksign_status' => $r['clicksign_status'] ?? null,
         'clicksign_sent_at' => $r['clicksign_sent_at'] ?? null,
+        'clicksign_signed_count' => isset($r['clicksign_signed_count']) ? (int)$r['clicksign_signed_count'] : null,
+        'clicksign_total_count' => isset($r['clicksign_total_count']) ? (int)$r['clicksign_total_count'] : null,
         'total_amount' => (float)$r['total_amount'],
         'payment_method' => $r['payment_method'],
         'installments' => (int)$r['installments'],
@@ -3483,6 +3501,70 @@ if ($resource === 'contracts') {
         json_out(array_map('map_contract_row', $stmt->fetchAll()));
     }
 
+    if ($id === 'clicksign-progress' && $method === 'POST') {
+        $auth = require_auth($config['jwt_secret']);
+        $idsRaw = is_array($body['ids'] ?? null) ? $body['ids'] : [];
+        $refresh = !empty($body['refresh']) && in_array($auth['role'], ['root', 'admin', 'user'], true);
+        $ids = [];
+        foreach (array_slice($idsRaw, 0, 15) as $rawId) {
+            $n = (int)$rawId;
+            if ($n > 0) $ids[] = $n;
+        }
+        if (!$ids) {
+            json_out(['items' => []]);
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $sql = $contractSelect . " AND c.id IN ($placeholders)";
+        $params = $ids;
+        if ($auth['role'] === 'cliente') {
+            if (!$auth['clientId']) json_out(['items' => []]);
+            $sql .= ' AND ' . client_contract_access_sql();
+            bind_client_contract_access($params, (int)$auth['clientId']);
+        }
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll();
+        $items = [];
+
+        foreach ($rows as $r) {
+            $contractId = (int)$r['id'];
+            $mapped = map_contract_row($r);
+            if (empty($mapped['clicksign_envelope_id'])) continue;
+
+            $signed = (int)($r['clicksign_signed_count'] ?? 0);
+            $total = (int)($r['clicksign_total_count'] ?? 0);
+            $shouldRefresh = $refresh && ($mapped['status'] ?? '') === 'aguardando_assinatura';
+
+            if ($shouldRefresh) {
+                try {
+                    $statusInfo = clicksign_fetch_status($config, $mapped);
+                    $signed = (int)($statusInfo['signedCount'] ?? 0);
+                    $total = (int)($statusInfo['totalCount'] ?? 0);
+                    clicksign_persist_progress($pdo, $contractId, $signed, $total, $statusInfo['status'] ?? null);
+                    if (($statusInfo['status'] ?? '') === 'closed' && ($r['status'] ?? '') === 'aguardando_assinatura') {
+                        $pdo->prepare("UPDATE contracts SET status='ativo' WHERE id=?")->execute([$contractId]);
+                    }
+                } catch (Throwable $e) {
+                    // mantém cache local
+                }
+            } elseif ($total <= 0) {
+                $total = 4;
+            }
+
+            if ($total > 0) {
+                $items[] = [
+                    'contractId' => (string)$contractId,
+                    'signedCount' => $signed,
+                    'totalCount' => $total,
+                    'pendingCount' => max(0, $total - $signed),
+                ];
+            }
+        }
+
+        json_out(['items' => $items]);
+    }
+
     if ($method === 'GET' && $id && !$action) {
         $auth = require_auth($config['jwt_secret']);
         $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
@@ -3886,6 +3968,13 @@ if ($resource === 'contracts') {
             }
             $pdo->prepare('UPDATE contracts SET clicksign_status=? WHERE id=?')
                 ->execute([$statusInfo['status'], (int)$id]);
+            clicksign_persist_progress(
+                $pdo,
+                (int)$id,
+                (int)($statusInfo['signedCount'] ?? 0),
+                (int)($statusInfo['totalCount'] ?? 0),
+                $statusInfo['status'] ?? null
+            );
             if ($statusInfo['status'] === 'closed' && ($r['status'] ?? '') === 'aguardando_assinatura') {
                 $pdo->prepare("UPDATE contracts SET status='ativo' WHERE id=?")->execute([(int)$id]);
             }
@@ -3921,7 +4010,7 @@ if ($resource === 'contracts') {
             }
             $newStatus = ($r['status'] ?? '') === 'aguardando_assinatura' ? 'ativo' : $r['status'];
             $pdo->prepare(
-                'UPDATE contracts SET clicksign_envelope_id=NULL, clicksign_document_id=NULL, clicksign_status=NULL, clicksign_sent_at=NULL, status=? WHERE id=?'
+                'UPDATE contracts SET clicksign_envelope_id=NULL, clicksign_document_id=NULL, clicksign_status=NULL, clicksign_sent_at=NULL, clicksign_signed_count=NULL, clicksign_total_count=NULL, status=? WHERE id=?'
             )->execute([$newStatus, (int)$id]);
             audit_log(
                 $pdo,
@@ -3992,7 +4081,7 @@ if ($resource === 'contracts') {
         try {
             $sent = clicksign_send_contract($config, map_contract_row($r), $pdf);
             $pdo->prepare(
-                'UPDATE contracts SET clicksign_envelope_id=?, clicksign_document_id=?, clicksign_status=?, clicksign_sent_at=NOW(), status=? WHERE id=?'
+                'UPDATE contracts SET clicksign_envelope_id=?, clicksign_document_id=?, clicksign_status=?, clicksign_sent_at=NOW(), clicksign_signed_count=0, clicksign_total_count=4, status=? WHERE id=?'
             )->execute([
                 $sent['envelopeId'],
                 $sent['documentId'],

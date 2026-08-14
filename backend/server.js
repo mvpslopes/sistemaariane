@@ -1395,6 +1395,10 @@ function mapContract(r) {
     clicksign_document_id: r.clicksign_document_id || null,
     clicksign_status: r.clicksign_status || null,
     clicksign_sent_at: r.clicksign_sent_at || null,
+    clicksign_signed_count:
+      r.clicksign_signed_count != null ? Number(r.clicksign_signed_count) : null,
+    clicksign_total_count:
+      r.clicksign_total_count != null ? Number(r.clicksign_total_count) : null,
     total_amount: Number(r.total_amount),
     payment_method: r.payment_method,
     installments: Number(r.installments),
@@ -2858,6 +2862,86 @@ app.get('/api/contracts', auth(), async (req, res) => {
   }
 });
 
+async function clicksignPersistProgress(contractId, signedCount, totalCount, status = null) {
+  try {
+    if (status != null) {
+      await pool.execute(
+        'UPDATE contracts SET clicksign_signed_count=?, clicksign_total_count=?, clicksign_status=? WHERE id=?',
+        [signedCount, totalCount, status, contractId]
+      );
+    } else {
+      await pool.execute(
+        'UPDATE contracts SET clicksign_signed_count=?, clicksign_total_count=? WHERE id=?',
+        [signedCount, totalCount, contractId]
+      );
+    }
+  } catch {
+    /* colunas ainda não migradas */
+  }
+}
+
+app.post('/api/contracts/clicksign-progress', auth(), async (req, res) => {
+  try {
+    const idsRaw = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const refresh = !!req.body?.refresh && ['root', 'admin', 'user'].includes(req.user.role);
+    const ids = idsRaw.map((v) => Number(v)).filter((n) => n > 0).slice(0, 15);
+    if (!ids.length) return res.json({ items: [] });
+
+    const placeholders = ids.map(() => '?').join(',');
+    let sql = `${contractSelect} AND c.id IN (${placeholders})`;
+    const params = [...ids];
+    if (req.user.role === 'cliente') {
+      if (!req.user.clientId) return res.json({ items: [] });
+      sql += ` AND ${CLIENT_CONTRACT_ACCESS_SQL}`;
+      params.push(...bindClientContractAccessParams(req.user.clientId));
+    }
+    const [rows] = await pool.execute(sql, params);
+    const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    const publicOrigin = host ? `${proto}://${host}` : null;
+    const items = [];
+
+    for (const r of rows) {
+      const contract = mapContract(r);
+      if (!contract.clicksign_envelope_id) continue;
+      let signed = Number(r.clicksign_signed_count || 0);
+      let total = Number(r.clicksign_total_count || 0);
+      const shouldRefresh = refresh && contract.status === 'aguardando_assinatura';
+
+      if (shouldRefresh) {
+        try {
+          const statusInfo = await clicksignFetchStatus(contract, publicOrigin);
+          signed = Number(statusInfo.signedCount || 0);
+          total = Number(statusInfo.totalCount || 0);
+          await clicksignPersistProgress(Number(r.id), signed, total, statusInfo.status);
+          await pool.execute('UPDATE contracts SET clicksign_status=? WHERE id=?', [statusInfo.status, r.id]);
+          if (statusInfo.status === 'closed' && contract.status === 'aguardando_assinatura') {
+            await pool.execute("UPDATE contracts SET status='ativo' WHERE id=?", [r.id]);
+          }
+        } catch (e) {
+          console.error('clicksign-progress refresh:', e.message);
+        }
+      } else if (total <= 0) {
+        total = 4;
+      }
+
+      if (total > 0) {
+        items.push({
+          contractId: String(r.id),
+          signedCount: signed,
+          totalCount: total,
+          pendingCount: Math.max(0, total - signed),
+        });
+      }
+    }
+
+    res.json({ items });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao carregar progresso de assinaturas' });
+  }
+});
+
 app.get('/api/contracts/:id', auth(), async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -3713,6 +3797,7 @@ app.get('/api/contracts/:id/clicksign', auth(['root', 'admin', 'user']), async (
       }
     }
     await pool.execute('UPDATE contracts SET clicksign_status=? WHERE id=?', [statusInfo.status, id]);
+    await clicksignPersistProgress(id, statusInfo.signedCount || 0, statusInfo.totalCount || 0, statusInfo.status);
     if (statusInfo.status === 'closed' && contract.status === 'aguardando_assinatura') {
       await pool.execute("UPDATE contracts SET status='ativo' WHERE id=?", [id]);
     }
@@ -3767,7 +3852,7 @@ app.post('/api/contracts/:id/clicksign/cancel', auth(['root', 'admin', 'user']),
     const newStatus = contract.status === 'aguardando_assinatura' ? 'ativo' : contract.status;
     await pool.execute(
       `UPDATE contracts
-       SET clicksign_envelope_id=NULL, clicksign_document_id=NULL, clicksign_status=NULL, clicksign_sent_at=NULL, status=?
+       SET clicksign_envelope_id=NULL, clicksign_document_id=NULL, clicksign_status=NULL, clicksign_sent_at=NULL, clicksign_signed_count=NULL, clicksign_total_count=NULL, status=?
        WHERE id=?`,
       [newStatus, id]
     );
@@ -3819,7 +3904,7 @@ app.post('/api/contracts/:id/clicksign', auth(['root', 'admin', 'user']), async 
     const sent = await clicksignSendContract(contract, req.body.pdfBase64 || '');
     await pool.execute(
       `UPDATE contracts
-       SET clicksign_envelope_id=?, clicksign_document_id=?, clicksign_status=?, clicksign_sent_at=NOW(), status='aguardando_assinatura'
+       SET clicksign_envelope_id=?, clicksign_document_id=?, clicksign_status=?, clicksign_sent_at=NOW(), clicksign_signed_count=0, clicksign_total_count=4, status='aguardando_assinatura'
        WHERE id=?`,
       [sent.envelopeId, sent.documentId, sent.status, id]
     );
