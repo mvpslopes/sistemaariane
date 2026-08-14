@@ -562,6 +562,14 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
         <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
           <div className="overflow-x-auto">
             <table className="w-full table-fixed text-left text-sm">
+              <colgroup>
+                <col className="w-[36%]" />
+                <col />
+                <col />
+                <col className="w-[11%]" />
+                <col className="w-[17%]" />
+                <col className="w-24" />
+              </colgroup>
               <thead className="bg-brand-off-white text-brand-olive">
                 <tr>
                   <SortTh
@@ -570,7 +578,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     sortKey={sortKey}
                     sortDir={sortDir}
                     onSort={toggleSort}
-                    className="px-2 py-2.5 sm:px-3"
+                    className="w-[36%] min-w-[13rem] px-2 py-2.5 sm:px-3"
                   />
                   <SortTh
                     label="Tipo"
@@ -604,7 +612,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     onSort={toggleSort}
                     className="px-2 py-2.5 sm:px-3"
                   />
-                  <th className="px-1 py-2.5 font-medium sm:px-2" aria-label="Ações" />
+                  <th className="w-24 min-w-24 px-2 py-2.5 pr-3 font-medium" aria-label="Ações" />
                 </tr>
               </thead>
               <tbody>
@@ -622,17 +630,17 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     (c.share_pct != null && c.sale_type !== 'inteiro' ? ` (${c.share_pct}%)` : '');
                   return (
                   <tr key={c.id} className="border-t border-brand-beige/60 hover:bg-brand-off-white/70">
-                    <td className="px-2 py-2.5 font-medium text-brand-dark-brown sm:px-3">
-                      <div className="truncate" title={c.animal_name || ''}>
+                    <td className="w-[36%] min-w-[13rem] px-2 py-2.5 font-medium text-brand-dark-brown sm:px-3">
+                      <div className="line-clamp-2 break-words leading-snug" title={c.animal_name || ''}>
                         {c.animal_name}
                       </div>
                       {c.contract_number && (
-                        <div className="truncate text-xs font-normal text-brand-olive">{c.contract_number}</div>
+                        <div className="mt-0.5 break-all text-xs font-normal text-brand-olive">{c.contract_number}</div>
                       )}
-                      <div className="mt-0.5 truncate text-[11px] font-normal text-brand-olive xl:hidden" title={sale}>
+                      <div className="mt-0.5 line-clamp-2 break-words text-[11px] font-normal leading-snug text-brand-olive xl:hidden" title={sale}>
                         {sale}
                       </div>
-                      <div className="mt-0.5 truncate text-[11px] font-normal text-brand-olive lg:hidden" title={c.buyer_name || ''}>
+                      <div className="mt-0.5 line-clamp-2 break-words text-[11px] font-normal leading-snug text-brand-olive lg:hidden" title={c.buyer_name || ''}>
                         {c.buyer_name}
                       </div>
                     </td>
@@ -681,7 +689,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                         )}
                       </div>
                     </td>
-                    <td className="px-1 py-2.5 text-right sm:px-2">
+                    <td className="w-24 min-w-24 whitespace-nowrap px-2 py-2.5 pr-3 text-right">
                       <div className="inline-flex items-center justify-end gap-0.5">
                         <button
                           type="button"
