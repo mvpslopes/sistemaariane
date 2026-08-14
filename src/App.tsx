@@ -16,6 +16,7 @@ import AnimalDetailPage from './pages/app/AnimalDetailPage';
 import ReproductionPage from './pages/app/ReproductionPage';
 import DailyReportsPage from './pages/app/DailyReportsPage';
 import DailyReportFormPage from './pages/app/DailyReportFormPage';
+import ChatPage from './pages/app/ChatPage';
 import ChangePassword from './pages/ChangePassword';
 import ProfilePage from './pages/app/ProfilePage';
 import SessionWarning from './components/SessionWarning';
@@ -87,6 +88,8 @@ function AppContent() {
           }
         >
           <Route index element={<AppDashboard />} />
+          <Route path="mensagens" element={<ChatPage />} />
+          <Route path="mensagens/:threadId" element={<ChatPage />} />
           <Route
             path="pessoas"
             element={

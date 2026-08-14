@@ -1415,3 +1415,71 @@ export async function askAssistant(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+export interface ChatUser {
+  id: string;
+  name: string;
+  username: string;
+  role: Role;
+  avatarUrl?: string | null;
+}
+
+export interface ChatThread {
+  id: string;
+  peer: ChatUser;
+  lastMessage: string | null;
+  lastMessageAt: string | null;
+  unreadCount: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  threadId: string;
+  senderUserId: string;
+  senderName: string;
+  body: string;
+  createdAt: string;
+  mine: boolean;
+}
+
+export async function getChatContacts(q?: string) {
+  const qs = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
+  return request<{ items: ChatUser[] }>(`/chat/contacts${qs}`);
+}
+
+export async function getChatUnreadCount() {
+  return request<{ count: number }>('/chat/unread-count');
+}
+
+export async function getChatThreads() {
+  return request<{ items: ChatThread[] }>('/chat/threads');
+}
+
+export async function openChatThread(userId: string) {
+  return request<{ thread: ChatThread }>('/chat/threads', {
+    method: 'POST',
+    body: JSON.stringify({ userId }),
+  });
+}
+
+export async function getChatMessages(threadId: string, before?: string) {
+  const params = new URLSearchParams();
+  if (before) params.set('before', before);
+  const qs = params.toString() ? `?${params}` : '';
+  return request<{ items: ChatMessage[]; peer: ChatUser | null }>(
+    `/chat/threads/${threadId}/messages${qs}`
+  );
+}
+
+export async function sendChatMessage(threadId: string, body: string) {
+  return request<{ message: ChatMessage }>(`/chat/threads/${threadId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ body }),
+  });
+}
+
+export async function markChatThreadRead(threadId: string) {
+  return request<{ success: boolean }>(`/chat/threads/${threadId}/read`, {
+    method: 'PUT',
+  });
+}

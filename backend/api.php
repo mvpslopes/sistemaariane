@@ -5032,7 +5032,7 @@ function daily_report_can_manage_all(array $auth): bool {
 function groq_assistant_chat(array $config, string $systemPrompt, array $messages): string {
     $key = trim((string)($config['groq_api_key'] ?? ''));
     if ($key === '') {
-        json_out(['error' => 'Assistente IA não configurado no servidor (groq_api_key)'], 503);
+        throw new RuntimeException('Assistente IA não configurado no servidor (groq_api_key)');
     }
     $model = trim((string)($config['groq_model'] ?? 'llama-3.3-70b-versatile')) ?: 'llama-3.3-70b-versatile';
 
@@ -5055,20 +5055,39 @@ function groq_assistant_chat(array $config, string $systemPrompt, array $message
 
     $raw = @file_get_contents('https://api.groq.com/openai/v1/chat/completions', false, $ctx);
     if ($raw === false) {
-        json_out(['error' => 'Falha ao contactar o serviço de IA'], 502);
+        throw new RuntimeException('Falha ao contactar o serviço de IA');
     }
     $data = json_decode($raw, true);
     if (!is_array($data)) {
-        json_out(['error' => 'Resposta inválida do serviço de IA'], 502);
+        throw new RuntimeException('Resposta inválida do serviço de IA');
     }
     if (!empty($data['error']['message'])) {
-        json_out(['error' => 'IA: ' . $data['error']['message']], 502);
+        throw new RuntimeException('IA: ' . $data['error']['message']);
     }
     $reply = trim((string)($data['choices'][0]['message']['content'] ?? ''));
     if ($reply === '') {
-        json_out(['error' => 'Resposta vazia do assistente'], 502);
+        throw new RuntimeException('Resposta vazia do assistente');
     }
     return $reply;
+}
+
+function audit_ai_assistant_query(PDO $pdo, array $auth, string $question, bool $success, ?string $error = null): void {
+    $preview = mb_strlen($question) > 120 ? mb_substr($question, 0, 117) . '...' : $question;
+    $summary = ($success ? 'Assistente IA: ' : 'Assistente IA (falhou): ') . $preview;
+    $meta = ['pergunta' => mb_substr($question, 0, 500)];
+    if ($error !== null && $error !== '') {
+        $meta['erro'] = $error;
+    }
+    audit_log(
+        $pdo,
+        $auth,
+        'assistant_query',
+        'ai_assistant',
+        (string)($auth['id'] ?? ''),
+        $summary,
+        $success,
+        $meta
+    );
 }
 
 if ($resource === 'ai-assistant' && $method === 'POST') {
@@ -5108,8 +5127,18 @@ if ($resource === 'ai-assistant' && $method === 'POST') {
         $context !== '' ? $context : '(sem contexto adicional)',
     ]);
 
-    $reply = groq_assistant_chat($config, $system, $messages);
-    json_out(['reply' => $reply]);
+    $userQuestion = end($messages)['content'];
+
+    try {
+        $reply = groq_assistant_chat($config, $system, $messages);
+        audit_ai_assistant_query($pdo, $auth, $userQuestion, true);
+        json_out(['reply' => $reply]);
+    } catch (Throwable $e) {
+        $msg = $e->getMessage();
+        $status = str_contains($msg, 'não configurado') ? 503 : 502;
+        audit_ai_assistant_query($pdo, $auth, $userQuestion, false, $msg);
+        json_out(['error' => $msg], $status);
+    }
 }
 
 if ($resource === 'daily-reports') {
@@ -5292,6 +5321,261 @@ if ($resource === 'daily-reports') {
             json_out(['error' => 'Erro ao excluir registro'], 500);
         }
     }
+}
+
+function chat_role_label(string $role): string {
+    return match ($role) {
+        'root' => 'Root',
+        'admin' => 'Admin',
+        'user' => 'Operador',
+        'cliente' => 'Cliente',
+        default => $role,
+    };
+}
+
+function chat_can_message(array $auth, array $target): bool {
+    if ((int)($auth['id'] ?? 0) === (int)($target['id'] ?? 0)) {
+        return false;
+    }
+    if (empty($target['active'])) {
+        return false;
+    }
+    if (in_array($auth['role'] ?? '', ['root', 'admin', 'user'], true)) {
+        return true;
+    }
+    if (($auth['role'] ?? '') === 'cliente') {
+        return in_array($target['role'] ?? '', ['root', 'admin', 'user'], true);
+    }
+    return false;
+}
+
+function chat_require_participant(PDO $pdo, int $threadId, int $userId): void {
+    $stmt = $pdo->prepare('SELECT 1 FROM chat_participants WHERE thread_id = ? AND user_id = ? LIMIT 1');
+    $stmt->execute([$threadId, $userId]);
+    if (!$stmt->fetch()) {
+        json_out(['error' => 'Conversa não encontrada'], 404);
+    }
+}
+
+function chat_dm_key(int $a, int $b): string {
+    return min($a, $b) . '_' . max($a, $b);
+}
+
+function chat_map_user_row(array $r): array {
+    return [
+        'id' => (string)$r['id'],
+        'name' => $r['name'],
+        'username' => $r['username'],
+        'role' => $r['role'],
+        'avatarUrl' => $r['avatar_url'] ?? null,
+    ];
+}
+
+function chat_other_participant(PDO $pdo, int $threadId, int $userId): ?array {
+    $stmt = $pdo->prepare(
+        'SELECT u.id, u.name, u.username, u.role, u.avatar_url
+         FROM chat_participants cp
+         INNER JOIN users u ON u.id = cp.user_id
+         WHERE cp.thread_id = ? AND cp.user_id != ?
+         LIMIT 1'
+    );
+    $stmt->execute([$threadId, $userId]);
+    $row = $stmt->fetch();
+    return $row ? chat_map_user_row($row) : null;
+}
+
+function chat_map_message(array $r, int $viewerId): array {
+    return [
+        'id' => (string)$r['id'],
+        'threadId' => (string)$r['thread_id'],
+        'senderUserId' => (string)$r['sender_user_id'],
+        'senderName' => $r['sender_name'] ?? '',
+        'body' => $r['body'],
+        'createdAt' => $r['created_at'],
+        'mine' => (int)$r['sender_user_id'] === $viewerId,
+    ];
+}
+
+function chat_find_or_create_thread(PDO $pdo, int $userId, int $otherUserId): int {
+    $dmKey = chat_dm_key($userId, $otherUserId);
+    $stmt = $pdo->prepare('SELECT id FROM chat_threads WHERE dm_key = ? LIMIT 1');
+    $stmt->execute([$dmKey]);
+    $existing = $stmt->fetch();
+    if ($existing) {
+        return (int)$existing['id'];
+    }
+
+    $pdo->prepare('INSERT INTO chat_threads (thread_type, dm_key) VALUES (\'direct\', ?)')->execute([$dmKey]);
+    $threadId = (int)$pdo->lastInsertId();
+    $ins = $pdo->prepare('INSERT INTO chat_participants (thread_id, user_id) VALUES (?, ?)');
+    $ins->execute([$threadId, $userId]);
+    $ins->execute([$threadId, $otherUserId]);
+    return $threadId;
+}
+
+if ($resource === 'chat') {
+    $auth = require_auth($config['jwt_secret']);
+    $authId = (int)$auth['id'];
+
+    try {
+        if ($id === 'contacts' && $method === 'GET') {
+            $q = trim($_GET['q'] ?? '');
+            $sql = 'SELECT id, username, name, avatar_url, role, active FROM users WHERE active = 1 AND id != ?';
+            $params = [$authId];
+            if ($q !== '') {
+                $sql .= ' AND (name LIKE ? OR username LIKE ?)';
+                $like = "%$q%";
+                array_push($params, $like, $like);
+            }
+            $sql .= ' ORDER BY name ASC LIMIT 200';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            $items = [];
+            foreach ($stmt->fetchAll() as $row) {
+                if (!chat_can_message($auth, $row)) {
+                    continue;
+                }
+                $items[] = chat_map_user_row($row);
+            }
+            json_out(['items' => $items]);
+        }
+
+        if ($id === 'unread-count' && $method === 'GET') {
+            $stmt = $pdo->prepare(
+                'SELECT COUNT(*) AS total
+                 FROM chat_messages cm
+                 INNER JOIN chat_participants cp ON cp.thread_id = cm.thread_id AND cp.user_id = ?
+                 WHERE cm.sender_user_id != ?
+                   AND cm.created_at > COALESCE(cp.last_read_at, \'1970-01-01 00:00:00\')'
+            );
+            $stmt->execute([$authId, $authId]);
+            json_out(['count' => (int)$stmt->fetch()['total']]);
+        }
+
+        if ($id === 'threads' && $method === 'GET' && !$action) {
+            $stmt = $pdo->prepare(
+                'SELECT t.id, t.last_message_at,
+                        (SELECT body FROM chat_messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_body,
+                        (SELECT COUNT(*) FROM chat_messages cm
+                         WHERE cm.thread_id = t.id AND cm.sender_user_id != ?
+                           AND cm.created_at > COALESCE(cp.last_read_at, \'1970-01-01 00:00:00\')) AS unread_count
+                 FROM chat_threads t
+                 INNER JOIN chat_participants cp ON cp.thread_id = t.id AND cp.user_id = ?
+                 ORDER BY COALESCE(t.last_message_at, t.created_at) DESC
+                 LIMIT 100'
+            );
+            $stmt->execute([$authId, $authId]);
+            $items = [];
+            foreach ($stmt->fetchAll() as $row) {
+                $threadId = (int)$row['id'];
+                $peer = chat_other_participant($pdo, $threadId, $authId);
+                if (!$peer) {
+                    continue;
+                }
+                $items[] = [
+                    'id' => (string)$threadId,
+                    'peer' => $peer,
+                    'lastMessage' => $row['last_body'] ? (string)$row['last_body'] : null,
+                    'lastMessageAt' => $row['last_message_at'],
+                    'unreadCount' => (int)$row['unread_count'],
+                ];
+            }
+            json_out(['items' => $items]);
+        }
+
+        if ($id === 'threads' && $method === 'POST' && !$action) {
+            $otherId = (int)($body['userId'] ?? 0);
+            if ($otherId <= 0) {
+                json_out(['error' => 'Informe o usuário'], 400);
+            }
+            $stmt = $pdo->prepare('SELECT id, username, name, avatar_url, role, active FROM users WHERE id = ? LIMIT 1');
+            $stmt->execute([$otherId]);
+            $target = $stmt->fetch();
+            if (!$target) {
+                json_out(['error' => 'Usuário não encontrado'], 404);
+            }
+            if (!chat_can_message($auth, $target)) {
+                json_out(['error' => 'Sem permissão para conversar com este usuário'], 403);
+            }
+            $threadId = chat_find_or_create_thread($pdo, $authId, $otherId);
+            json_out([
+                'thread' => [
+                    'id' => (string)$threadId,
+                    'peer' => chat_map_user_row($target),
+                    'lastMessage' => null,
+                    'lastMessageAt' => null,
+                    'unreadCount' => 0,
+                ],
+            ]);
+        }
+
+        if ($id === 'threads' && $action && is_numeric($action) && $subId === 'messages' && $method === 'GET') {
+            $threadId = (int)$action;
+            chat_require_participant($pdo, $threadId, $authId);
+            $limit = min(100, max(1, (int)($_GET['limit'] ?? 50)));
+            $before = trim($_GET['before'] ?? '');
+            $sql = 'SELECT cm.*, u.name AS sender_name
+                    FROM chat_messages cm
+                    INNER JOIN users u ON u.id = cm.sender_user_id
+                    WHERE cm.thread_id = ?';
+            $params = [$threadId];
+            if ($before !== '' && is_numeric($before)) {
+                $sql .= ' AND cm.id < ?';
+                $params[] = (int)$before;
+            }
+            $sql .= ' ORDER BY cm.created_at DESC LIMIT ' . $limit;
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            $rows = array_reverse($stmt->fetchAll());
+            json_out([
+                'items' => array_map(fn($r) => chat_map_message($r, $authId), $rows),
+                'peer' => chat_other_participant($pdo, $threadId, $authId),
+            ]);
+        }
+
+        if ($id === 'threads' && $action && is_numeric($action) && $subId === 'messages' && $method === 'POST') {
+            $threadId = (int)$action;
+            chat_require_participant($pdo, $threadId, $authId);
+            $text = trim((string)($body['body'] ?? ''));
+            if ($text === '') {
+                json_out(['error' => 'Mensagem vazia'], 400);
+            }
+            if (mb_strlen($text) > 4000) {
+                $text = mb_substr($text, 0, 4000);
+            }
+            $pdo->prepare(
+                'INSERT INTO chat_messages (thread_id, sender_user_id, body) VALUES (?, ?, ?)'
+            )->execute([$threadId, $authId, $text]);
+            $msgId = (int)$pdo->lastInsertId();
+            $now = (new DateTime('now', new DateTimeZone('America/Sao_Paulo')))->format('Y-m-d H:i:s');
+            $pdo->prepare('UPDATE chat_threads SET last_message_at = ? WHERE id = ?')->execute([$now, $threadId]);
+            $pdo->prepare('UPDATE chat_participants SET last_read_at = ? WHERE thread_id = ? AND user_id = ?')
+                ->execute([$now, $threadId, $authId]);
+
+            $preview = mb_strlen($text) > 120 ? mb_substr($text, 0, 117) . '...' : $text;
+            audit_log($pdo, $auth, 'create', 'chat', (string)$threadId, 'Mensagem enviada: ' . $preview);
+
+            $stmt = $pdo->prepare(
+                'SELECT cm.*, u.name AS sender_name FROM chat_messages cm
+                 INNER JOIN users u ON u.id = cm.sender_user_id WHERE cm.id = ? LIMIT 1'
+            );
+            $stmt->execute([$msgId]);
+            json_out(['message' => chat_map_message($stmt->fetch(), $authId)]);
+        }
+
+        if ($id === 'threads' && $action && is_numeric($action) && $subId === 'read' && $method === 'PUT') {
+            $threadId = (int)$action;
+            chat_require_participant($pdo, $threadId, $authId);
+            $now = (new DateTime('now', new DateTimeZone('America/Sao_Paulo')))->format('Y-m-d H:i:s');
+            $pdo->prepare('UPDATE chat_participants SET last_read_at = ? WHERE thread_id = ? AND user_id = ?')
+                ->execute([$now, $threadId, $authId]);
+            json_out(['success' => true]);
+        }
+    } catch (Throwable $e) {
+        json_out(['error' => 'Chat indisponível — rode database/migration-chat.sql'], 500);
+    }
+
+    json_out(['error' => 'Rota de chat inválida'], 404);
 }
 
 if ($resource === 'breeding-coverings') {

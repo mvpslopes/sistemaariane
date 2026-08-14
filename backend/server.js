@@ -5253,10 +5253,300 @@ app.post('/api/ai-assistant', auth(), async (req, res) => {
     ].join('\n');
 
     const reply = await groqAssistantChat(system, messages);
+    const userQuestion = messages[messages.length - 1].content;
+    const preview =
+      userQuestion.length > 120 ? `${userQuestion.slice(0, 117)}...` : userQuestion;
+    await auditLog(
+      req,
+      req.user,
+      'assistant_query',
+      'ai_assistant',
+      String(req.user?.id || ''),
+      `Assistente IA: ${preview}`,
+      true,
+      { pergunta: userQuestion.slice(0, 500) }
+    );
     res.json({ reply });
   } catch (error) {
     console.error(error);
+    const userQuestion = String(
+      (Array.isArray(req.body?.messages) ? req.body.messages : [])
+        .filter((m) => m?.role === 'user')
+        .pop()?.content || ''
+    ).trim();
+    if (userQuestion && req.user) {
+      const preview =
+        userQuestion.length > 120 ? `${userQuestion.slice(0, 117)}...` : userQuestion;
+      await auditLog(
+        req,
+        req.user,
+        'assistant_query',
+        'ai_assistant',
+        String(req.user.id),
+        `Assistente IA (falhou): ${preview}`,
+        false,
+        { pergunta: userQuestion.slice(0, 500), erro: error.message || 'Erro no assistente' }
+      );
+    }
     res.status(error.status || 500).json({ error: error.message || 'Erro no assistente' });
+  }
+});
+
+function chatCanMessage(auth, target) {
+  if (Number(auth?.id) === Number(target?.id)) return false;
+  if (!target?.active) return false;
+  if (['root', 'admin', 'user'].includes(auth?.role)) return true;
+  if (auth?.role === 'cliente') return ['root', 'admin', 'user'].includes(target?.role);
+  return false;
+}
+
+function chatMapUser(r) {
+  return {
+    id: String(r.id),
+    name: r.name,
+    username: r.username,
+    role: r.role,
+    avatarUrl: r.avatar_url || null,
+  };
+}
+
+function chatMapMessage(r, viewerId) {
+  return {
+    id: String(r.id),
+    threadId: String(r.thread_id),
+    senderUserId: String(r.sender_user_id),
+    senderName: r.sender_name || '',
+    body: r.body,
+    createdAt: r.created_at,
+    mine: Number(r.sender_user_id) === viewerId,
+  };
+}
+
+function chatDmKey(a, b) {
+  const x = Math.min(a, b);
+  const y = Math.max(a, b);
+  return `${x}_${y}`;
+}
+
+async function chatRequireParticipant(threadId, userId) {
+  const [rows] = await pool.execute(
+    'SELECT 1 FROM chat_participants WHERE thread_id = ? AND user_id = ? LIMIT 1',
+    [threadId, userId]
+  );
+  if (!rows.length) {
+    const err = new Error('Conversa não encontrada');
+    err.status = 404;
+    throw err;
+  }
+}
+
+async function chatOtherParticipant(threadId, userId) {
+  const [rows] = await pool.execute(
+    `SELECT u.id, u.name, u.username, u.role, u.avatar_url
+     FROM chat_participants cp
+     INNER JOIN users u ON u.id = cp.user_id
+     WHERE cp.thread_id = ? AND cp.user_id != ?
+     LIMIT 1`,
+    [threadId, userId]
+  );
+  return rows[0] ? chatMapUser(rows[0]) : null;
+}
+
+async function chatFindOrCreateThread(userId, otherUserId) {
+  const dmKey = chatDmKey(userId, otherUserId);
+  const [existing] = await pool.execute('SELECT id FROM chat_threads WHERE dm_key = ? LIMIT 1', [dmKey]);
+  if (existing.length) return Number(existing[0].id);
+  const [ins] = await pool.execute("INSERT INTO chat_threads (thread_type, dm_key) VALUES ('direct', ?)", [dmKey]);
+  const threadId = ins.insertId;
+  await pool.execute('INSERT INTO chat_participants (thread_id, user_id) VALUES (?, ?), (?, ?)', [
+    threadId,
+    userId,
+    threadId,
+    otherUserId,
+  ]);
+  return threadId;
+}
+
+app.get('/api/chat/contacts', auth(), async (req, res) => {
+  try {
+    const authId = Number(req.user.id);
+    const q = String(req.query.q || '').trim();
+    let sql = 'SELECT id, username, name, avatar_url, role, active FROM users WHERE active = 1 AND id != ?';
+    const params = [authId];
+    if (q) {
+      sql += ' AND (name LIKE ? OR username LIKE ?)';
+      const like = `%${q}%`;
+      params.push(like, like);
+    }
+    sql += ' ORDER BY name ASC LIMIT 200';
+    const [rows] = await pool.execute(sql, params);
+    res.json({ items: rows.filter((r) => chatCanMessage(req.user, r)).map(chatMapUser) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Chat indisponível — rode database/migration-chat.sql' });
+  }
+});
+
+app.get('/api/chat/unread-count', auth(), async (req, res) => {
+  try {
+    const authId = Number(req.user.id);
+    const [rows] = await pool.execute(
+      `SELECT COUNT(*) AS total
+       FROM chat_messages cm
+       INNER JOIN chat_participants cp ON cp.thread_id = cm.thread_id AND cp.user_id = ?
+       WHERE cm.sender_user_id != ?
+         AND cm.created_at > COALESCE(cp.last_read_at, '1970-01-01 00:00:00')`,
+      [authId, authId]
+    );
+    res.json({ count: Number(rows[0]?.total || 0) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao contar mensagens' });
+  }
+});
+
+app.get('/api/chat/threads', auth(), async (req, res) => {
+  try {
+    const authId = Number(req.user.id);
+    const [rows] = await pool.execute(
+      `SELECT t.id, t.last_message_at,
+              (SELECT body FROM chat_messages WHERE thread_id = t.id ORDER BY created_at DESC LIMIT 1) AS last_body,
+              (SELECT COUNT(*) FROM chat_messages cm
+               WHERE cm.thread_id = t.id AND cm.sender_user_id != ?
+                 AND cm.created_at > COALESCE(cp.last_read_at, '1970-01-01 00:00:00')) AS unread_count
+       FROM chat_threads t
+       INNER JOIN chat_participants cp ON cp.thread_id = t.id AND cp.user_id = ?
+       ORDER BY COALESCE(t.last_message_at, t.created_at) DESC
+       LIMIT 100`,
+      [authId, authId]
+    );
+    const items = [];
+    for (const row of rows) {
+      const peer = await chatOtherParticipant(Number(row.id), authId);
+      if (!peer) continue;
+      items.push({
+        id: String(row.id),
+        peer,
+        lastMessage: row.last_body || null,
+        lastMessageAt: row.last_message_at,
+        unreadCount: Number(row.unread_count || 0),
+      });
+    }
+    res.json({ items });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Chat indisponível — rode database/migration-chat.sql' });
+  }
+});
+
+app.post('/api/chat/threads', auth(), async (req, res) => {
+  try {
+    const authId = Number(req.user.id);
+    const otherId = Number(req.body?.userId || 0);
+    if (!otherId) return res.status(400).json({ error: 'Informe o usuário' });
+    const [users] = await pool.execute(
+      'SELECT id, username, name, avatar_url, role, active FROM users WHERE id = ? LIMIT 1',
+      [otherId]
+    );
+    const target = users[0];
+    if (!target) return res.status(404).json({ error: 'Usuário não encontrado' });
+    if (!chatCanMessage(req.user, target)) {
+      return res.status(403).json({ error: 'Sem permissão para conversar com este usuário' });
+    }
+    const threadId = await chatFindOrCreateThread(authId, otherId);
+    res.json({
+      thread: {
+        id: String(threadId),
+        peer: chatMapUser(target),
+        lastMessage: null,
+        lastMessageAt: null,
+        unreadCount: 0,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao iniciar conversa' });
+  }
+});
+
+app.get('/api/chat/threads/:threadId/messages', auth(), async (req, res) => {
+  try {
+    const authId = Number(req.user.id);
+    const threadId = Number(req.params.threadId);
+    await chatRequireParticipant(threadId, authId);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+    const before = String(req.query.before || '').trim();
+    let sql = `SELECT cm.*, u.name AS sender_name
+               FROM chat_messages cm
+               INNER JOIN users u ON u.id = cm.sender_user_id
+               WHERE cm.thread_id = ?`;
+    const params = [threadId];
+    if (before && /^\d+$/.test(before)) {
+      sql += ' AND cm.id < ?';
+      params.push(Number(before));
+    }
+    sql += ` ORDER BY cm.created_at DESC LIMIT ${limit}`;
+    const [rows] = await pool.execute(sql, params);
+    const peer = await chatOtherParticipant(threadId, authId);
+    res.json({
+      items: rows.reverse().map((r) => chatMapMessage(r, authId)),
+      peer,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(error.status || 500).json({ error: error.message || 'Erro ao carregar mensagens' });
+  }
+});
+
+app.post('/api/chat/threads/:threadId/messages', auth(), async (req, res) => {
+  try {
+    const authId = Number(req.user.id);
+    const threadId = Number(req.params.threadId);
+    await chatRequireParticipant(threadId, authId);
+    let text = String(req.body?.body || '').trim();
+    if (!text) return res.status(400).json({ error: 'Mensagem vazia' });
+    if (text.length > 4000) text = text.slice(0, 4000);
+    const [ins] = await pool.execute(
+      'INSERT INTO chat_messages (thread_id, sender_user_id, body) VALUES (?, ?, ?)',
+      [threadId, authId, text]
+    );
+    const now = new Date();
+    const mysqlNow = now.toISOString().slice(0, 19).replace('T', ' ');
+    await pool.execute('UPDATE chat_threads SET last_message_at = ? WHERE id = ?', [mysqlNow, threadId]);
+    await pool.execute('UPDATE chat_participants SET last_read_at = ? WHERE thread_id = ? AND user_id = ?', [
+      mysqlNow,
+      threadId,
+      authId,
+    ]);
+    const preview = text.length > 120 ? `${text.slice(0, 117)}...` : text;
+    await auditLog(req, req.user, 'create', 'chat', String(threadId), `Mensagem enviada: ${preview}`);
+    const [rows] = await pool.execute(
+      `SELECT cm.*, u.name AS sender_name FROM chat_messages cm
+       INNER JOIN users u ON u.id = cm.sender_user_id WHERE cm.id = ? LIMIT 1`,
+      [ins.insertId]
+    );
+    res.json({ message: chatMapMessage(rows[0], authId) });
+  } catch (error) {
+    console.error(error);
+    res.status(error.status || 500).json({ error: error.message || 'Erro ao enviar mensagem' });
+  }
+});
+
+app.put('/api/chat/threads/:threadId/read', auth(), async (req, res) => {
+  try {
+    const authId = Number(req.user.id);
+    const threadId = Number(req.params.threadId);
+    await chatRequireParticipant(threadId, authId);
+    const mysqlNow = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    await pool.execute('UPDATE chat_participants SET last_read_at = ? WHERE thread_id = ? AND user_id = ?', [
+      mysqlNow,
+      threadId,
+      authId,
+    ]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(error.status || 500).json({ error: error.message || 'Erro ao marcar como lida' });
   }
 });
 

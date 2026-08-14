@@ -16,12 +16,14 @@ import {
   LogOut,
   MessageCircle,
   ClipboardList,
+  MessagesSquare,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAnimatedPresence } from '../hooks/useAnimatedPresence';
 import { buildSupportMessage, supportWhatsAppHref, TECH_SUPPORT } from '../constants/support';
 import AssistantMark from './AssistantMark';
+import { useChatUnread } from '../hooks/useChatUnread';
 
 interface MobileMoreSheetProps {
   open: boolean;
@@ -38,6 +40,7 @@ export default function MobileMoreSheet({ open, onClose, onLogout, onOpenAssista
   const isStaff = !hasRole('cliente');
   const isAssessor = !!user?.isAssessor && hasRole('cliente');
   const { mounted, visible, duration } = useAnimatedPresence(open, 320);
+  const { count: chatUnread } = useChatUnread(open);
 
   if (!mounted) return null;
 
@@ -119,6 +122,17 @@ export default function MobileMoreSheet({ open, onClose, onLogout, onOpenAssista
           </button>
         </div>
         <nav className="max-h-[min(60vh,24rem)] space-y-1 overflow-y-auto">
+          <Link to="/app/mensagens" onClick={onClose} className={linkClass}>
+            <MessagesSquare className="h-5 w-5 shrink-0 text-brand-olive" />
+            <span className="flex flex-1 items-center justify-between gap-2">
+              Mensagens
+              {chatUnread > 0 && (
+                <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-brand-brown px-1.5 py-0.5 text-[10px] font-bold text-white">
+                  {chatUnread > 99 ? '99+' : chatUnread}
+                </span>
+              )}
+            </span>
+          </Link>
           {onOpenAssistant && (
             <button
               type="button"

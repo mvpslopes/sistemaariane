@@ -48,6 +48,7 @@ const actionBadgeClassMap: Record<string, string> = {
   clicksign_notify: 'bg-blue-50/70 text-blue-700',
   clicksign_cancel: 'bg-amber-50 text-amber-800',
   status_change: 'bg-brand-gold/20 text-brand-dark-brown',
+  assistant_query: 'bg-violet-50 text-violet-800',
 };
 
 function actionBadgeClass(action: string, success: boolean) {

@@ -11,6 +11,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   clicksign_send: 'Envio Clicksign',
   clicksign_notify: 'Reenvio Clicksign',
   clicksign_cancel: 'Cancelamento Clicksign',
+  assistant_query: 'Consulta ao assistente',
 };
 
 export const AUDIT_RESOURCE_LABELS: Record<string, string> = {
@@ -27,6 +28,8 @@ export const AUDIT_RESOURCE_LABELS: Record<string, string> = {
   repasses: 'Repasses',
   receivables: 'Recebíveis',
   daily_reports: 'Registro diário',
+  ai_assistant: 'Assistente IA',
+  chat: 'Mensagens',
 };
 
 export const AUDIT_ROLE_LABELS: Record<string, string> = {
@@ -48,6 +51,8 @@ export const AUDIT_RESOURCE_FILTERS = [
   { id: 'auction_expenses', label: 'Despesas leilão' },
   { id: 'users', label: 'Usuários' },
   { id: 'daily_reports', label: 'Registro diário' },
+  { id: 'ai_assistant', label: 'Assistente IA' },
+  { id: 'chat', label: 'Mensagens' },
 ] as const;
 
 export const AUDIT_ACTION_FILTERS = [
@@ -59,6 +64,7 @@ export const AUDIT_ACTION_FILTERS = [
   { id: 'delete', label: 'Exclusões' },
   { id: 'status_change', label: 'Status / Clicksign' },
   { id: 'sign', label: 'Assinaturas' },
+  { id: 'assistant_query', label: 'Assistente IA' },
 ] as const;
 
 export function auditActionLabel(action: string) {

@@ -46,6 +46,7 @@ import SupportMenu from './SupportMenu';
 import { AiAssistantProvider, useAiAssistant } from '../contexts/AiAssistantContext';
 import AiAssistantFab from './AiAssistantFab';
 import AssistantSidebarButton from './AssistantSidebarButton';
+import ChatSidebarLink from './ChatSidebarLink';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useOperationalAlerts } from '../hooks/useOperationalAlerts';
 import PageTransition from './PageTransition';
@@ -250,6 +251,7 @@ function AppShellInner() {
         <nav className="scrollbar-sidebar flex flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pb-2 pt-1">
           <NavSectionLabel compact={compact}>Principal</NavSectionLabel>
           <NavTopLink to="/app" end icon={LayoutDashboard} label="Dashboard" compact={compact} />
+          <ChatSidebarLink compact={compact} />
 
           {/* ——— Staff ——— */}
           {!isCliente && (
