@@ -31,7 +31,7 @@ import {
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
-import Loading from '../../components/Loading';
+import PhotoPicker from '../../components/PhotoPicker';
 import { formatCepInput, lookupCep } from '../../services/cepService';
 
 type PartyRole = 'buyer' | 'seller' | 'assessor' | 'witness' | 'avalista';
@@ -694,16 +694,14 @@ export default function ClientForm({ clientId, defaultPartyRole, onClose, onSave
                     ))}
                   </select>
                 </Field>
-                <label className="inline-flex cursor-pointer items-center rounded-xl bg-brand-brown px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-olive">
-                  {uploading ? 'Enviando...' : 'Escolher arquivo'}
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
-                    className="hidden"
-                    disabled={uploading}
-                    onChange={(e) => onUploadDoc(e.target.files?.[0] || null)}
-                  />
-                </label>
+                <PhotoPicker
+                  onFile={onUploadDoc}
+                  disabled={uploading}
+                  accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                  cameraLabel={uploading ? 'Enviando…' : 'Tirar foto'}
+                  galleryLabel="Galeria / PDF"
+                  fileLabel={uploading ? 'Enviando…' : 'Escolher arquivo'}
+                />
                 <p className="text-xs text-brand-olive">JPG, PNG, WEBP, GIF ou PDF — máx. 8 MB</p>
               </div>
             </Section>

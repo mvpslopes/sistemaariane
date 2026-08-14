@@ -26,7 +26,7 @@ export default function ContractPrintView() {
   }
 
   return (
-    <div className="min-h-screen bg-brand-off-white p-4 md:p-8">
+    <div className="theme-fixed min-h-screen bg-brand-off-white p-4 md:p-8">
       <div className="mx-auto max-w-3xl rounded-2xl border border-brand-beige bg-white p-6 shadow-card md:p-8">
         <ContractDocument
           contract={contract}

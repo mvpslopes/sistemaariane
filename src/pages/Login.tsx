@@ -3,6 +3,7 @@ import { useNavigate, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { LogIn, Lock, User, PawPrint, ShieldCheck, Users } from 'lucide-react';
+import PwaInstallBanner from '../components/PwaInstallBanner';
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -51,7 +52,7 @@ export default function Login() {
   return (
     <div className="flex min-h-screen bg-brand-off-white">
       {/* Painel decorativo — visível em telas grandes */}
-      <div className="relative hidden w-1/2 overflow-hidden bg-gradient-to-br from-brand-dark-brown via-[#3d2f26] to-brand-brown lg:flex lg:flex-col lg:justify-between lg:p-12">
+      <div className="theme-fixed relative hidden w-1/2 overflow-hidden bg-gradient-to-br from-brand-dark-brown via-[#3d2f26] to-brand-brown lg:flex lg:flex-col lg:justify-between lg:p-12">
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <div className="absolute -left-24 top-10 h-80 w-80 rounded-full bg-brand-gold/10 blur-3xl animate-float" />
           <div className="absolute -right-16 bottom-0 h-96 w-96 rounded-full bg-brand-forest/10 blur-3xl animate-float-delayed" />
@@ -180,6 +181,7 @@ export default function Login() {
           </div>
         </div>
       </div>
+      <PwaInstallBanner placement="bottom" bottomOffsetClass="bottom-4" />
     </div>
   );
 }

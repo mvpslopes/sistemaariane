@@ -227,7 +227,32 @@ function audit_log(
     }
 }
 
+/** Monta meta com campos alterados (sem dados sensíveis). */
+function audit_diff_meta(array $before, array $after, array $fields): ?array {
+    $meta = [];
+    foreach ($fields as $key => $label) {
+        $old = $before[$key] ?? null;
+        $new = $after[$key] ?? null;
+        if ((string)$old !== (string)$new) {
+            $meta[$label] = ['de' => $old, 'para' => $new];
+        }
+    }
+    return $meta ?: null;
+}
+
+function audit_contract_label(array $row, ?int $id = null): string {
+    $num = trim((string)($row['contract_number'] ?? ''));
+    if ($num !== '') return $num;
+    $cid = $id ?? (int)($row['id'] ?? 0);
+    return '#' . $cid;
+}
+
 function map_audit_row(array $r): array {
+    $meta = null;
+    if (!empty($r['meta'])) {
+        $decoded = json_decode($r['meta'], true);
+        $meta = is_array($decoded) ? $decoded : null;
+    }
     return [
         'id' => (string)$r['id'],
         'createdAt' => $r['created_at'],
@@ -239,8 +264,86 @@ function map_audit_row(array $r): array {
         'resourceId' => $r['resource_id'],
         'summary' => $r['summary'],
         'ip' => $r['ip'],
+        'userAgent' => $r['user_agent'] ?? null,
         'success' => (bool)$r['success'],
+        'meta' => $meta,
     ];
+}
+
+function audit_logs_query(PDO $pdo, array $filters): array {
+    $sql = ' FROM audit_logs WHERE 1=1';
+    $params = [];
+
+    if (!empty($filters['userId'])) {
+        $sql .= ' AND user_id = ?';
+        $params[] = (int)$filters['userId'];
+    }
+    if (!empty($filters['action'])) {
+        $sql .= ' AND action = ?';
+        $params[] = (string)$filters['action'];
+    }
+    if (!empty($filters['resource'])) {
+        $sql .= ' AND resource = ?';
+        $params[] = (string)$filters['resource'];
+    }
+    if (!empty($filters['from'])) {
+        $sql .= ' AND created_at >= ?';
+        $params[] = (string)$filters['from'] . ' 00:00:00';
+    }
+    if (!empty($filters['to'])) {
+        $sql .= ' AND created_at <= ?';
+        $params[] = (string)$filters['to'] . ' 23:59:59';
+    }
+    if (!empty($filters['q'])) {
+        $term = '%' . (string)$filters['q'] . '%';
+        $sql .= ' AND (username LIKE ? OR summary LIKE ? OR resource LIKE ? OR resource_id LIKE ? OR ip LIKE ?)';
+        array_push($params, $term, $term, $term, $term, $term);
+    }
+
+    $countStmt = $pdo->prepare('SELECT COUNT(*)' . $sql);
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+
+    $limit = min(500, max(1, (int)($filters['limit'] ?? 50)));
+    $offset = max(0, (int)($filters['offset'] ?? 0));
+
+    $listStmt = $pdo->prepare('SELECT *' . $sql . ' ORDER BY created_at DESC LIMIT ' . $limit . ' OFFSET ' . $offset);
+    $listStmt->execute($params);
+    $items = array_map('map_audit_row', $listStmt->fetchAll());
+
+    return [
+        'items' => $items,
+        'total' => $total,
+        'limit' => $limit,
+        'offset' => $offset,
+    ];
+}
+
+function normalize_media_url(?string $path): ?string {
+    if ($path === null || $path === '') {
+        return null;
+    }
+    $trimmed = trim($path);
+    if (preg_match('#^https?://#i', $trimmed)) {
+        return $trimmed;
+    }
+    if (str_starts_with($trimmed, '/uploads/')) {
+        return $trimmed;
+    }
+    if (str_starts_with($trimmed, 'uploads/')) {
+        return '/' . $trimmed;
+    }
+    $bare = ltrim($trimmed, '/');
+    if (preg_match('#^avatar_\d{14}_[a-f0-9]+\.(jpe?g|png|webp|gif)$#i', $bare)) {
+        return '/uploads/avatars/' . $bare;
+    }
+    if (preg_match('#^animal_\d{14}_[a-f0-9]+\.(jpe?g|png|webp|gif)$#i', $bare)) {
+        return '/uploads/animals/' . $bare;
+    }
+    if (preg_match('#^person_\d{14}_[a-f0-9]+\.(jpe?g|png|webp|gif|pdf)$#i', $bare)) {
+        return '/uploads/persons/' . $bare;
+    }
+    return str_starts_with($trimmed, '/') ? $trimmed : '/' . $trimmed;
 }
 
 function map_user(array $row, ?PDO $pdo = null): array {
@@ -249,7 +352,7 @@ function map_user(array $row, ?PDO $pdo = null): array {
         'username' => $row['username'],
         'email' => $row['email'],
         'name' => $row['name'],
-        'avatarUrl' => $row['avatar_url'] ?? null,
+        'avatarUrl' => normalize_media_url($row['avatar_url'] ?? null),
         'role' => $row['role'],
         'clientId' => $row['client_id'] ? (string)$row['client_id'] : null,
         'active' => (bool)$row['active'],
@@ -3062,6 +3165,11 @@ if ($resource === 'animals') {
             upsert_owners($pdo, $animalId, $body['owners'] ?? []);
             upsert_genealogy($pdo, $animalId, $body['genealogy'] ?? null);
             $pdo->commit();
+            audit_log($pdo, $auth, 'create', 'animals', (string)$animalId, "Animal criado: {$name}", true, [
+                'registrationNo' => $body['registration_no'] ?? null,
+                'chipNo' => $body['chip_no'] ?? null,
+                'status' => $body['status'] ?? 'ativo',
+            ]);
             json_out(['success' => true, 'id' => (string)$animalId]);
         } catch (PDOException $e) {
             $pdo->rollBack();
@@ -3071,7 +3179,11 @@ if ($resource === 'animals') {
     }
 
     if ($method === 'PUT' && $id) {
-        require_update($config['jwt_secret']);
+        $auth = require_update($config['jwt_secret']);
+        $existingStmt = $pdo->prepare('SELECT * FROM animals WHERE id = ?');
+        $existingStmt->execute([(int)$id]);
+        $existing = $existingStmt->fetch();
+        if (!$existing) json_out(['error' => 'Animal não encontrado'], 404);
         $name = trim($body['name'] ?? '');
         if ($name === '') json_out(['error' => 'Nome é obrigatório'], 400);
         try {
@@ -3102,6 +3214,30 @@ if ($resource === 'animals') {
                 upsert_genealogy($pdo, (int)$id, $body['genealogy']);
             }
             $pdo->commit();
+            $after = array_merge($existing, [
+                'name' => $name,
+                'registration_no' => $body['registration_no'] ?? $existing['registration_no'],
+                'chip_no' => $body['chip_no'] ?? $existing['chip_no'],
+                'status' => $body['status'] ?? $existing['status'],
+            ]);
+            $summary = ($body['status'] ?? $existing['status']) !== $existing['status']
+                ? "Animal {$name} — status: {$existing['status']} → " . ($body['status'] ?? $existing['status'])
+                : "Animal {$name} atualizado";
+            audit_log(
+                $pdo,
+                $auth,
+                ($body['status'] ?? $existing['status']) !== $existing['status'] ? 'status_change' : 'update',
+                'animals',
+                (string)$id,
+                $summary,
+                true,
+                audit_diff_meta($existing, $after, [
+                    'name' => 'nome',
+                    'status' => 'status',
+                    'chip_no' => 'chip',
+                    'registration_no' => 'registro',
+                ])
+            );
             json_out(['success' => true]);
         } catch (PDOException $e) {
             $pdo->rollBack();
@@ -3111,10 +3247,10 @@ if ($resource === 'animals') {
     }
 
     if ($method === 'DELETE' && $id) {
-        require_delete($config['jwt_secret']);
+        $auth = require_delete($config['jwt_secret']);
         $animalId = (int)$id;
         try {
-            $stmt = $pdo->prepare('SELECT photo_url FROM animals WHERE id = ?');
+            $stmt = $pdo->prepare('SELECT name, photo_url FROM animals WHERE id = ?');
             $stmt->execute([$animalId]);
             $row = $stmt->fetch();
             if (!$row) {
@@ -3133,6 +3269,7 @@ if ($resource === 'animals') {
                 }
             }
 
+            audit_log($pdo, $auth, 'delete', 'animals', (string)$animalId, 'Animal excluído: ' . ($row['name'] ?? ''));
             json_out(['success' => true, 'message' => 'Animal excluído']);
         } catch (PDOException $e) {
             json_out(['error' => 'Erro ao excluir animal'], 500);
@@ -3186,7 +3323,12 @@ if ($resource === 'users') {
                 $role === 'cliente' ? (int)$body['clientId'] : null,
                 isset($body['active']) && $body['active'] === false ? 0 : 1,
             ]);
-            json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
+            $newId = (string)$pdo->lastInsertId();
+            audit_log($pdo, $auth, 'create', 'users', $newId, "Usuário criado: {$name} (@{$username})", true, [
+                'role' => $role,
+                'active' => !(isset($body['active']) && $body['active'] === false),
+            ]);
+            json_out(['success' => true, 'id' => $newId]);
         } catch (PDOException $e) {
             if ($e->getCode() == 23000) json_out(['error' => 'Usuário ou e-mail já existe'], 409);
             json_out(['error' => 'Erro ao criar usuário'], 500);
@@ -3224,6 +3366,26 @@ if ($resource === 'users') {
                 isset($body['active']) && $body['active'] === false ? 0 : 1,
                 (int)$id,
             ]);
+            $after = [
+                'username' => trim($body['username'] ?? $target['username']),
+                'name' => trim($body['name'] ?? $target['name']),
+                'role' => $nextRole,
+                'active' => isset($body['active']) && $body['active'] === false ? 0 : 1,
+            ];
+            $passwordChanged = !empty($body['password']);
+            $summary = $passwordChanged
+                ? 'Usuário ' . $after['name'] . ' (@' . $after['username'] . ') — senha redefinida'
+                : 'Usuário ' . $after['name'] . ' (@' . $after['username'] . ') atualizado';
+            $meta = audit_diff_meta($target, $after, [
+                'name' => 'nome',
+                'role' => 'perfil',
+                'active' => 'ativo',
+            ]);
+            if ($passwordChanged) {
+                $meta = $meta ?? [];
+                $meta['senhaRedefinida'] = true;
+            }
+            audit_log($pdo, $auth, $passwordChanged ? 'status_change' : 'update', 'users', (string)$id, $summary, true, $meta);
             json_out(['success' => true]);
         } catch (PDOException $e) {
             if ($e->getCode() == 23000) json_out(['error' => 'Usuário ou e-mail já existe'], 409);
@@ -3244,6 +3406,16 @@ if ($resource === 'users') {
             json_out(['error' => 'Sem permissão para excluir este usuário'], 403);
         }
         $pdo->prepare('DELETE FROM users WHERE id = ?')->execute([(int)$id]);
+        audit_log(
+            $pdo,
+            $auth,
+            'delete',
+            'users',
+            (string)$id,
+            'Usuário excluído: ' . $target['name'] . ' (@' . $target['username'] . ')',
+            true,
+            ['role' => $target['role']]
+        );
         json_out(['success' => true, 'message' => 'Usuário excluído']);
     }
 }
@@ -3450,6 +3622,14 @@ if ($resource === 'contracts') {
                 )->execute([$contractId, $lotId]);
             }
             $pdo->commit();
+            audit_log($pdo, $auth, 'create', 'contracts', (string)$contractId, "Contrato {$contractNumber} criado", true, [
+                'contractNumber' => $contractNumber,
+                'animalId' => $animalId,
+                'buyerId' => $buyerId,
+                'sellerId' => $sellerId,
+                'totalAmount' => $total,
+                'auctionId' => $auctionId,
+            ]);
             json_out(['success' => true, 'id' => (string)$contractId, 'contractNumber' => $contractNumber]);
         } catch (InvalidArgumentException $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
@@ -3461,7 +3641,7 @@ if ($resource === 'contracts') {
     }
 
     if ($method === 'PUT' && $id && !$action) {
-        require_update($config['jwt_secret']);
+        $auth = require_update($config['jwt_secret']);
         $stmt = $pdo->prepare('SELECT * FROM contracts WHERE id = ?');
         $stmt->execute([(int)$id]);
         $existing = $stmt->fetch();
@@ -3619,6 +3799,39 @@ if ($resource === 'contracts') {
             }
 
             $pdo->commit();
+            $label = audit_contract_label($existing, (int)$id);
+            $nextStatus = array_key_exists('status', $body) ? (string)$body['status'] : (string)$existing['status'];
+            $summary = $isCancelling
+                ? "Contrato {$label} cancelado"
+                : (array_key_exists('status', $body) && $body['status'] !== $existing['status']
+                    ? "Contrato {$label} — status: {$existing['status']} → {$nextStatus}"
+                    : "Contrato {$label} atualizado");
+            $afterRow = array_merge($existing, [
+                'status' => $nextStatus,
+                'total_amount' => $nextTotal,
+                'notes' => array_key_exists('notes', $body) ? $body['notes'] : $existing['notes'],
+            ]);
+            $meta = audit_diff_meta($existing, $afterRow, [
+                'status' => 'status',
+                'total_amount' => 'valorTotal',
+                'payment_method' => 'formaPagamento',
+                'installments' => 'parcelas',
+                'notes' => 'observacoes',
+            ]);
+            if ($shouldRecalc) {
+                $meta = $meta ?? [];
+                $meta['parcelasRecalculadas'] = true;
+            }
+            audit_log(
+                $pdo,
+                $auth,
+                $isCancelling ? 'status_change' : 'update',
+                'contracts',
+                (string)$id,
+                $summary,
+                true,
+                $meta
+            );
             json_out(['success' => true, 'chargesRecalculated' => $shouldRecalc]);
         } catch (InvalidArgumentException $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
@@ -3685,7 +3898,7 @@ if ($resource === 'contracts') {
     }
 
     if ($method === 'POST' && $id && $action === 'clicksign' && $subId === 'cancel') {
-        require_update($config['jwt_secret']);
+        $auth = require_update($config['jwt_secret']);
         $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
         $stmt->execute([(int)$id]);
         $r = $stmt->fetch();
@@ -3710,6 +3923,16 @@ if ($resource === 'contracts') {
             $pdo->prepare(
                 'UPDATE contracts SET clicksign_envelope_id=NULL, clicksign_document_id=NULL, clicksign_status=NULL, clicksign_sent_at=NULL, status=? WHERE id=?'
             )->execute([$newStatus, (int)$id]);
+            audit_log(
+                $pdo,
+                $auth,
+                'clicksign_cancel',
+                'contracts',
+                (string)$id,
+                'Envio Clicksign cancelado — contrato ' . audit_contract_label($r, (int)$id),
+                true,
+                ['envelopeId' => $envelopeId]
+            );
             json_out(['success' => true, 'message' => 'Envio cancelado. Você já pode enviar novamente.']);
         } catch (Throwable $e) {
             json_out(['error' => 'Falha ao cancelar envio: ' . $e->getMessage()], 500);
@@ -3717,7 +3940,7 @@ if ($resource === 'contracts') {
     }
 
     if ($method === 'POST' && $id && $action === 'clicksign' && $subId === 'notify') {
-        require_update($config['jwt_secret']);
+        $auth = require_update($config['jwt_secret']);
         $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
         $stmt->execute([(int)$id]);
         $r = $stmt->fetch();
@@ -3725,6 +3948,18 @@ if ($resource === 'contracts') {
         try {
             $signerId = isset($body['signerId']) ? trim((string)$body['signerId']) : '';
             clicksign_notify($config, map_contract_row($r), $signerId !== '' ? $signerId : null);
+            audit_log(
+                $pdo,
+                $auth,
+                'clicksign_notify',
+                'contracts',
+                (string)$id,
+                $signerId !== ''
+                    ? 'Reenvio Clicksign a signatário — contrato ' . audit_contract_label($r, (int)$id)
+                    : 'Reenvio Clicksign a todos — contrato ' . audit_contract_label($r, (int)$id),
+                true,
+                $signerId !== '' ? ['signerId' => $signerId] : null
+            );
             json_out([
                 'success' => true,
                 'message' => $signerId !== ''
@@ -3739,7 +3974,7 @@ if ($resource === 'contracts') {
     }
 
     if ($method === 'POST' && $id && $action === 'clicksign' && !$subId) {
-        require_update($config['jwt_secret']);
+        $auth = require_update($config['jwt_secret']);
         $stmt = $pdo->prepare($contractSelect . ' AND c.id = ?');
         $stmt->execute([(int)$id]);
         $r = $stmt->fetch();
@@ -3765,6 +4000,20 @@ if ($resource === 'contracts') {
                 'aguardando_assinatura',
                 (int)$id,
             ]);
+            audit_log(
+                $pdo,
+                $auth,
+                'clicksign_send',
+                'contracts',
+                (string)$id,
+                'Contrato ' . audit_contract_label($r, (int)$id) . ' enviado à Clicksign',
+                true,
+                [
+                    'envelopeId' => $sent['envelopeId'],
+                    'documentId' => $sent['documentId'],
+                    'status' => $sent['status'],
+                ]
+            );
             json_out([
                 'success' => true,
                 'envelopeId' => $sent['envelopeId'],
@@ -3825,6 +4074,27 @@ if ($resource === 'contracts') {
             if ($all && in_array($contract['status'], ['rascunho', 'aguardando_assinatura'], true)) {
                 $pdo->prepare("UPDATE contracts SET status = 'ativo' WHERE id = ?")->execute([(int)$id]);
             }
+            $partyLabels = [
+                'seller' => 'Vendedor',
+                'buyer' => 'Comprador',
+                'assessor' => 'Assessor',
+                'witness1' => 'Testemunha 1',
+                'witness2' => 'Testemunha 2',
+            ];
+            audit_log(
+                $pdo,
+                $auth,
+                'sign',
+                'contracts',
+                (string)$id,
+                'Assinatura registrada — ' . ($partyLabels[$partyRole] ?? $partyRole) . ' (' . $signerName . ')',
+                true,
+                [
+                    'partyRole' => $partyRole,
+                    'signerName' => $signerName,
+                    'contractActivated' => $all,
+                ]
+            );
             json_out(['success' => true, 'activated' => $all]);
         } catch (PDOException $e) {
             json_out(['error' => 'Erro ao registrar assinatura'], 500);
@@ -3881,7 +4151,17 @@ if ($resource === 'charges') {
     }
 
     if ($method === 'PUT' && $id) {
-        require_update($config['jwt_secret']);
+        $auth = require_update($config['jwt_secret']);
+        $existingStmt = $pdo->prepare(
+            'SELECT ch.*, a.name AS animal_name, c.contract_number, c.installments
+             FROM charges ch
+             INNER JOIN contracts c ON c.id = ch.contract_id
+             INNER JOIN animals a ON a.id = c.animal_id
+             WHERE ch.id = ?'
+        );
+        $existingStmt->execute([(int)$id]);
+        $existing = $existingStmt->fetch();
+        if (!$existing) json_out(['error' => 'Cobrança não encontrada'], 404);
         $sets = [];
         $params = [];
         if (array_key_exists('status', $body)) {
@@ -3921,6 +4201,27 @@ if ($resource === 'charges') {
                     ->execute([(int)$id]);
             }
         }
+        $contractLabel = trim((string)($existing['contract_number'] ?? '')) ?: ('#' . $existing['contract_id']);
+        $parcelLabel = (int)$existing['installment_no'] . '/' . (int)$existing['installments'];
+        $summary = array_key_exists('status', $body)
+            ? "Cobrança {$parcelLabel} — contrato {$contractLabel}: {$existing['status']} → {$body['status']}"
+            : "Cobrança {$parcelLabel} — contrato {$contractLabel} atualizada";
+        $after = $existing;
+        if (array_key_exists('status', $body)) $after['status'] = $body['status'];
+        if (array_key_exists('collector', $body)) $after['collector'] = normalize_collector($body['collector'] ?? null);
+        audit_log(
+            $pdo,
+            $auth,
+            array_key_exists('status', $body) && $body['status'] !== $existing['status'] ? 'status_change' : 'update',
+            'charges',
+            (string)$id,
+            $summary,
+            true,
+            audit_diff_meta($existing, $after, [
+                'status' => 'status',
+                'collector' => 'cobrador',
+            ])
+        );
         json_out(['success' => true]);
     }
 }
@@ -4076,11 +4377,20 @@ if ($resource === 'auctions') {
             $body['notes'] ?? null,
             $auth['id'],
         ]);
-        json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
+        $newId = (string)$pdo->lastInsertId();
+        audit_log($pdo, $auth, 'create', 'auctions', $newId, "Leilão criado: {$name}", true, [
+            'status' => $status,
+            'auctionDate' => $body['auctionDate'] ?? null,
+        ]);
+        json_out(['success' => true, 'id' => $newId]);
     }
 
     if ($method === 'PUT' && $id && !$action) {
-        require_update($config['jwt_secret']);
+        $auth = require_update($config['jwt_secret']);
+        $existingStmt = $pdo->prepare('SELECT * FROM auctions WHERE id = ?');
+        $existingStmt->execute([(int)$id]);
+        $existing = $existingStmt->fetch();
+        if (!$existing) json_out(['error' => 'Leilão não encontrado'], 404);
         $fields = [];
         $params = [];
         if (array_key_exists('name', $body)) { $fields[] = 'name=?'; $params[] = trim($body['name']); }
@@ -4098,6 +4408,33 @@ if ($resource === 'auctions') {
         if (!$fields) json_out(['error' => 'Nada para atualizar'], 400);
         $params[] = (int)$id;
         $pdo->prepare('UPDATE auctions SET ' . implode(',', $fields) . ' WHERE id=?')->execute($params);
+        $after = $existing;
+        if (array_key_exists('name', $body)) $after['name'] = trim($body['name']);
+        if (array_key_exists('auctionDate', $body)) $after['auction_date'] = $body['auctionDate'] ?: null;
+        if (array_key_exists('location', $body)) $after['location'] = $body['location'] ?: null;
+        if (array_key_exists('organizer', $body)) $after['organizer'] = $body['organizer'] ?: null;
+        if (array_key_exists('status', $body)) $after['status'] = $body['status'];
+        if (array_key_exists('notes', $body)) $after['notes'] = $body['notes'] ?: null;
+        $auctionName = trim((string)($after['name'] ?? $existing['name']));
+        $summary = array_key_exists('status', $body) && $body['status'] !== $existing['status']
+            ? "Leilão {$auctionName} — status: {$existing['status']} → {$body['status']}"
+            : "Leilão {$auctionName} atualizado";
+        audit_log(
+            $pdo,
+            $auth,
+            array_key_exists('status', $body) && $body['status'] !== $existing['status'] ? 'status_change' : 'update',
+            'auctions',
+            (string)$id,
+            $summary,
+            true,
+            audit_diff_meta($existing, $after, [
+                'name' => 'nome',
+                'status' => 'status',
+                'auction_date' => 'data',
+                'location' => 'local',
+                'organizer' => 'organizador',
+            ])
+        );
         json_out(['success' => true]);
     }
 }
@@ -4127,7 +4464,7 @@ if ($resource === 'auction-lots') {
     }
 
     if ($method === 'POST' && !$id) {
-        require_create($config['jwt_secret']);
+        $auth = require_create($config['jwt_secret']);
         $auctionId = (int)($body['auctionId'] ?? 0);
         $animalId = (int)($body['animalId'] ?? 0);
         $sellers = normalize_lot_sellers($body);
@@ -4159,6 +4496,12 @@ if ($resource === 'auction-lots') {
                 /* tabela pode não existir ainda */
             }
             $pdo->commit();
+            $lotLabel = $body['lotNumber'] ?? $lotId;
+            audit_log($pdo, $auth, 'create', 'auction_lots', (string)$lotId, "Lote #{$lotLabel} criado no leilão #{$auctionId}", true, [
+                'auctionId' => $auctionId,
+                'animalId' => $animalId,
+                'lotNumber' => $body['lotNumber'] ?? null,
+            ]);
             json_out(['success' => true, 'id' => (string)$lotId]);
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
@@ -4167,7 +4510,11 @@ if ($resource === 'auction-lots') {
     }
 
     if ($method === 'PUT' && $id) {
-        require_update($config['jwt_secret']);
+        $auth = require_update($config['jwt_secret']);
+        $existingStmt = $pdo->prepare('SELECT * FROM auction_lots WHERE id = ?');
+        $existingStmt->execute([(int)$id]);
+        $existing = $existingStmt->fetch();
+        if (!$existing) json_out(['error' => 'Lote não encontrado'], 404);
         $fields = [];
         $params = [];
         $sellers = normalize_lot_sellers($body);
@@ -4211,6 +4558,30 @@ if ($resource === 'auction-lots') {
                 }
             }
             $pdo->commit();
+            $after = $existing;
+            if (array_key_exists('lotNumber', $body)) $after['lot_number'] = $body['lotNumber'] ?: null;
+            if (array_key_exists('minPrice', $body)) {
+                $after['min_price'] = ($body['minPrice'] !== '' && $body['minPrice'] !== null) ? (float)$body['minPrice'] : null;
+            }
+            if (array_key_exists('status', $body)) $after['status'] = $body['status'];
+            $lotLabel = $after['lot_number'] ?? $existing['lot_number'] ?? $id;
+            $summary = array_key_exists('status', $body) && $body['status'] !== $existing['status']
+                ? "Lote #{$lotLabel} — status: {$existing['status']} → {$body['status']}"
+                : "Lote #{$lotLabel} atualizado (leilão #{$existing['auction_id']})";
+            audit_log(
+                $pdo,
+                $auth,
+                array_key_exists('status', $body) && $body['status'] !== $existing['status'] ? 'status_change' : 'update',
+                'auction_lots',
+                (string)$id,
+                $summary,
+                true,
+                audit_diff_meta($existing, $after, [
+                    'lot_number' => 'numeroLote',
+                    'status' => 'status',
+                    'min_price' => 'precoMinimo',
+                ])
+            );
             json_out(['success' => true]);
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
@@ -4450,33 +4821,16 @@ if ($resource === 'catalogs') {
 // Audit logs (admin/root)
 if ($resource === 'audit-logs' && $method === 'GET') {
     require_auth($config['jwt_secret'], ['root', 'admin']);
-    $sql = 'SELECT * FROM audit_logs WHERE 1=1';
-    $params = [];
-    if (!empty($_GET['userId'])) {
-        $sql .= ' AND user_id = ?';
-        $params[] = (int)$_GET['userId'];
-    }
-    if (!empty($_GET['action'])) {
-        $sql .= ' AND action = ?';
-        $params[] = (string)$_GET['action'];
-    }
-    if (!empty($_GET['resource'])) {
-        $sql .= ' AND resource = ?';
-        $params[] = (string)$_GET['resource'];
-    }
-    if (!empty($_GET['from'])) {
-        $sql .= ' AND created_at >= ?';
-        $params[] = (string)$_GET['from'] . ' 00:00:00';
-    }
-    if (!empty($_GET['to'])) {
-        $sql .= ' AND created_at <= ?';
-        $params[] = (string)$_GET['to'] . ' 23:59:59';
-    }
-    $limit = min(500, max(1, (int)($_GET['limit'] ?? 200)));
-    $sql .= ' ORDER BY created_at DESC LIMIT ' . $limit;
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
-    json_out(array_map('map_audit_row', $stmt->fetchAll()));
+    json_out(audit_logs_query($pdo, [
+        'userId' => $_GET['userId'] ?? null,
+        'action' => $_GET['action'] ?? null,
+        'resource' => $_GET['resource'] ?? null,
+        'from' => $_GET['from'] ?? null,
+        'to' => $_GET['to'] ?? null,
+        'q' => trim((string)($_GET['q'] ?? '')),
+        'limit' => $_GET['limit'] ?? 50,
+        'offset' => $_GET['offset'] ?? 0,
+    ]));
 }
 
 if ($resource === 'receivables-dashboard' && $method === 'GET') {

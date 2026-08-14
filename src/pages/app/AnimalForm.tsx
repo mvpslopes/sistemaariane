@@ -16,6 +16,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
 import { Camera, Plus, Trash2 } from 'lucide-react';
+import PhotoPicker from '../../components/PhotoPicker';
 
 interface OwnerRow {
   clientId: string;
@@ -226,9 +227,7 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
     },
   });
 
-  const onPhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
+  const onPhotoChange = async (file: File | null) => {
     if (!file || !canEdit) return;
     if (!file.type.startsWith('image/')) {
       toastError('Selecione uma imagem válida');
@@ -324,16 +323,13 @@ export default function AnimalForm({ animalId, onClose, onSaved }: AnimalFormPro
           </div>
           {canEdit && (
             <div className="flex flex-col gap-2">
-              <label className="inline-flex cursor-pointer items-center justify-center rounded-xl bg-brand-brown px-4 py-2 text-sm font-medium text-white hover:bg-brand-olive">
-                {uploading ? 'Enviando...' : 'Escolher foto'}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,image/gif"
-                  className="hidden"
-                  disabled={uploading}
-                  onChange={onPhotoChange}
-                />
-              </label>
+              <PhotoPicker
+                onFile={onPhotoChange}
+                disabled={uploading}
+                cameraLabel={uploading ? 'Enviando…' : 'Tirar foto'}
+                galleryLabel="Galeria"
+                fileLabel={uploading ? 'Enviando…' : 'Escolher foto'}
+              />
               {form.photo_url && (
                 <button
                   type="button"

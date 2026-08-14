@@ -113,7 +113,16 @@ export interface AuditLogEntry {
   resourceId: string | null;
   summary: string | null;
   ip: string | null;
+  userAgent?: string | null;
   success: boolean;
+  meta?: Record<string, unknown> | null;
+}
+
+export interface AuditLogsResponse {
+  items: AuditLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface Client {
@@ -688,7 +697,7 @@ export async function getMe() {
   return request<{ user: AuthUser }>('/me');
 }
 
-export async function updateProfile(data: { name: string }) {
+export async function updateProfile(data: { name: string; avatarUrl?: string | null }) {
   return request<{ success: boolean; user: AuthUser }>('/me', {
     method: 'PUT',
     body: JSON.stringify(data),
@@ -910,13 +919,33 @@ export async function archiveAnimal(id: string) {
 }
 
 /** Resolve URL de mídia (foto) relativa ou absoluta */
+function normalizeMediaPath(path: string): string {
+  const trimmed = path.trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('/uploads/')) return trimmed;
+  if (trimmed.startsWith('uploads/')) return `/${trimmed}`;
+
+  const bare = trimmed.replace(/^\/+/, '');
+  if (/^avatar_\d{14}_[a-f0-9]+\.(jpe?g|png|webp|gif)$/i.test(bare)) {
+    return `/uploads/avatars/${bare}`;
+  }
+  if (/^animal_\d{14}_[a-f0-9]+\.(jpe?g|png|webp|gif)$/i.test(bare)) {
+    return `/uploads/animals/${bare}`;
+  }
+  if (/^person_\d{14}_[a-f0-9]+\.(jpe?g|png|webp|gif|pdf)$/i.test(bare)) {
+    return `/uploads/persons/${bare}`;
+  }
+
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
 export function mediaUrl(path?: string | null): string | null {
   if (!path) return null;
   if (/^https?:\/\//i.test(path)) return path;
+  const normalized = normalizeMediaPath(path);
   const origin = API_URL.includes('api.php')
     ? API_URL.replace(/\/api\.php.*$/i, '')
     : API_URL.replace(/\/api\/?$/i, '');
-  const normalized = path.startsWith('/') ? path : `/${path}`;
   // Em Node local, uploads ficam no mesmo host da API (porta 3000)
   if (!API_URL.includes('api.php') && typeof window !== 'undefined') {
     const apiOrigin = new URL(API_URL, window.location.origin).origin;
@@ -933,7 +962,11 @@ export async function uploadPersonDocument(file: File) {
   return uploadMedia(file, 'person-doc');
 }
 
-async function uploadMedia(file: File, kind: 'animal' | 'person-doc') {
+export async function uploadAvatar(file: File) {
+  return uploadMedia(file, 'avatar');
+}
+
+async function uploadMedia(file: File, kind: 'animal' | 'person-doc' | 'avatar') {
   const token = getToken();
   const form = new FormData();
   form.append('file', file);
@@ -1105,7 +1138,9 @@ export async function getAuditLogs(filters?: {
   resource?: string;
   from?: string;
   to?: string;
+  q?: string;
   limit?: number;
+  offset?: number;
 }) {
   const params = new URLSearchParams();
   if (filters?.userId) params.set('userId', filters.userId);
@@ -1113,9 +1148,11 @@ export async function getAuditLogs(filters?: {
   if (filters?.resource) params.set('resource', filters.resource);
   if (filters?.from) params.set('from', filters.from);
   if (filters?.to) params.set('to', filters.to);
+  if (filters?.q) params.set('q', filters.q);
   if (filters?.limit) params.set('limit', String(filters.limit));
+  if (filters?.offset) params.set('offset', String(filters.offset));
   const qs = params.toString() ? `?${params}` : '';
-  return request<AuditLogEntry[]>(`/audit-logs${qs}`);
+  return request<AuditLogsResponse>(`/audit-logs${qs}`);
 }
 
 export interface CatalogItem {

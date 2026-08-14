@@ -449,7 +449,7 @@ export default function UsersPage() {
               <tr key={u.id} className="border-t border-brand-beige/60 transition-colors hover:bg-brand-off-white/70">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-3">
-                    <UserAvatar name={u.name} size="md" />
+                    <UserAvatar name={u.name} avatarUrl={u.avatarUrl} size="md" />
                     <span className="font-medium text-brand-dark-brown">{u.name}</span>
                   </div>
                 </td>

@@ -47,7 +47,9 @@ import HelpMenu from './HelpMenu';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useOperationalAlerts } from '../hooks/useOperationalAlerts';
 import PageTransition from './PageTransition';
+import PwaInstallBanner from './PwaInstallBanner';
 import AppBrandMark from './AppBrandMark';
+import ThemeIconButton from './ThemeIconButton';
 
 const roleLabel: Record<string, string> = {
   root: 'Root',
@@ -141,25 +143,14 @@ export default function AppShell() {
     return (
       <div className="flex min-h-[100dvh] flex-col bg-brand-off-white text-brand-dark-brown">
         <header className="sticky top-0 z-20 shrink-0 border-b border-brand-beige/70 bg-white/95 px-4 py-3 backdrop-blur-md pt-[max(0.75rem,env(safe-area-inset-top))]">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 flex-1 items-center gap-3">
-              <Link to="/app" className="flex shrink-0 items-center gap-2">
-                <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-brand-gold/30 bg-gradient-to-br from-brand-gold/20 to-brand-dark-brown/10 text-xs font-bold text-brand-brown shadow-sm">
-                  AA
-                </span>
-                <span className="hidden min-w-0 sm:block">
-                  <span className="block truncate text-[10px] font-semibold uppercase tracking-wider text-brand-gold">
-                    {isAssessor ? 'Portal assessor' : isCliente ? 'Portal cliente' : 'Gestão de Haras'}
-                  </span>
-                  <span className="block truncate text-sm font-semibold text-brand-dark-brown">{meta.title}</span>
-                </span>
-              </Link>
-              <div className="min-w-0 sm:hidden">
-                <h1 className="truncate text-lg font-semibold text-brand-dark-brown">{meta.title}</h1>
-              </div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-brand-gold">
+                {isAssessor ? 'Portal assessor' : isCliente ? 'Portal cliente' : 'Gestão de Haras'}
+              </p>
+              <h1 className="truncate text-base font-semibold text-brand-dark-brown">{meta.title}</h1>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <HelpMenu isCliente={isCliente} isAssessor={isAssessor} compact />
+            <div className="flex shrink-0 items-center gap-1.5">
               <NotificationBell
                 userId={user?.id}
                 stats={alertStats}
@@ -167,46 +158,36 @@ export default function AppShell() {
                 loading={alertsLoading}
                 compact
               />
-              <SupportMenu userName={user?.name} compact />
-              {!isCliente && (
-                <button
-                  type="button"
-                  onClick={() => setMoreOpen(true)}
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-brand-beige bg-white text-brand-brown transition hover:bg-brand-off-white"
-                  title="Mais opções"
-                  aria-label="Mais opções"
-                >
-                  <MoreHorizontal className="h-5 w-5" />
-                </button>
-              )}
+              <ThemeIconButton />
               <button
                 type="button"
-                onClick={handleLogout}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-red-200 bg-white text-red-600 transition hover:bg-red-50"
-                title="Sair"
-                aria-label="Sair da conta"
+                onClick={() => setMoreOpen(true)}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-brand-beige bg-white text-brand-brown transition hover:bg-brand-off-white"
+                title="Mais opções"
+                aria-label="Mais opções"
               >
-                <LogOut className="h-4 w-4" />
+                <MoreHorizontal className="h-5 w-5" />
               </button>
               <Link
                 to="/app/perfil"
                 className="shrink-0 rounded-full ring-2 ring-brand-beige/60 transition hover:ring-brand-olive/40"
                 title="Meu perfil"
               >
-                <UserAvatar name={user?.name || 'U'} size="md" />
+                <UserAvatar name={user?.name || 'U'} avatarUrl={user?.avatarUrl} size="md" />
               </Link>
             </div>
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 pb-28">
+        <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 pb-36">
           <PageTransition>
             <Outlet />
           </PageTransition>
         </main>
 
         <AppBottomNav />
-        <MobileMoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} />
+        <PwaInstallBanner />
+        <MobileMoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} onLogout={handleLogout} />
       </div>
     );
   }
@@ -222,7 +203,7 @@ export default function AppShell() {
       />
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex h-full w-[min(18rem,86vw)] flex-col bg-gradient-to-b from-brand-dark-brown to-[#3d2f26] text-white shadow-2xl transition-transform duration-300 ease-out md:static md:z-auto md:shadow-none md:transition-[width] ${
+        className={`theme-fixed fixed inset-y-0 left-0 z-50 flex h-full w-[min(18rem,86vw)] flex-col bg-gradient-to-b from-brand-dark-brown to-[#3d2f26] text-white shadow-2xl transition-transform duration-300 ease-out md:static md:z-auto md:shadow-none md:transition-[width] ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         } ${compact ? 'md:w-[76px]' : 'md:w-64'} md:shrink-0`}
       >
@@ -381,6 +362,7 @@ export default function AppShell() {
           >
             <UserAvatar
               name={user?.name || 'U'}
+              avatarUrl={user?.avatarUrl}
               size="md"
               className="!bg-brand-dark-brown !text-white !ring-2 !ring-brand-dark-brown/20"
             />
@@ -435,6 +417,8 @@ export default function AppShell() {
               loading={alertsLoading}
             />
             <HeaderDateTime className="mr-1 hidden lg:block" />
+
+            <ThemeIconButton className="hidden md:inline-flex" />
 
             <button
               type="button"

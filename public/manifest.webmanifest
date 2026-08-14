@@ -1,7 +1,7 @@
 {
-  "name": "Sistema Ariane — Portal do Cliente",
-  "short_name": "Ariane",
-  "description": "Acompanhe suas compras, contratos e cobranças.",
+  "name": "Gestão de Haras — Sistema Ariane",
+  "short_name": "Gestão de Haras",
+  "description": "Assessoria, plantel, contratos, cobranças e financeiro do haras.",
   "start_url": "/login",
   "scope": "/",
   "display": "standalone",
@@ -11,13 +11,19 @@
   "lang": "pt-BR",
   "icons": [
     {
-      "src": "/logo-sistema-ariane.png",
+      "src": "/favicon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/logo-sistema-ariane.png",
+      "src": "/favicon.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

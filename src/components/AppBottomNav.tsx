@@ -73,7 +73,7 @@ export default function AppBottomNav() {
 
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-30 border-t-2 border-brand-gold/40 bg-gradient-to-t from-[#3d2f26] to-brand-dark-brown pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_32px_rgba(79,62,50,0.35)] md:hidden"
+      className="theme-fixed fixed inset-x-0 bottom-0 z-30 border-t-2 border-brand-gold/40 bg-gradient-to-t from-[#3d2f26] to-brand-dark-brown pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_32px_rgba(79,62,50,0.35)] md:hidden"
       aria-label="Navegação principal"
     >
       <ul className="mx-auto flex max-w-lg items-stretch justify-around gap-0.5 px-2 pt-2">

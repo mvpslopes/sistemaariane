@@ -125,13 +125,32 @@ function auth(requiredRoles = []) {
   };
 }
 
+function normalizeMediaUrl(path) {
+  if (!path) return null;
+  const trimmed = String(path).trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('/uploads/')) return trimmed;
+  if (trimmed.startsWith('uploads/')) return `/${trimmed}`;
+  const bare = trimmed.replace(/^\/+/, '');
+  if (/^avatar_\d{14}_[a-f0-9]+\.(jpe?g|png|webp|gif)$/i.test(bare)) {
+    return `/uploads/avatars/${bare}`;
+  }
+  if (/^animal_\d{14}_[a-f0-9]+\.(jpe?g|png|webp|gif)$/i.test(bare)) {
+    return `/uploads/animals/${bare}`;
+  }
+  if (/^person_\d{14}_[a-f0-9]+\.(jpe?g|png|webp|gif|pdf)$/i.test(bare)) {
+    return `/uploads/persons/${bare}`;
+  }
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
 function mapUser(row) {
   return {
     id: String(row.id),
     username: row.username,
     email: row.email,
     name: row.name,
-    avatarUrl: row.avatar_url || null,
+    avatarUrl: normalizeMediaUrl(row.avatar_url),
     role: row.role,
     clientId: row.client_id ? String(row.client_id) : null,
     active: Boolean(row.active),
@@ -314,6 +333,14 @@ async function auditLog(req, auth, action, resource, resourceId = null, summary 
 }
 
 function mapAuditRow(r) {
+  let meta = null;
+  if (r.meta) {
+    try {
+      meta = typeof r.meta === 'string' ? JSON.parse(r.meta) : r.meta;
+    } catch {
+      meta = null;
+    }
+  }
   return {
     id: String(r.id),
     createdAt: r.created_at,
@@ -325,7 +352,57 @@ function mapAuditRow(r) {
     resourceId: r.resource_id,
     summary: r.summary,
     ip: r.ip,
+    userAgent: r.user_agent || null,
     success: Boolean(r.success),
+    meta,
+  };
+}
+
+async function fetchAuditLogs(filters = {}) {
+  let sql = ' FROM audit_logs WHERE 1=1';
+  const params = [];
+  if (filters.userId) {
+    sql += ' AND user_id = ?';
+    params.push(Number(filters.userId));
+  }
+  if (filters.action) {
+    sql += ' AND action = ?';
+    params.push(String(filters.action));
+  }
+  if (filters.resource) {
+    sql += ' AND resource = ?';
+    params.push(String(filters.resource));
+  }
+  if (filters.from) {
+    sql += ' AND created_at >= ?';
+    params.push(`${String(filters.from)} 00:00:00`);
+  }
+  if (filters.to) {
+    sql += ' AND created_at <= ?';
+    params.push(`${String(filters.to)} 23:59:59`);
+  }
+  if (filters.q) {
+    const term = `%${String(filters.q)}%`;
+    sql += ' AND (username LIKE ? OR summary LIKE ? OR resource LIKE ? OR resource_id LIKE ? OR ip LIKE ?)';
+    params.push(term, term, term, term, term);
+  }
+
+  const [countRows] = await pool.execute(`SELECT COUNT(*) AS total${sql}`, params);
+  const total = Number(countRows[0]?.total || 0);
+
+  const limit = Math.min(500, Math.max(1, Number(filters.limit) || 50));
+  const offset = Math.max(0, Number(filters.offset) || 0);
+
+  const [rows] = await pool.execute(
+    `SELECT *${sql} ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`,
+    params
+  );
+
+  return {
+    items: rows.map(mapAuditRow),
+    total,
+    limit,
+    offset,
   };
 }
 
@@ -4496,32 +4573,18 @@ app.post('/api/catalogs', auth(['root', 'admin', 'user']), async (req, res) => {
 
 app.get('/api/audit-logs', auth(['root', 'admin']), async (req, res) => {
   try {
-    let sql = 'SELECT * FROM audit_logs WHERE 1=1';
-    const params = [];
-    if (req.query.userId) {
-      sql += ' AND user_id = ?';
-      params.push(Number(req.query.userId));
-    }
-    if (req.query.action) {
-      sql += ' AND action = ?';
-      params.push(String(req.query.action));
-    }
-    if (req.query.resource) {
-      sql += ' AND resource = ?';
-      params.push(String(req.query.resource));
-    }
-    if (req.query.from) {
-      sql += ' AND created_at >= ?';
-      params.push(`${String(req.query.from)} 00:00:00`);
-    }
-    if (req.query.to) {
-      sql += ' AND created_at <= ?';
-      params.push(`${String(req.query.to)} 23:59:59`);
-    }
-    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
-    sql += ` ORDER BY created_at DESC LIMIT ${limit}`;
-    const [rows] = await pool.execute(sql, params);
-    res.json(rows.map(mapAuditRow));
+    res.json(
+      await fetchAuditLogs({
+        userId: req.query.userId,
+        action: req.query.action,
+        resource: req.query.resource,
+        from: req.query.from,
+        to: req.query.to,
+        q: String(req.query.q || '').trim(),
+        limit: req.query.limit,
+        offset: req.query.offset,
+      })
+    );
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao listar auditoria' });
