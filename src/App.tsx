@@ -14,6 +14,8 @@ import CompanyFinancePage from './pages/app/CompanyFinancePage';
 import SubscriptionsPage from './pages/app/SubscriptionsPage';
 import AnimalDetailPage from './pages/app/AnimalDetailPage';
 import ReproductionPage from './pages/app/ReproductionPage';
+import DailyReportsPage from './pages/app/DailyReportsPage';
+import DailyReportFormPage from './pages/app/DailyReportFormPage';
 import HelpPage from './pages/app/HelpPage';
 import ChangePassword from './pages/ChangePassword';
 import ProfilePage from './pages/app/ProfilePage';
@@ -108,6 +110,22 @@ function AppContent() {
             element={
               <ProtectedRoute roles={['root', 'admin', 'user']}>
                 <ReproductionPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="registro-diario"
+            element={
+              <ProtectedRoute roles={['root', 'admin', 'user']}>
+                <DailyReportsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="registro-diario/novo"
+            element={
+              <ProtectedRoute roles={['root', 'admin', 'user']}>
+                <DailyReportFormPage />
               </ProtectedRoute>
             }
           />

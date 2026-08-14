@@ -1329,3 +1329,72 @@ export async function updateClientModules(clientId: string, data: ClientSubscrip
     body: JSON.stringify(data),
   });
 }
+
+export interface DailyReportOcorrencias {
+  clienteIrritado: boolean;
+  cobrancaIndevida: boolean;
+  questionamentoFinanceiro: boolean;
+  contestacaoRegras: boolean;
+  escaladoGestao: boolean;
+  nenhumaCritica: boolean;
+}
+
+export interface DailyReportPayload {
+  reportDate?: string;
+  data?: string;
+  colaboradora?: string;
+  numAtendimentos: string;
+  todosClientesRespondidos: boolean;
+  clientesPendentes?: string;
+  ocorrencias: DailyReportOcorrencias;
+  suporteGestao: boolean;
+  suporteColegas: boolean;
+  motivoSuporte?: string;
+  autoavaliacao: string;
+  compromissosAmanha?: string;
+  declaracao: boolean;
+}
+
+export interface DailyReportRecord extends DailyReportPayload {
+  id: string;
+  userId: string | null;
+  dataLabel?: string;
+  timestamp?: string | null;
+  createdAt?: string | null;
+}
+
+export async function getDailyReports(filters?: {
+  q?: string;
+  userId?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (filters?.q) params.set('q', filters.q);
+  if (filters?.userId) params.set('userId', filters.userId);
+  if (filters?.from) params.set('from', filters.from);
+  if (filters?.to) params.set('to', filters.to);
+  if (filters?.limit) params.set('limit', String(filters.limit));
+  const qs = params.toString() ? `?${params}` : '';
+  return request<DailyReportRecord[]>(`/daily-reports${qs}`);
+}
+
+export async function getDailyReportTodayStatus() {
+  return request<{ submitted: boolean; report: DailyReportRecord | null }>('/daily-reports/today');
+}
+
+export async function getDailyReport(id: string) {
+  return request<DailyReportRecord>(`/daily-reports/${id}`);
+}
+
+export async function saveDailyReport(report: DailyReportPayload) {
+  return request<{ success: boolean; id: string }>('/daily-reports', {
+    method: 'POST',
+    body: JSON.stringify(report),
+  });
+}
+
+export async function deleteDailyReport(id: string) {
+  return request<{ success: boolean }>(`/daily-reports/${id}`, { method: 'DELETE' });
+}

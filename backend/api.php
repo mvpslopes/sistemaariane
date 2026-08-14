@@ -4980,6 +4980,237 @@ if ($resource === 'search' && $method === 'GET') {
     json_out(compact('people', 'animals', 'contracts', 'auctions'));
 }
 
+function parse_daily_report_date(?string $raw): ?string {
+    $raw = trim((string)$raw);
+    if ($raw === '') return null;
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) return $raw;
+    if (preg_match('/^(\d{2})\/(\d{2})\/(\d{4})$/', $raw, $m)) {
+        return sprintf('%04d-%02d-%02d', (int)$m[3], (int)$m[2], (int)$m[1]);
+    }
+    return null;
+}
+
+function map_daily_report(array $r): array {
+    $data = $r['data'] ?? null;
+    $dataLabel = $data;
+    if ($data && preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$data)) {
+        $dt = DateTime::createFromFormat('Y-m-d', (string)$data);
+        if ($dt) $dataLabel = $dt->format('d/m/Y');
+    }
+    return [
+        'id' => (string)$r['id'],
+        'userId' => isset($r['user_id']) && $r['user_id'] ? (string)$r['user_id'] : null,
+        'data' => $data,
+        'dataLabel' => $dataLabel,
+        'colaboradora' => $r['colaboradora'],
+        'numAtendimentos' => $r['num_atendimentos'],
+        'todosClientesRespondidos' => (bool)$r['todos_clientes_respondidos'],
+        'clientesPendentes' => $r['clientes_pendentes'] ?? '',
+        'ocorrencias' => [
+            'clienteIrritado' => (bool)$r['cliente_irritado'],
+            'cobrancaIndevida' => (bool)$r['cobranca_indevida'],
+            'questionamentoFinanceiro' => (bool)$r['questionamento_financeiro'],
+            'contestacaoRegras' => (bool)$r['contestacao_regras'],
+            'escaladoGestao' => (bool)$r['escalado_gestao'],
+            'nenhumaCritica' => (bool)$r['nenhuma_critica'],
+        ],
+        'suporteGestao' => (bool)$r['suporte_gestao'],
+        'suporteColegas' => (bool)$r['suporte_colegas'],
+        'motivoSuporte' => $r['motivo_suporte'] ?? '',
+        'autoavaliacao' => $r['autoavaliacao'],
+        'compromissosAmanha' => $r['compromissos_amanha'] ?? '',
+        'declaracao' => (bool)$r['declaracao'],
+        'timestamp' => $r['created_at'] ?? null,
+        'createdAt' => $r['created_at'] ?? null,
+    ];
+}
+
+function daily_report_can_manage_all(array $auth): bool {
+    return in_array($auth['role'], ['root', 'admin'], true);
+}
+
+if ($resource === 'daily-reports') {
+    $auth = require_auth($config['jwt_secret']);
+    if (!in_array($auth['role'], ['root', 'admin', 'user'], true)) {
+        json_out(['error' => 'Acesso negado'], 403);
+    }
+
+    if ($method === 'GET' && $id === 'today') {
+        try {
+            $today = (new DateTime('now', new DateTimeZone('America/Sao_Paulo')))->format('Y-m-d');
+            $stmt = $pdo->prepare('SELECT * FROM daily_reports WHERE user_id = ? AND data = ? LIMIT 1');
+            $stmt->execute([(int)$auth['id'], $today]);
+            $row = $stmt->fetch();
+            json_out([
+                'submitted' => (bool)$row,
+                'report' => $row ? map_daily_report($row) : null,
+            ]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Tabela de registro diário não disponível — rode database/migration-daily-reports.sql'], 500);
+        }
+    }
+
+    if ($method === 'GET' && $id && is_numeric($id)) {
+        try {
+            $stmt = $pdo->prepare('SELECT * FROM daily_reports WHERE id = ? LIMIT 1');
+            $stmt->execute([(int)$id]);
+            $row = $stmt->fetch();
+            if (!$row) json_out(['error' => 'Registro não encontrado'], 404);
+            if (!daily_report_can_manage_all($auth) && (int)$row['user_id'] !== (int)$auth['id']) {
+                json_out(['error' => 'Acesso negado'], 403);
+            }
+            json_out(map_daily_report($row));
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao carregar registro'], 500);
+        }
+    }
+
+    if ($method === 'GET' && !$id) {
+        try {
+            $sql = 'SELECT * FROM daily_reports WHERE 1=1';
+            $params = [];
+            if (!daily_report_can_manage_all($auth)) {
+                $sql .= ' AND user_id = ?';
+                $params[] = (int)$auth['id'];
+            } elseif (!empty($_GET['userId'])) {
+                $sql .= ' AND user_id = ?';
+                $params[] = (int)$_GET['userId'];
+            }
+            $q = trim((string)($_GET['q'] ?? ''));
+            if ($q !== '' && daily_report_can_manage_all($auth)) {
+                $sql .= ' AND colaboradora LIKE ?';
+                $params[] = '%' . $q . '%';
+            }
+            if (!empty($_GET['from'])) {
+                $from = parse_daily_report_date((string)$_GET['from']);
+                if ($from) {
+                    $sql .= ' AND data >= ?';
+                    $params[] = $from;
+                }
+            }
+            if (!empty($_GET['to'])) {
+                $to = parse_daily_report_date((string)$_GET['to']);
+                if ($to) {
+                    $sql .= ' AND data <= ?';
+                    $params[] = $to;
+                }
+            }
+            $limit = min(500, max(1, (int)($_GET['limit'] ?? 200)));
+            $sql .= ' ORDER BY data DESC, id DESC LIMIT ' . $limit;
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            json_out(array_map('map_daily_report', $stmt->fetchAll()));
+        } catch (Throwable $e) {
+            json_out(['error' => 'Tabela de registro diário não disponível — rode database/migration-daily-reports.sql'], 500);
+        }
+    }
+
+    if ($method === 'POST' && !$id) {
+        $reportDate = parse_daily_report_date($body['reportDate'] ?? $body['data'] ?? '');
+        if (!$reportDate) {
+            $reportDate = (new DateTime('now', new DateTimeZone('America/Sao_Paulo')))->format('Y-m-d');
+        }
+        $numAtendimentos = trim((string)($body['numAtendimentos'] ?? $body['num_atendimentos'] ?? ''));
+        $autoavaliacao = trim((string)($body['autoavaliacao'] ?? ''));
+        $declaracao = !empty($body['declaracao']);
+        if ($numAtendimentos === '') json_out(['error' => 'Informe o número de atendimentos'], 400);
+        if ($autoavaliacao === '') json_out(['error' => 'Informe a autoavaliação'], 400);
+        if (!$declaracao) json_out(['error' => 'Confirme a declaração para finalizar'], 400);
+
+        $allowedBands = ['Até 10', '11 a 20', '21 a 30', 'Acima de 30'];
+        if (!in_array($numAtendimentos, $allowedBands, true)) {
+            json_out(['error' => 'Faixa de atendimentos inválida'], 400);
+        }
+        $allowedRatings = ['Excelente', 'Bom', 'Regular', 'Precisa melhorar'];
+        if (!in_array($autoavaliacao, $allowedRatings, true)) {
+            json_out(['error' => 'Autoavaliação inválida'], 400);
+        }
+
+        $oc = is_array($body['ocorrencias'] ?? null) ? $body['ocorrencias'] : [];
+        $todosOk = !empty($body['todosClientesRespondidos']);
+        $pendentes = trim((string)($body['clientesPendentes'] ?? ''));
+        if (!$todosOk && $pendentes === '') {
+            json_out(['error' => 'Descreva o motivo dos clientes pendentes'], 400);
+        }
+        $suporteGestao = !empty($body['suporteGestao']);
+        $suporteColegas = !empty($body['suporteColegas']);
+        $motivoSuporte = trim((string)($body['motivoSuporte'] ?? ''));
+        if (($suporteGestao || $suporteColegas) && $motivoSuporte === '') {
+            json_out(['error' => 'Informe o motivo do suporte acionado'], 400);
+        }
+
+        $userId = (int)$auth['id'];
+        $stmtUser = $pdo->prepare('SELECT name FROM users WHERE id = ? LIMIT 1');
+        $stmtUser->execute([$userId]);
+        $userRow = $stmtUser->fetch();
+        $colaboradora = trim((string)($userRow['name'] ?? $body['colaboradora'] ?? ''));
+        if ($colaboradora === '') json_out(['error' => 'Nome do usuário indisponível'], 400);
+
+        try {
+            $dup = $pdo->prepare('SELECT id FROM daily_reports WHERE user_id = ? AND data = ? LIMIT 1');
+            $dup->execute([$userId, $reportDate]);
+            if ($dup->fetch()) {
+                json_out(['error' => 'Você já registrou o atendimento desta data'], 409);
+            }
+
+            $pdo->prepare(
+                'INSERT INTO daily_reports (
+                    user_id, data, colaboradora, num_atendimentos, todos_clientes_respondidos, clientes_pendentes,
+                    cliente_irritado, cobranca_indevida, questionamento_financeiro, contestacao_regras, escalado_gestao, nenhuma_critica,
+                    suporte_gestao, suporte_colegas, motivo_suporte, autoavaliacao, compromissos_amanha, declaracao
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $userId,
+                $reportDate,
+                $colaboradora,
+                $numAtendimentos,
+                $todosOk ? 1 : 0,
+                $todosOk ? null : ($pendentes ?: null),
+                !empty($oc['clienteIrritado']) ? 1 : 0,
+                !empty($oc['cobrancaIndevida']) ? 1 : 0,
+                !empty($oc['questionamentoFinanceiro']) ? 1 : 0,
+                !empty($oc['contestacaoRegras']) ? 1 : 0,
+                !empty($oc['escaladoGestao']) ? 1 : 0,
+                !empty($oc['nenhumaCritica']) ? 1 : 0,
+                $suporteGestao ? 1 : 0,
+                $suporteColegas ? 1 : 0,
+                $motivoSuporte ?: null,
+                $autoavaliacao,
+                trim((string)($body['compromissosAmanha'] ?? '')) ?: null,
+                1,
+            ]);
+            $newId = (string)$pdo->lastInsertId();
+            audit_log($pdo, $auth, 'create', 'daily_reports', $newId, "Registro diário: {$colaboradora} · {$reportDate}");
+            json_out(['success' => true, 'id' => $newId]);
+        } catch (PDOException $e) {
+            if ($e->getCode() == 23000) json_out(['error' => 'Você já registrou o atendimento desta data'], 409);
+            json_out(['error' => 'Erro ao salvar registro diário'], 500);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Tabela de registro diário não disponível — rode database/migration-daily-reports.sql'], 500);
+        }
+    }
+
+    if ($method === 'DELETE' && $id && is_numeric($id)) {
+        if (!in_array($auth['role'], ['root', 'admin', 'user'], true)) {
+            json_out(['error' => 'Sem permissão'], 403);
+        }
+        try {
+            $stmt = $pdo->prepare('SELECT * FROM daily_reports WHERE id = ? LIMIT 1');
+            $stmt->execute([(int)$id]);
+            $row = $stmt->fetch();
+            if (!$row) json_out(['error' => 'Registro não encontrado'], 404);
+            if (!daily_report_can_manage_all($auth) && (int)$row['user_id'] !== (int)$auth['id']) {
+                json_out(['error' => 'Você não pode excluir este registro'], 403);
+            }
+            $pdo->prepare('DELETE FROM daily_reports WHERE id = ?')->execute([(int)$id]);
+            audit_log($pdo, $auth, 'delete', 'daily_reports', (string)$id, 'Registro diário excluído');
+            json_out(['success' => true]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao excluir registro'], 500);
+        }
+    }
+}
+
 if ($resource === 'breeding-coverings') {
     $auth = require_auth($config['jwt_secret']);
     if ($auth['role'] === 'cliente') {

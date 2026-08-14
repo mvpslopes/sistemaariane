@@ -16,6 +16,7 @@ import {
   Headphones,
   LogOut,
   MessageCircle,
+  ClipboardList,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAnimatedPresence } from '../hooks/useAnimatedPresence';
@@ -58,6 +59,7 @@ export default function MobileMoreSheet({ open, onClose, onLogout }: MobileMoreS
     items.push(
       { type: 'link', to: '/app/leiloes', icon: Gavel, label: 'Leilões' },
       { type: 'link', to: '/app/reproducao', icon: Dna, label: 'Reprodução' },
+      { type: 'link', to: '/app/registro-diario', icon: ClipboardList, label: 'Registro diário' },
       { type: 'link', to: '/app/recebiveis', icon: PieChart, label: 'Recebíveis' },
       { type: 'link', to: '/app/financeiro-empresa', icon: Landmark, label: 'Financeiro da empresa' }
     );

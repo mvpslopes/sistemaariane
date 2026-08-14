@@ -65,6 +65,14 @@ export function resolvePageMeta(pathname: string, isCliente: boolean, isAssessor
       title: 'Modelos de contrato',
       subtitle: 'Versos (cláusulas) reutilizáveis na nota de leilão',
     },
+    '/app/registro-diario': {
+      title: 'Registro diário',
+      subtitle: 'Atendimento da equipe ao final do expediente',
+    },
+    '/app/registro-diario/novo': {
+      title: 'Novo registro diário',
+      subtitle: 'Preenchimento do atendimento de hoje',
+    },
     '/app/cobrancas': { title: 'Cobranças', subtitle: 'Parcelas, PIX e boletos' },
     '/app/recebiveis': {
       title: 'Recebíveis',

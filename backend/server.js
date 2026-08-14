@@ -4939,6 +4939,234 @@ app.delete('/api/breeding-coverings/:id', auth(['root', 'admin', 'user']), async
   }
 });
 
+function mapDailyReportRow(r) {
+  const data = r.data;
+  let dataLabel = data;
+  if (data && /^\d{4}-\d{2}-\d{2}$/.test(String(data))) {
+    const [y, m, d] = String(data).split('-');
+    dataLabel = `${d}/${m}/${y}`;
+  }
+  return {
+    id: String(r.id),
+    userId: r.user_id ? String(r.user_id) : null,
+    data,
+    dataLabel,
+    colaboradora: r.colaboradora,
+    numAtendimentos: r.num_atendimentos,
+    todosClientesRespondidos: !!r.todos_clientes_respondidos,
+    clientesPendentes: r.clientes_pendentes || '',
+    ocorrencias: {
+      clienteIrritado: !!r.cliente_irritado,
+      cobrancaIndevida: !!r.cobranca_indevida,
+      questionamentoFinanceiro: !!r.questionamento_financeiro,
+      contestacaoRegras: !!r.contestacao_regras,
+      escaladoGestao: !!r.escalado_gestao,
+      nenhumaCritica: !!r.nenhuma_critica,
+    },
+    suporteGestao: !!r.suporte_gestao,
+    suporteColegas: !!r.suporte_colegas,
+    motivoSuporte: r.motivo_suporte || '',
+    autoavaliacao: r.autoavaliacao,
+    compromissosAmanha: r.compromissos_amanha || '',
+    declaracao: !!r.declaracao,
+    timestamp: r.created_at,
+    createdAt: r.created_at,
+  };
+}
+
+function parseDailyReportDate(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return null;
+}
+
+function canManageAllDailyReports(user) {
+  return user.role === 'root' || user.role === 'admin';
+}
+
+function todayIsoBr() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+app.get('/api/daily-reports/today', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const today = todayIsoBr();
+    const [rows] = await pool.execute(
+      'SELECT * FROM daily_reports WHERE user_id = ? AND data = ? LIMIT 1',
+      [req.user.id, today]
+    );
+    const row = rows[0];
+    res.json({ submitted: !!row, report: row ? mapDailyReportRow(row) : null });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Tabela de registro diário não disponível — rode database/migration-daily-reports.sql' });
+  }
+});
+
+app.get('/api/daily-reports', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    let sql = 'SELECT * FROM daily_reports WHERE 1=1';
+    const params = [];
+    if (!canManageAllDailyReports(req.user)) {
+      sql += ' AND user_id = ?';
+      params.push(req.user.id);
+    } else if (req.query.userId) {
+      sql += ' AND user_id = ?';
+      params.push(Number(req.query.userId));
+    }
+    const q = String(req.query.q || '').trim();
+    if (q && canManageAllDailyReports(req.user)) {
+      sql += ' AND colaboradora LIKE ?';
+      params.push(`%${q}%`);
+    }
+    if (req.query.from) {
+      const from = parseDailyReportDate(req.query.from);
+      if (from) {
+        sql += ' AND data >= ?';
+        params.push(from);
+      }
+    }
+    if (req.query.to) {
+      const to = parseDailyReportDate(req.query.to);
+      if (to) {
+        sql += ' AND data <= ?';
+        params.push(to);
+      }
+    }
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
+    sql += ` ORDER BY data DESC, id DESC LIMIT ${limit}`;
+    const [rows] = await pool.execute(sql, params);
+    res.json(rows.map(mapDailyReportRow));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Tabela de registro diário não disponível — rode database/migration-daily-reports.sql' });
+  }
+});
+
+app.get('/api/daily-reports/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    if (req.params.id === 'today') return res.status(404).json({ error: 'Use /daily-reports/today' });
+    const [rows] = await pool.execute('SELECT * FROM daily_reports WHERE id = ? LIMIT 1', [
+      Number(req.params.id),
+    ]);
+    const row = rows[0];
+    if (!row) return res.status(404).json({ error: 'Registro não encontrado' });
+    if (!canManageAllDailyReports(req.user) && Number(row.user_id) !== Number(req.user.id)) {
+      return res.status(403).json({ error: 'Acesso negado' });
+    }
+    res.json(mapDailyReportRow(row));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao carregar registro' });
+  }
+});
+
+app.post('/api/daily-reports', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const body = req.body || {};
+    let reportDate = parseDailyReportDate(body.reportDate || body.data);
+    if (!reportDate) reportDate = todayIsoBr();
+    const numAtendimentos = String(body.numAtendimentos || body.num_atendimentos || '').trim();
+    const autoavaliacao = String(body.autoavaliacao || '').trim();
+    const declaracao = !!body.declaracao;
+    if (!numAtendimentos) return res.status(400).json({ error: 'Informe o número de atendimentos' });
+    if (!autoavaliacao) return res.status(400).json({ error: 'Informe a autoavaliação' });
+    if (!declaracao) return res.status(400).json({ error: 'Confirme a declaração para finalizar' });
+    const allowedBands = ['Até 10', '11 a 20', '21 a 30', 'Acima de 30'];
+    if (!allowedBands.includes(numAtendimentos)) {
+      return res.status(400).json({ error: 'Faixa de atendimentos inválida' });
+    }
+    const allowedRatings = ['Excelente', 'Bom', 'Regular', 'Precisa melhorar'];
+    if (!allowedRatings.includes(autoavaliacao)) {
+      return res.status(400).json({ error: 'Autoavaliação inválida' });
+    }
+    const oc = body.ocorrencias && typeof body.ocorrencias === 'object' ? body.ocorrencias : {};
+    const todosOk = !!body.todosClientesRespondidos;
+    const pendentes = String(body.clientesPendentes || '').trim();
+    if (!todosOk && !pendentes) {
+      return res.status(400).json({ error: 'Descreva o motivo dos clientes pendentes' });
+    }
+    const suporteGestao = !!body.suporteGestao;
+    const suporteColegas = !!body.suporteColegas;
+    const motivoSuporte = String(body.motivoSuporte || '').trim();
+    if ((suporteGestao || suporteColegas) && !motivoSuporte) {
+      return res.status(400).json({ error: 'Informe o motivo do suporte acionado' });
+    }
+    const [userRows] = await pool.execute('SELECT name FROM users WHERE id = ? LIMIT 1', [req.user.id]);
+    const colaboradora = String(userRows[0]?.name || body.colaboradora || '').trim();
+    if (!colaboradora) return res.status(400).json({ error: 'Nome do usuário indisponível' });
+
+    const [dupRows] = await pool.execute(
+      'SELECT id FROM daily_reports WHERE user_id = ? AND data = ? LIMIT 1',
+      [req.user.id, reportDate]
+    );
+    if (dupRows[0]) {
+      return res.status(409).json({ error: 'Você já registrou o atendimento desta data' });
+    }
+
+    const [result] = await pool.execute(
+      `INSERT INTO daily_reports (
+        user_id, data, colaboradora, num_atendimentos, todos_clientes_respondidos, clientes_pendentes,
+        cliente_irritado, cobranca_indevida, questionamento_financeiro, contestacao_regras, escalado_gestao, nenhuma_critica,
+        suporte_gestao, suporte_colegas, motivo_suporte, autoavaliacao, compromissos_amanha, declaracao
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        req.user.id,
+        reportDate,
+        colaboradora,
+        numAtendimentos,
+        todosOk ? 1 : 0,
+        todosOk ? null : pendentes || null,
+        oc.clienteIrritado ? 1 : 0,
+        oc.cobrancaIndevida ? 1 : 0,
+        oc.questionamentoFinanceiro ? 1 : 0,
+        oc.contestacaoRegras ? 1 : 0,
+        oc.escaladoGestao ? 1 : 0,
+        oc.nenhumaCritica ? 1 : 0,
+        suporteGestao ? 1 : 0,
+        suporteColegas ? 1 : 0,
+        motivoSuporte || null,
+        autoavaliacao,
+        String(body.compromissosAmanha || '').trim() || null,
+        1,
+      ]
+    );
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    console.error(error);
+    if (error && error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Você já registrou o atendimento desta data' });
+    }
+    res.status(500).json({ error: 'Erro ao salvar registro diário' });
+  }
+});
+
+app.delete('/api/daily-reports/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const [rows] = await pool.execute('SELECT * FROM daily_reports WHERE id = ? LIMIT 1', [
+      Number(req.params.id),
+    ]);
+    const row = rows[0];
+    if (!row) return res.status(404).json({ error: 'Registro não encontrado' });
+    if (!canManageAllDailyReports(req.user) && Number(row.user_id) !== Number(req.user.id)) {
+      return res.status(403).json({ error: 'Você não pode excluir este registro' });
+    }
+    await pool.execute('DELETE FROM daily_reports WHERE id = ?', [Number(req.params.id)]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir registro' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 API MVP na porta ${PORT}`);
   console.log(`📡 http://localhost:${PORT}/api`);

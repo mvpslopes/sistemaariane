@@ -27,6 +27,7 @@ import {
   Wallet,
   Settings,
   HelpCircle,
+  ClipboardList,
 } from 'lucide-react';
 import {
   NavAccordion,
@@ -59,7 +60,7 @@ const roleLabel: Record<string, string> = {
 };
 
 const cadastroPaths = ['/app/pessoas', '/app/animais', '/app/reproducao'];
-const operacaoPaths = ['/app/leiloes', '/app/contratos', '/app/modelos-contrato'];
+const operacaoPaths = ['/app/leiloes', '/app/contratos', '/app/modelos-contrato', '/app/registro-diario'];
 const financeiroPaths = [
   '/app/cobrancas',
   '/app/recebiveis',
@@ -256,6 +257,7 @@ export default function AppShell() {
                 <NavSubLink to="/app/leiloes" icon={Gavel} label="Leilões" compact={compact} />
                 <NavSubLink to="/app/contratos" icon={FileText} label="Contratos" compact={compact} />
                 <NavSubLink to="/app/modelos-contrato" icon={FileStack} label="Modelos" compact={compact} />
+                <NavSubLink to="/app/registro-diario" icon={ClipboardList} label="Registro diário" compact={compact} />
               </NavAccordion>
 
               <NavAccordion

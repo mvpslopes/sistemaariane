@@ -26,6 +26,7 @@ export const AUDIT_RESOURCE_LABELS: Record<string, string> = {
   uploads: 'Arquivos enviados',
   repasses: 'Repasses',
   receivables: 'Recebíveis',
+  daily_reports: 'Registro diário',
 };
 
 export const AUDIT_ROLE_LABELS: Record<string, string> = {
@@ -46,6 +47,7 @@ export const AUDIT_RESOURCE_FILTERS = [
   { id: 'auction_lots', label: 'Lotes de leilão' },
   { id: 'auction_expenses', label: 'Despesas leilão' },
   { id: 'users', label: 'Usuários' },
+  { id: 'daily_reports', label: 'Registro diário' },
 ] as const;
 
 export const AUDIT_ACTION_FILTERS = [
