@@ -32,6 +32,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import PhotoPicker from '../../components/PhotoPicker';
+import Loading from '../../components/Loading';
 import { formatCepInput, lookupCep } from '../../services/cepService';
 
 type PartyRole = 'buyer' | 'seller' | 'assessor' | 'witness' | 'avalista';

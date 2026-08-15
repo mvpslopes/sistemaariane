@@ -258,31 +258,35 @@ export default function AnimalsPage() {
           ))}
         </ul>
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
-          <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm">
+        <div className="rounded-2xl border border-brand-beige bg-white shadow-card">
+          <div className="w-full max-w-full overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="bg-brand-off-white text-brand-olive">
               <tr>
                 <SortTh
                   label={isCliente ? clientPortalLabels.tableAnimal : 'Animal'}
-                  column="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="px-3 sm:px-4" />
-                <SortTh label="Registro" column="registration" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden md:table-cell" />
-                <SortTh label="Chip" column="chip" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden lg:table-cell" />
-                <SortTh label="Sexo" column="sex" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden sm:table-cell" />
-                <SortTh label="Vendedor(es)" column="owners" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden xl:table-cell" />
-                <SortTh label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="px-3 sm:px-4" />
-                <th className="px-2 py-3 font-medium sm:px-4"></th>
+                  column="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort}
+                  className="min-w-[140px] max-w-[220px] px-2 py-2.5 sm:px-3"
+                />
+                <SortTh label="Registro" column="registration" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden w-[88px] md:table-cell" />
+                <SortTh label="Chip" column="chip" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden w-[88px] lg:table-cell" />
+                <SortTh label="Sexo" column="sex" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden w-[72px] sm:table-cell" />
+                <SortTh label="Vendedor(es)" column="owners" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden min-w-[100px] max-w-[160px] xl:table-cell" />
+                <SortTh label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-[88px] px-2 py-2.5 sm:px-3" />
+                <th className="sticky right-0 z-20 w-[152px] bg-brand-off-white px-2 py-2.5 pr-3 text-right font-medium shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.08)]">
+                  Ações
+                </th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((a) => (
                 <tr
                   key={a.id}
-                  className="border-t border-brand-beige/60 transition-colors hover:bg-brand-off-white/70"
+                  className="group border-t border-brand-beige/60 transition-colors hover:bg-brand-off-white/70"
                 >
-                  <td className="px-3 py-3 sm:px-4">
-                    <div className="flex items-center gap-2 sm:gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-brand-beige bg-brand-off-white">
+                  <td className="min-w-[140px] max-w-[220px] px-2 py-2.5 sm:px-3">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-brand-beige bg-brand-off-white">
                         {a.photo_url ? (
                           <img src={mediaUrl(a.photo_url) || undefined} alt="" className="h-full w-full object-cover" />
                         ) : (
@@ -292,7 +296,8 @@ export default function AnimalsPage() {
                       <div className="min-w-0">
                         <Link
                           to={`/app/animais/${a.id}`}
-                          className="block truncate font-medium text-brand-dark-brown hover:text-brand-brown hover:underline"
+                          className="line-clamp-2 break-words text-sm font-medium leading-snug text-brand-dark-brown hover:text-brand-brown hover:underline"
+                          title={a.name}
                         >
                           {a.name}
                         </Link>
@@ -302,48 +307,54 @@ export default function AnimalsPage() {
                       </div>
                     </div>
                   </td>
-                  <td className="hidden px-4 py-3 text-brand-brown md:table-cell">{a.registration_no || '—'}</td>
-                  <td className="hidden px-4 py-3 text-brand-brown lg:table-cell">{a.chip_no || '—'}</td>
-                  <td className="hidden px-4 py-3 text-brand-brown sm:table-cell">
+                  <td className="hidden w-[88px] truncate px-3 py-2.5 text-brand-brown md:table-cell" title={a.registration_no || undefined}>
+                    {a.registration_no || '—'}
+                  </td>
+                  <td className="hidden w-[88px] truncate px-3 py-2.5 text-brand-brown lg:table-cell" title={a.chip_no || undefined}>
+                    {a.chip_no || '—'}
+                  </td>
+                  <td className="hidden w-[72px] px-3 py-2.5 text-brand-brown sm:table-cell">
                     {a.sex === 'M' ? 'Macho' : a.sex === 'F' ? 'Fêmea' : a.sex === 'C' ? 'Castrado' : '—'}
                   </td>
-                  <td className="hidden px-4 py-3 text-brand-brown xl:table-cell">{(a.owners as string) || '—'}</td>
-                  <td className="px-3 py-3 sm:px-4">
+                  <td className="hidden max-w-[160px] truncate px-3 py-2.5 text-brand-brown xl:table-cell" title={(a.owners as string) || undefined}>
+                    {(a.owners as string) || '—'}
+                  </td>
+                  <td className="w-[88px] px-2 py-2.5 sm:px-3">
                     <span
-                      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium sm:px-2.5 sm:text-xs ${statusTone[a.status]}`}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${statusTone[a.status]}`}
                     >
                       <span className={`h-1.5 w-1.5 rounded-full ${statusDot[a.status]}`} />
                       {statusLabel[a.status] ?? a.status}
                     </span>
                   </td>
-                  <td className="px-2 py-3 text-right sm:px-4">
-                    <div className="inline-flex items-center gap-0.5 sm:gap-1">
+                  <td className="sticky right-0 z-10 w-[152px] whitespace-nowrap bg-white px-2 py-2.5 pr-3 text-right shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.08)] group-hover:bg-brand-off-white/70">
+                    <div className="inline-flex items-center justify-end gap-0.5">
                       <Link
                         to={`/app/animais/${a.id}`}
-                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-olive hover:bg-brand-beige/50"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-brand-olive hover:bg-brand-beige/50"
                         title="Ficha do animal"
+                        aria-label="Ficha do animal"
                       >
                         <ExternalLink className="h-4 w-4" />
-                        <span className="hidden sm:inline">Ficha</span>
                       </Link>
                       <button
                         type="button"
                         onClick={() => openEdit(a.id)}
-                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-brown hover:bg-brand-beige/50"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-brand-brown hover:bg-brand-beige/50"
                         title={canUpdate ? 'Editar' : 'Ver'}
+                        aria-label={canUpdate ? 'Editar' : 'Ver'}
                       >
                         <Pencil className="h-4 w-4" />
-                        <span className="hidden sm:inline">{canUpdate ? 'Editar' : 'Ver'}</span>
                       </button>
                       {canUpdate && a.status === 'ativo' && (
                         <button
                           type="button"
                           onClick={() => setSaleAnimalId(a.id)}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-brand-gold hover:bg-brand-gold/10"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-brand-gold hover:bg-brand-gold/10"
                           title="Gerar venda"
+                          aria-label="Gerar venda"
                         >
                           <FileText className="h-4 w-4" />
-                          <span className="hidden sm:inline">Venda</span>
                         </button>
                       )}
                       {canDelete && (
@@ -351,11 +362,11 @@ export default function AnimalsPage() {
                           type="button"
                           onClick={() => onDelete(a)}
                           disabled={deletingId === a.id}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-red-600 hover:bg-red-50 disabled:opacity-50"
                           title="Excluir animal"
+                          aria-label="Excluir animal"
                         >
                           <Trash2 className="h-4 w-4" />
-                          <span className="hidden sm:inline">{deletingId === a.id ? '...' : 'Excluir'}</span>
                         </button>
                       )}
                     </div>
