@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
-import { getPayouts, updatePayout, type Payout, type PayoutStatus } from '../../services/apiService';
+import { getPayouts, reversePayout, updatePayout, type Payout, type PayoutStatus } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
@@ -86,6 +86,28 @@ export default function PayoutsPage() {
       await load();
     } catch (e: any) {
       toastError(e.message || 'Erro ao atualizar');
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const reverse = async (payout: Payout) => {
+    if (!canWrite) return;
+    const beneficiary = payout.label || payout.beneficiary_name || roleLabel[payout.beneficiary_role] || 'beneficiário';
+    if (
+      !confirm(
+        `Estornar repasse de ${beneficiary} (${money(payout.amount)})?\n\nO status voltará para pendente/aguardando.`
+      )
+    ) {
+      return;
+    }
+    setUpdatingId(payout.id);
+    try {
+      await reversePayout(payout.id);
+      success('Repasse estornado');
+      await load();
+    } catch (e: any) {
+      toastError(e.message || 'Erro ao estornar repasse');
     } finally {
       setUpdatingId(null);
     }
@@ -235,16 +257,28 @@ export default function PayoutsPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {canWrite && p.status === 'pendente' && (
-                      <button
-                        type="button"
-                        disabled={updatingId === p.id}
-                        onClick={() => mark(p.id, 'pago')}
-                        className="rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-60"
-                      >
-                        Marcar repassado
-                      </button>
-                    )}
+                    <div className="inline-flex items-center justify-end gap-1">
+                      {canWrite && p.status === 'pendente' && (
+                        <button
+                          type="button"
+                          disabled={updatingId === p.id}
+                          onClick={() => mark(p.id, 'pago')}
+                          className="rounded-lg bg-emerald-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-60"
+                        >
+                          Marcar repassado
+                        </button>
+                      )}
+                      {canWrite && p.status === 'pago' && (
+                        <button
+                          type="button"
+                          disabled={updatingId === p.id}
+                          onClick={() => void reverse(p)}
+                          className="rounded-lg border border-red-200 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
+                        >
+                          Estornar
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

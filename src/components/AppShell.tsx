@@ -27,6 +27,7 @@ import {
   Wallet,
   Settings,
   ClipboardList,
+  MessageCircle,
 } from 'lucide-react';
 import {
   NavAccordion,
@@ -66,6 +67,7 @@ const operacaoPaths = ['/app/leiloes', '/app/contratos', '/app/modelos-contrato'
 const financeiroPaths = [
   '/app/cobrancas',
   '/app/recebiveis',
+  '/app/relatorio-cobranca',
   '/app/financeiro-empresa',
   '/app/repasses',
   '/app/assinaturas',
@@ -292,7 +294,13 @@ function AppShellInner() {
                 compact={compact}
               >
                 <NavSubLink to="/app/cobrancas" icon={Banknote} label="Cobranças" compact={compact} />
-                <NavSubLink to="/app/recebiveis" icon={PieChart} label="Recebíveis" compact={compact} />
+                <NavSubLink to="/app/recebiveis" end icon={PieChart} label="Recebíveis" compact={compact} />
+                <NavSubLink
+                  to="/app/relatorio-cobranca"
+                  icon={MessageCircle}
+                  label="Relatório de cobrança"
+                  compact={compact}
+                />
                 <NavSubLink
                   to="/app/financeiro-empresa"
                   icon={Landmark}

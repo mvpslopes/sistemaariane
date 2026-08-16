@@ -1051,6 +1051,116 @@ function map_charge_row(array $c, ?string $today = null): array {
         'status' => $status,
         'paid_at' => $c['paid_at'],
         'notes' => $c['notes'],
+        'assessoria_commission_amount' => isset($c['assessoria_commission_amount'])
+            ? (float)$c['assessoria_commission_amount']
+            : null,
+        'assessoria_commission_status' => $c['assessoria_commission_status'] ?? null,
+        'assessoria_payout_id' => !empty($c['assessoria_payout_id'])
+            ? (string)$c['assessoria_payout_id']
+            : null,
+    ];
+}
+
+function charge_list_select_sql(): string {
+    return "SELECT ch.*, a.name AS animal_name, c.status AS contract_status, cl.name AS client_name,
+            (SELECT p.amount FROM payouts p
+             WHERE p.charge_id = ch.id AND p.beneficiary_role = 'assessoria' LIMIT 1) AS assessoria_commission_amount,
+            (SELECT p.status FROM payouts p
+             WHERE p.charge_id = ch.id AND p.beneficiary_role = 'assessoria' LIMIT 1) AS assessoria_commission_status,
+            (SELECT p.id FROM payouts p
+             WHERE p.charge_id = ch.id AND p.beneficiary_role = 'assessoria' LIMIT 1) AS assessoria_payout_id
+            FROM charges ch
+            INNER JOIN contracts c ON c.id = ch.contract_id
+            INNER JOIN animals a ON a.id = c.animal_id
+            INNER JOIN clients cl ON cl.id = ch.client_id";
+}
+
+function register_seller_commission(PDO $pdo, int $chargeId, float $amount, ?string $notes, bool $markChargePaid): array {
+    if ($amount <= 0) {
+        throw new InvalidArgumentException('Informe o valor recebido pela assessoria');
+    }
+    $stmt = $pdo->prepare(
+        'SELECT ch.*, c.contract_number, c.installments
+         FROM charges ch
+         INNER JOIN contracts c ON c.id = ch.contract_id
+         WHERE ch.id = ?'
+    );
+    $stmt->execute([$chargeId]);
+    $charge = $stmt->fetch();
+    if (!$charge) {
+        throw new InvalidArgumentException('Cobrança não encontrada');
+    }
+
+    $payoutStmt = $pdo->prepare(
+        "SELECT * FROM payouts WHERE charge_id = ? AND beneficiary_role = 'assessoria' LIMIT 1"
+    );
+    $payoutStmt->execute([$chargeId]);
+    $payout = $payoutStmt->fetch();
+    if (!$payout) {
+        throw new InvalidArgumentException('Repasse da assessoria não encontrado para esta parcela');
+    }
+
+    $noteLine = trim((string)$notes);
+    if ($noteLine === '') {
+        $noteLine = 'Comissão repassada pelo vendedor';
+    }
+
+    $pdo->prepare(
+        "UPDATE payouts SET amount = ?, status = 'pago', paid_at = NOW(), notes = ? WHERE id = ?"
+    )->execute([$amount, $noteLine, (int)$payout['id']]);
+
+    if ($markChargePaid) {
+        $chargeNotes = trim((string)($charge['notes'] ?? ''));
+        $mergedNotes = $chargeNotes !== '' ? $chargeNotes . "\n" . $noteLine : $noteLine;
+        $pdo->prepare("UPDATE charges SET status = 'pago', paid_at = NOW(), notes = ? WHERE id = ?")
+            ->execute([$mergedNotes, $chargeId]);
+        $pdo->prepare(
+            "UPDATE payouts SET status = 'pendente' WHERE charge_id = ? AND beneficiary_role != 'assessoria' AND status = 'aguardando'"
+        )->execute([$chargeId]);
+    } else {
+        $chargeNotes = trim((string)($charge['notes'] ?? ''));
+        $mergedNotes = $chargeNotes !== '' ? $chargeNotes . "\n" . $noteLine : $noteLine;
+        $pdo->prepare('UPDATE charges SET notes = ? WHERE id = ?')->execute([$mergedNotes, $chargeId]);
+    }
+
+    return [
+        'charge' => $charge,
+        'payout' => $payout,
+        'amount' => $amount,
+        'notes' => $noteLine,
+    ];
+}
+
+function reverse_payout(PDO $pdo, int $payoutId, ?string $notes = null): array {
+    $stmt = $pdo->prepare(
+        'SELECT p.*, ch.status AS charge_status, a.name AS animal_name, c.contract_number
+         FROM payouts p
+         INNER JOIN charges ch ON ch.id = p.charge_id
+         INNER JOIN contracts c ON c.id = p.contract_id
+         INNER JOIN animals a ON a.id = c.animal_id
+         WHERE p.id = ?'
+    );
+    $stmt->execute([$payoutId]);
+    $payout = $stmt->fetch();
+    if (!$payout) {
+        throw new InvalidArgumentException('Repasse não encontrado');
+    }
+    if (($payout['status'] ?? '') !== 'pago') {
+        throw new InvalidArgumentException('Só é possível estornar repasse já marcado como pago');
+    }
+
+    $newStatus = ($payout['charge_status'] ?? '') === 'pago' ? 'pendente' : 'aguardando';
+    $noteLine = trim((string)$notes) ?: 'Estorno de repasse';
+    $existingNotes = trim((string)($payout['notes'] ?? ''));
+    $mergedNotes = $existingNotes !== '' ? $existingNotes . "\n" . $noteLine : $noteLine;
+
+    $pdo->prepare('UPDATE payouts SET status = ?, paid_at = NULL, notes = ? WHERE id = ?')
+        ->execute([$newStatus, $mergedNotes, $payoutId]);
+
+    return [
+        'payout' => $payout,
+        'newStatus' => $newStatus,
+        'notes' => $mergedNotes,
     ];
 }
 
@@ -2268,6 +2378,265 @@ function fetch_receivables_dashboard(PDO $pdo): array {
         'byCollector' => $collectorMap,
         'topDebtors' => $topDebtors,
         'overdueItems' => $overdueItems,
+    ];
+}
+
+function collection_events_table_exists(PDO $pdo): bool {
+    static $exists = null;
+    if ($exists !== null) {
+        return $exists;
+    }
+    try {
+        $stmt = $pdo->query("SHOW TABLES LIKE 'charge_collection_events'");
+        $exists = (bool)$stmt->fetch();
+    } catch (Throwable $e) {
+        $exists = false;
+    }
+    return $exists;
+}
+
+function map_collection_event_row(array $r): array {
+    return [
+        'id' => (string)$r['id'],
+        'chargeId' => (string)$r['charge_id'],
+        'userId' => $r['user_id'] ? (string)$r['user_id'] : null,
+        'userName' => $r['user_name'] ?? null,
+        'note' => $r['note'],
+        'outcome' => $r['outcome'],
+        'promisedDate' => $r['promised_date'] ?? null,
+        'channel' => $r['channel'],
+        'createdAt' => $r['created_at'],
+    ];
+}
+
+function fetch_charge_collection_events(PDO $pdo, int $chargeId): array {
+    if (!collection_events_table_exists($pdo)) {
+        return [];
+    }
+    $stmt = $pdo->prepare(
+        'SELECT * FROM charge_collection_events WHERE charge_id = ? ORDER BY created_at DESC, id DESC'
+    );
+    $stmt->execute([$chargeId]);
+    return array_map('map_collection_event_row', $stmt->fetchAll());
+}
+
+function create_charge_collection_event(PDO $pdo, int $chargeId, array $auth, array $body): array {
+    if (!collection_events_table_exists($pdo)) {
+        throw new InvalidArgumentException(
+            'Histórico de cobrança não disponível. Execute migration-charge-collection-events.sql no banco.'
+        );
+    }
+    $note = trim((string)($body['note'] ?? ''));
+    if ($note === '') {
+        throw new InvalidArgumentException('Informe a anotação da cobrança');
+    }
+    $outcome = (string)($body['outcome'] ?? 'other');
+    if (!in_array($outcome, ['sent', 'answered', 'no_answer', 'promised', 'paid', 'other'], true)) {
+        $outcome = 'other';
+    }
+    $channel = (string)($body['channel'] ?? 'whatsapp');
+    if (!in_array($channel, ['whatsapp', 'phone', 'email', 'other'], true)) {
+        $channel = 'whatsapp';
+    }
+    $promisedDate = !empty($body['promisedDate']) ? (string)$body['promisedDate'] : null;
+
+    $check = $pdo->prepare('SELECT id FROM charges WHERE id = ? LIMIT 1');
+    $check->execute([$chargeId]);
+    if (!$check->fetch()) {
+        throw new InvalidArgumentException('Cobrança não encontrada');
+    }
+
+    $userId = isset($auth['id']) ? (int)$auth['id'] : null;
+    $userName = null;
+    if ($userId) {
+        $uStmt = $pdo->prepare('SELECT name FROM users WHERE id = ? LIMIT 1');
+        $uStmt->execute([$userId]);
+        $userName = $uStmt->fetchColumn() ?: null;
+    }
+
+    $stmt = $pdo->prepare(
+        'INSERT INTO charge_collection_events (charge_id, user_id, user_name, note, outcome, promised_date, channel)
+         VALUES (?, ?, ?, ?, ?, ?, ?)'
+    );
+    $stmt->execute([
+        $chargeId,
+        $userId,
+        $userName,
+        $note,
+        $outcome,
+        $promisedDate,
+        $channel,
+    ]);
+    $id = (int)$pdo->lastInsertId();
+    $row = $pdo->prepare('SELECT * FROM charge_collection_events WHERE id = ?');
+    $row->execute([$id]);
+    return map_collection_event_row($row->fetch());
+}
+
+function fetch_receivables_analytical(PDO $pdo, array $filters): array {
+    $status = (string)($filters['status'] ?? 'overdue_and_upcoming');
+    $from = !empty($filters['from']) ? (string)$filters['from'] : null;
+    $to = !empty($filters['to']) ? (string)$filters['to'] : null;
+    $clientId = isset($filters['clientId']) ? (int)$filters['clientId'] : 0;
+    $q = trim((string)($filters['q'] ?? ''));
+
+    $collectionCountSql = collection_events_table_exists($pdo)
+        ? '(SELECT COUNT(*) FROM charge_collection_events e WHERE e.charge_id = ch.id)'
+        : '0';
+
+    $sql = "SELECT ch.id, ch.installment_no, ch.amount, ch.due_date, ch.status, ch.collector,
+                   ch.payment_method, ch.paid_at, ch.notes,
+                   cl.id AS client_id, cl.name AS client_name, cl.document, cl.document_type,
+                   cl.phone, cl.whatsapp, cl.email,
+                   c.contract_number, c.status AS contract_status, c.installments,
+                   an.name AS animal_name,
+                   DATEDIFF(CURDATE(), ch.due_date) AS days_overdue,
+                   {$collectionCountSql} AS collection_count
+            FROM charges ch
+            INNER JOIN contracts c ON c.id = ch.contract_id
+            INNER JOIN clients cl ON cl.id = ch.client_id
+            LEFT JOIN animals an ON an.id = c.animal_id
+            WHERE 1=1";
+    $params = [];
+
+    switch ($status) {
+        case 'overdue':
+            $sql .= ' AND c.status != \'cancelado\' AND ' . charge_overdue_sql();
+            break;
+        case 'upcoming':
+            $sql .= " AND c.status != 'cancelado' AND ch.status = 'pendente' AND ch.due_date >= CURDATE()";
+            break;
+        case 'cancelled':
+            $sql .= " AND (ch.status = 'cancelado' OR c.status = 'cancelado')";
+            break;
+        case 'paid':
+            $sql .= " AND c.status != 'cancelado' AND ch.status = 'pago'";
+            break;
+        case 'all':
+            break;
+        case 'overdue_and_upcoming':
+        default:
+            $sql .= ' AND c.status != \'cancelado\' AND ' . charge_open_sql();
+            break;
+    }
+
+    if ($from) {
+        $sql .= ' AND ch.due_date >= ?';
+        $params[] = $from;
+    }
+    if ($to) {
+        $sql .= ' AND ch.due_date <= ?';
+        $params[] = $to;
+    }
+    if ($clientId > 0) {
+        $sql .= ' AND ch.client_id = ?';
+        $params[] = $clientId;
+    }
+    if ($q !== '') {
+        $sql .= ' AND (cl.name LIKE ? OR an.name LIKE ? OR c.contract_number LIKE ? OR CAST(ch.id AS CHAR) LIKE ?)';
+        $like = '%' . $q . '%';
+        array_push($params, $like, $like, $like, $like);
+    }
+
+    $sql .= ' ORDER BY cl.name ASC, ch.due_date ASC, ch.installment_no ASC LIMIT 2000';
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll();
+
+    $clientsMap = [];
+    $summary = [
+        'originalTotal' => 0.0,
+        'paidTotal' => 0.0,
+        'openTotal' => 0.0,
+        'itemCount' => 0,
+        'clientCount' => 0,
+    ];
+
+    foreach ($rows as $r) {
+        $cid = (string)$r['client_id'];
+        if (!isset($clientsMap[$cid])) {
+            $clientsMap[$cid] = [
+                'clientId' => $cid,
+                'clientName' => $r['client_name'],
+                'document' => $r['document'],
+                'documentType' => $r['document_type'],
+                'phone' => $r['phone'],
+                'whatsapp' => $r['whatsapp'],
+                'email' => $r['email'],
+                'originalTotal' => 0.0,
+                'paidTotal' => 0.0,
+                'openTotal' => 0.0,
+                'items' => [],
+            ];
+        }
+
+        $amount = (float)$r['amount'];
+        $paidAmount = $r['status'] === 'pago' ? $amount : 0.0;
+        $openAmount = in_array($r['status'], ['pendente', 'atrasado'], true) ? $amount : 0.0;
+        $installments = max(1, (int)$r['installments']);
+        $animal = trim((string)($r['animal_name'] ?? ''));
+        $contractNo = trim((string)($r['contract_number'] ?? ''));
+        $description = 'PARCELA ' . (int)$r['installment_no'] . ' de ' . $installments;
+        if ($animal !== '') {
+            $description .= ' — ' . $animal;
+        }
+        if ($contractNo !== '') {
+            $description .= ' — Contrato ' . $contractNo;
+        }
+
+        $displayStatus = $r['status'];
+        if ($displayStatus === 'pendente' && (int)$r['days_overdue'] > 0) {
+            $displayStatus = 'atrasado';
+        }
+
+        $item = [
+            'id' => (string)$r['id'],
+            'installmentNo' => (int)$r['installment_no'],
+            'installments' => $installments,
+            'description' => $description,
+            'animalName' => $animal ?: null,
+            'contractNumber' => $contractNo ?: null,
+            'contractStatus' => $r['contract_status'],
+            'amount' => round($amount, 2),
+            'paidAmount' => round($paidAmount, 2),
+            'dueDate' => $r['due_date'],
+            'daysOverdue' => max(0, (int)$r['days_overdue']),
+            'status' => $displayStatus,
+            'collector' => normalize_collector($r['collector'] ?? null),
+            'paymentMethod' => $r['payment_method'],
+            'paidAt' => $r['paid_at'],
+            'notes' => $r['notes'],
+            'collectionCount' => (int)$r['collection_count'],
+        ];
+
+        $clientsMap[$cid]['items'][] = $item;
+        $clientsMap[$cid]['originalTotal'] += $amount;
+        $clientsMap[$cid]['paidTotal'] += $paidAmount;
+        $clientsMap[$cid]['openTotal'] += $openAmount;
+
+        $summary['originalTotal'] += $amount;
+        $summary['paidTotal'] += $paidAmount;
+        $summary['openTotal'] += $openAmount;
+        $summary['itemCount'] += 1;
+    }
+
+    $clients = array_values(array_map(function ($c) {
+        $c['originalTotal'] = round($c['originalTotal'], 2);
+        $c['paidTotal'] = round($c['paidTotal'], 2);
+        $c['openTotal'] = round($c['openTotal'], 2);
+        return $c;
+    }, $clientsMap));
+
+    $summary['originalTotal'] = round($summary['originalTotal'], 2);
+    $summary['paidTotal'] = round($summary['paidTotal'], 2);
+    $summary['openTotal'] = round($summary['openTotal'], 2);
+    $summary['clientCount'] = count($clients);
+
+    return [
+        'summary' => $summary,
+        'clients' => $clients,
+        'historyAvailable' => collection_events_table_exists($pdo),
     ];
 }
 
@@ -4196,12 +4565,7 @@ if ($resource === 'charges') {
     if ($method === 'GET' && !$id) {
         $auth = require_auth($config['jwt_secret']);
         sync_cancelled_contract_finance($pdo);
-        $sql = "SELECT ch.*, a.name AS animal_name, c.status AS contract_status, cl.name AS client_name
-                FROM charges ch
-                INNER JOIN contracts c ON c.id = ch.contract_id
-                INNER JOIN animals a ON a.id = c.animal_id
-                INNER JOIN clients cl ON cl.id = ch.client_id
-                WHERE 1=1";
+        $sql = charge_list_select_sql() . " WHERE 1=1";
         $params = [];
         if ($auth['role'] === 'cliente') {
             if (!$auth['clientId']) json_out([]);
@@ -4237,6 +4601,67 @@ if ($resource === 'charges') {
         $today = date('Y-m-d');
         $rows = array_map(fn($c) => map_charge_row($c, $today), $stmt->fetchAll());
         json_out($rows);
+    }
+
+    if ($method === 'POST' && $id === 'bulk-update') {
+        $auth = require_update($config['jwt_secret']);
+        $clientId = isset($body['clientId']) ? (int)$body['clientId'] : 0;
+        if ($clientId <= 0) {
+            json_out(['error' => 'clientId é obrigatório'], 400);
+        }
+        $collector = normalize_collector($body['collector'] ?? 'seller');
+        if (!in_array($collector, ['assessoria', 'seller'], true)) {
+            json_out(['error' => 'Cobrador inválido'], 400);
+        }
+        $onlyAssessoria = !array_key_exists('onlyAssessoria', $body) || !empty($body['onlyAssessoria']);
+        $onlyOpen = !array_key_exists('onlyOpen', $body) || !empty($body['onlyOpen']);
+        $notesAppend = isset($body['notes']) ? trim((string)$body['notes']) : '';
+        if (!$notesAppend) {
+            $notesAppend = 'Cobrança transferida ao vendedor — assessoria não receberá mais esta parcela';
+        }
+
+        $sql = "UPDATE charges ch
+                INNER JOIN contracts c ON c.id = ch.contract_id
+                SET ch.collector = ?,
+                    ch.notes = CASE
+                        WHEN ch.notes IS NULL OR TRIM(ch.notes) = '' THEN ?
+                        WHEN ch.notes LIKE CONCAT('%', ?, '%') THEN ch.notes
+                        ELSE CONCAT(ch.notes, '\n', ?)
+                    END
+                WHERE ch.client_id = ? AND c.status != 'cancelado'";
+        $params = [$collector, $notesAppend, $notesAppend, $notesAppend, $clientId];
+        if ($onlyAssessoria) {
+            $sql .= " AND ch.collector = 'assessoria'";
+        }
+        if ($onlyOpen) {
+            $sql .= " AND ch.status IN ('pendente', 'atrasado')";
+        } else {
+            $sql .= " AND ch.status != 'cancelado'";
+        }
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $updated = $stmt->rowCount();
+
+        $clientStmt = $pdo->prepare('SELECT name FROM clients WHERE id = ? LIMIT 1');
+        $clientStmt->execute([$clientId]);
+        $clientName = $clientStmt->fetchColumn() ?: ('#' . $clientId);
+        audit_log(
+            $pdo,
+            $auth,
+            'bulk_update',
+            'charges',
+            (string)$clientId,
+            "{$updated} cobrança(s) de {$clientName} passaram para {$collector}",
+            true,
+            [
+                'clientId' => $clientId,
+                'collector' => $collector,
+                'onlyAssessoria' => $onlyAssessoria,
+                'onlyOpen' => $onlyOpen,
+                'updated' => $updated,
+            ]
+        );
+        json_out(['success' => true, 'updated' => $updated]);
     }
 
     if ($method === 'PUT' && $id) {
@@ -4312,6 +4737,62 @@ if ($resource === 'charges') {
             ])
         );
         json_out(['success' => true]);
+    }
+
+    if ($method === 'GET' && $id && $action === 'collection-events') {
+        require_auth($config['jwt_secret']);
+        if (!ctype_digit((string)$id)) {
+            json_out(['error' => 'Cobrança inválida'], 400);
+        }
+        json_out(fetch_charge_collection_events($pdo, (int)$id));
+    }
+
+    if ($method === 'POST' && $id && $action === 'collection-events') {
+        $auth = require_update($config['jwt_secret']);
+        if (!ctype_digit((string)$id)) {
+            json_out(['error' => 'Cobrança inválida'], 400);
+        }
+        try {
+            $event = create_charge_collection_event($pdo, (int)$id, $auth, $body);
+            json_out($event);
+        } catch (InvalidArgumentException $e) {
+            json_out(['error' => $e->getMessage()], 400);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao salvar histórico'], 500);
+        }
+    }
+
+    if ($method === 'POST' && $id && $action === 'register-commission') {
+        $auth = require_update($config['jwt_secret']);
+        try {
+            $amount = (float)($body['amount'] ?? 0);
+            $notes = isset($body['notes']) ? (string)$body['notes'] : null;
+            $markChargePaid = !array_key_exists('markChargePaid', $body) || !empty($body['markChargePaid']);
+            $result = register_seller_commission($pdo, (int)$id, $amount, $notes, $markChargePaid);
+            $charge = $result['charge'];
+            $contractLabel = trim((string)($charge['contract_number'] ?? '')) ?: ('#' . $charge['contract_id']);
+            $parcelLabel = (int)$charge['installment_no'] . '/' . (int)$charge['installments'];
+            audit_log(
+                $pdo,
+                $auth,
+                'register_commission',
+                'charges',
+                (string)$id,
+                "Comissão R$ " . number_format($amount, 2, ',', '.') . " registrada — parcela {$parcelLabel}, contrato {$contractLabel}",
+                true,
+                [
+                    'amount' => $amount,
+                    'notes' => $result['notes'],
+                    'markChargePaid' => $markChargePaid,
+                    'payoutId' => (string)$result['payout']['id'],
+                ]
+            );
+            json_out(['success' => true]);
+        } catch (InvalidArgumentException $e) {
+            json_out(['error' => $e->getMessage()], 400);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao registrar comissão'], 500);
+        }
     }
 }
 
@@ -4732,6 +5213,36 @@ if ($resource === 'payouts') {
         ]);
         json_out(['success' => true]);
     }
+
+    if ($method === 'POST' && $id && $action === 'reverse') {
+        $auth = require_update($config['jwt_secret']);
+        try {
+            $notes = isset($body['notes']) ? (string)$body['notes'] : null;
+            $result = reverse_payout($pdo, (int)$id, $notes);
+            $payout = $result['payout'];
+            $contractLabel = trim((string)($payout['contract_number'] ?? '')) ?: ('#' . $payout['contract_id']);
+            $parcelLabel = (int)$payout['installment_no'];
+            audit_log(
+                $pdo,
+                $auth,
+                'reverse_payout',
+                'payouts',
+                (string)$id,
+                "Estorno do repasse — parcela #{$parcelLabel}, contrato {$contractLabel}",
+                true,
+                [
+                    'previousStatus' => 'pago',
+                    'newStatus' => $result['newStatus'],
+                    'notes' => $result['notes'],
+                ]
+            );
+            json_out(['success' => true, 'status' => $result['newStatus']]);
+        } catch (InvalidArgumentException $e) {
+            json_out(['error' => $e->getMessage()], 400);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao estornar repasse'], 500);
+        }
+    }
 }
 
 // Contract templates (modelos / verso)
@@ -4928,6 +5439,20 @@ if ($resource === 'receivables-dashboard' && $method === 'GET') {
         json_out(['error' => 'Acesso negado'], 403);
     }
     json_out(fetch_receivables_dashboard($pdo));
+}
+
+if ($resource === 'receivables-analytical' && $method === 'GET') {
+    $auth = require_auth($config['jwt_secret']);
+    if ($auth['role'] === 'cliente') {
+        json_out(['error' => 'Acesso negado'], 403);
+    }
+    json_out(fetch_receivables_analytical($pdo, [
+        'status' => $_GET['status'] ?? 'overdue_and_upcoming',
+        'from' => $_GET['from'] ?? null,
+        'to' => $_GET['to'] ?? null,
+        'clientId' => $_GET['clientId'] ?? null,
+        'q' => $_GET['q'] ?? '',
+    ]));
 }
 
 if ($resource === 'company-finance' && $method === 'GET') {

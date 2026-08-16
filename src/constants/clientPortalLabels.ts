@@ -78,6 +78,10 @@ export function resolvePageMeta(pathname: string, isCliente: boolean, isAssessor
       title: 'Recebíveis',
       subtitle: 'Inadimplência, envelhecimento e alertas',
     },
+    '/app/relatorio-cobranca': {
+      title: 'Relatório de cobrança',
+      subtitle: 'Contas a receber, WhatsApp e histórico',
+    },
     '/app/financeiro-empresa': {
       title: 'Financeiro da empresa',
       subtitle: 'Consolidado assessoria, leilões e SaaS',

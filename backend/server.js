@@ -968,6 +968,183 @@ async function fetchReceivablesDashboard() {
   };
 }
 
+let collectionEventsTableExistsCache = null;
+
+async function collectionEventsTableExists() {
+  if (collectionEventsTableExistsCache !== null) return collectionEventsTableExistsCache;
+  try {
+    const [rows] = await pool.query("SHOW TABLES LIKE 'charge_collection_events'");
+    collectionEventsTableExistsCache = rows.length > 0;
+  } catch {
+    collectionEventsTableExistsCache = false;
+  }
+  return collectionEventsTableExistsCache;
+}
+
+function mapCollectionEventRow(r) {
+  return {
+    id: String(r.id),
+    chargeId: String(r.charge_id),
+    userId: r.user_id ? String(r.user_id) : null,
+    userName: r.user_name ?? null,
+    note: r.note,
+    outcome: r.outcome,
+    promisedDate: r.promised_date ?? null,
+    channel: r.channel,
+    createdAt: r.created_at,
+  };
+}
+
+async function fetchReceivablesAnalytical(filters = {}) {
+  const status = filters.status || 'overdue_and_upcoming';
+  const from = filters.from || null;
+  const to = filters.to || null;
+  const clientId = filters.clientId ? Number(filters.clientId) : 0;
+  const q = String(filters.q || '').trim();
+  const hasHistory = await collectionEventsTableExists();
+  const collectionCountSql = hasHistory
+    ? '(SELECT COUNT(*) FROM charge_collection_events e WHERE e.charge_id = ch.id)'
+    : '0';
+
+  let sql = `SELECT ch.id, ch.installment_no, ch.amount, ch.due_date, ch.status, ch.collector,
+                    ch.payment_method, ch.paid_at, ch.notes,
+                    cl.id AS client_id, cl.name AS client_name, cl.document, cl.document_type,
+                    cl.phone, cl.whatsapp, cl.email,
+                    c.contract_number, c.status AS contract_status, c.installments,
+                    an.name AS animal_name,
+                    DATEDIFF(CURDATE(), ch.due_date) AS days_overdue,
+                    ${collectionCountSql} AS collection_count
+             FROM charges ch
+             INNER JOIN contracts c ON c.id = ch.contract_id
+             INNER JOIN clients cl ON cl.id = ch.client_id
+             LEFT JOIN animals an ON an.id = c.animal_id
+             WHERE 1=1`;
+  const params = [];
+
+  switch (status) {
+    case 'overdue':
+      sql += ` AND c.status != 'cancelado' AND ${chargeOverdueSql()}`;
+      break;
+    case 'upcoming':
+      sql += " AND c.status != 'cancelado' AND ch.status = 'pendente' AND ch.due_date >= CURDATE()";
+      break;
+    case 'cancelled':
+      sql += " AND (ch.status = 'cancelado' OR c.status = 'cancelado')";
+      break;
+    case 'paid':
+      sql += " AND c.status != 'cancelado' AND ch.status = 'pago'";
+      break;
+    case 'all':
+      break;
+    default:
+      sql += ` AND c.status != 'cancelado' AND ${chargeOpenSql()}`;
+      break;
+  }
+
+  if (from) {
+    sql += ' AND ch.due_date >= ?';
+    params.push(from);
+  }
+  if (to) {
+    sql += ' AND ch.due_date <= ?';
+    params.push(to);
+  }
+  if (clientId > 0) {
+    sql += ' AND ch.client_id = ?';
+    params.push(clientId);
+  }
+  if (q) {
+    sql += ' AND (cl.name LIKE ? OR an.name LIKE ? OR c.contract_number LIKE ? OR CAST(ch.id AS CHAR) LIKE ?)';
+    const like = `%${q}%`;
+    params.push(like, like, like, like);
+  }
+
+  sql += ' ORDER BY cl.name ASC, ch.due_date ASC, ch.installment_no ASC LIMIT 2000';
+
+  const [rows] = await pool.execute(sql, params);
+  const clientsMap = {};
+  const summary = { originalTotal: 0, paidTotal: 0, openTotal: 0, itemCount: 0, clientCount: 0 };
+
+  for (const r of rows) {
+    const cid = String(r.client_id);
+    if (!clientsMap[cid]) {
+      clientsMap[cid] = {
+        clientId: cid,
+        clientName: r.client_name,
+        document: r.document,
+        documentType: r.document_type,
+        phone: r.phone,
+        whatsapp: r.whatsapp,
+        email: r.email,
+        originalTotal: 0,
+        paidTotal: 0,
+        openTotal: 0,
+        items: [],
+      };
+    }
+
+    const amount = Number(r.amount);
+    const paidAmount = r.status === 'pago' ? amount : 0;
+    const openAmount = ['pendente', 'atrasado'].includes(r.status) ? amount : 0;
+    const installments = Math.max(1, Number(r.installments));
+    const animal = String(r.animal_name || '').trim();
+    const contractNo = String(r.contract_number || '').trim();
+    let description = `PARCELA ${r.installment_no} de ${installments}`;
+    if (animal) description += ` — ${animal}`;
+    if (contractNo) description += ` — Contrato ${contractNo}`;
+
+    let displayStatus = r.status;
+    if (displayStatus === 'pendente' && Number(r.days_overdue) > 0) displayStatus = 'atrasado';
+
+    clientsMap[cid].items.push({
+      id: String(r.id),
+      installmentNo: Number(r.installment_no),
+      installments,
+      description,
+      animalName: animal || null,
+      contractNumber: contractNo || null,
+      contractStatus: r.contract_status,
+      amount: Math.round(amount * 100) / 100,
+      paidAmount: Math.round(paidAmount * 100) / 100,
+      dueDate: r.due_date,
+      daysOverdue: Math.max(0, Number(r.days_overdue)),
+      status: displayStatus,
+      collector: normalizeCollector(r.collector),
+      paymentMethod: r.payment_method,
+      paidAt: r.paid_at,
+      notes: r.notes,
+      collectionCount: Number(r.collection_count),
+    });
+
+    clientsMap[cid].originalTotal += amount;
+    clientsMap[cid].paidTotal += paidAmount;
+    clientsMap[cid].openTotal += openAmount;
+    summary.originalTotal += amount;
+    summary.paidTotal += paidAmount;
+    summary.openTotal += openAmount;
+    summary.itemCount += 1;
+  }
+
+  const clients = Object.values(clientsMap).map((c) => ({
+    ...c,
+    originalTotal: Math.round(c.originalTotal * 100) / 100,
+    paidTotal: Math.round(c.paidTotal * 100) / 100,
+    openTotal: Math.round(c.openTotal * 100) / 100,
+  }));
+
+  return {
+    summary: {
+      ...summary,
+      originalTotal: Math.round(summary.originalTotal * 100) / 100,
+      paidTotal: Math.round(summary.paidTotal * 100) / 100,
+      openTotal: Math.round(summary.openTotal * 100) / 100,
+      clientCount: clients.length,
+    },
+    clients,
+    historyAvailable: hasHistory,
+  };
+}
+
 async function fetchCompanyFinance() {
   const monthStart = `${todayBrasiliaISO().slice(0, 8)}01`;
   const yearStart = `${todayBrasiliaISO().slice(0, 4)}-01-01`;
@@ -1177,7 +1354,113 @@ function mapChargeRow(c, today = todayBrasiliaISO()) {
     status,
     paid_at: c.paid_at,
     notes: c.notes,
+    assessoria_commission_amount:
+      c.assessoria_commission_amount != null ? Number(c.assessoria_commission_amount) : null,
+    assessoria_commission_status: c.assessoria_commission_status ?? null,
+    assessoria_payout_id: c.assessoria_payout_id ? String(c.assessoria_payout_id) : null,
   };
+}
+
+const CHARGE_LIST_SELECT_SQL = `SELECT ch.*, a.name AS animal_name, c.status AS contract_status, cl.name AS client_name,
+  (SELECT p.amount FROM payouts p
+   WHERE p.charge_id = ch.id AND p.beneficiary_role = 'assessoria' LIMIT 1) AS assessoria_commission_amount,
+  (SELECT p.status FROM payouts p
+   WHERE p.charge_id = ch.id AND p.beneficiary_role = 'assessoria' LIMIT 1) AS assessoria_commission_status,
+  (SELECT p.id FROM payouts p
+   WHERE p.charge_id = ch.id AND p.beneficiary_role = 'assessoria' LIMIT 1) AS assessoria_payout_id
+  FROM charges ch
+  INNER JOIN contracts c ON c.id = ch.contract_id
+  INNER JOIN animals a ON a.id = c.animal_id
+  INNER JOIN clients cl ON cl.id = ch.client_id`;
+
+async function registerSellerCommission(chargeId, amount, notes, markChargePaid = true) {
+  if (!amount || amount <= 0) {
+    const err = new Error('Informe o valor recebido pela assessoria');
+    err.status = 400;
+    throw err;
+  }
+  const [[charge]] = await pool.execute(
+    `SELECT ch.*, c.contract_number, c.installments
+     FROM charges ch
+     INNER JOIN contracts c ON c.id = ch.contract_id
+     WHERE ch.id = ?`,
+    [chargeId]
+  );
+  if (!charge) {
+    const err = new Error('Cobrança não encontrada');
+    err.status = 404;
+    throw err;
+  }
+  const [payoutRows] = await pool.execute(
+    `SELECT * FROM payouts WHERE charge_id = ? AND beneficiary_role = 'assessoria' LIMIT 1`,
+    [chargeId]
+  );
+  const payout = payoutRows[0];
+  if (!payout) {
+    const err = new Error('Repasse da assessoria não encontrado para esta parcela');
+    err.status = 400;
+    throw err;
+  }
+
+  const noteLine = String(notes || '').trim() || 'Comissão repassada pelo vendedor';
+  await pool.execute(
+    `UPDATE payouts SET amount = ?, status = 'pago', paid_at = NOW(), notes = ? WHERE id = ?`,
+    [amount, noteLine, payout.id]
+  );
+
+  const chargeNotes = String(charge.notes || '').trim();
+  const mergedNotes = chargeNotes ? `${chargeNotes}\n${noteLine}` : noteLine;
+
+  if (markChargePaid) {
+    await pool.execute(`UPDATE charges SET status = 'pago', paid_at = NOW(), notes = ? WHERE id = ?`, [
+      mergedNotes,
+      chargeId,
+    ]);
+    await pool.execute(
+      `UPDATE payouts SET status = 'pendente'
+       WHERE charge_id = ? AND beneficiary_role != 'assessoria' AND status = 'aguardando'`,
+      [chargeId]
+    );
+  } else {
+    await pool.execute('UPDATE charges SET notes = ? WHERE id = ?', [mergedNotes, chargeId]);
+  }
+
+  return { charge, payout, amount, notes: noteLine };
+}
+
+async function reversePayout(payoutId, notes = null) {
+  const [[payout]] = await pool.execute(
+    `SELECT p.*, ch.status AS charge_status, a.name AS animal_name, c.contract_number
+     FROM payouts p
+     INNER JOIN charges ch ON ch.id = p.charge_id
+     INNER JOIN contracts c ON c.id = p.contract_id
+     INNER JOIN animals a ON a.id = c.animal_id
+     WHERE p.id = ?`,
+    [payoutId]
+  );
+  if (!payout) {
+    const err = new Error('Repasse não encontrado');
+    err.status = 404;
+    throw err;
+  }
+  if (payout.status !== 'pago') {
+    const err = new Error('Só é possível estornar repasse já marcado como pago');
+    err.status = 400;
+    throw err;
+  }
+
+  const newStatus = payout.charge_status === 'pago' ? 'pendente' : 'aguardando';
+  const noteLine = String(notes || '').trim() || 'Estorno de repasse';
+  const existingNotes = String(payout.notes || '').trim();
+  const mergedNotes = existingNotes ? `${existingNotes}\n${noteLine}` : noteLine;
+
+  await pool.execute('UPDATE payouts SET status = ?, paid_at = NULL, notes = ? WHERE id = ?', [
+    newStatus,
+    mergedNotes,
+    payoutId,
+  ]);
+
+  return { payout, newStatus, notes: mergedNotes };
 }
 
 /** Cronograma manual vindo do formulário. Retorna null quando não foi informado. */
@@ -3971,12 +4254,7 @@ app.post('/api/contracts/:id/sign', auth(), async (req, res) => {
 app.get('/api/charges', auth(), async (req, res) => {
   try {
     await syncCancelledContractFinance();
-    let sql = `SELECT ch.*, a.name AS animal_name, c.status AS contract_status, cl.name AS client_name
-               FROM charges ch
-               INNER JOIN contracts c ON c.id = ch.contract_id
-               INNER JOIN animals a ON a.id = c.animal_id
-               INNER JOIN clients cl ON cl.id = ch.client_id
-               WHERE 1=1`;
+    let sql = `${CHARGE_LIST_SELECT_SQL} WHERE 1=1`;
     const params = [];
     if (req.user.role === 'cliente') {
       if (!req.user.clientId) return res.json([]);
@@ -4013,6 +4291,42 @@ app.get('/api/charges', auth(), async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao listar cobranças' });
+  }
+});
+
+app.post('/api/charges/bulk-update', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const clientId = Number(req.body.clientId || 0);
+    if (!clientId) return res.status(400).json({ error: 'clientId é obrigatório' });
+    const collector = normalizeCollector(req.body.collector || 'seller');
+    if (!['assessoria', 'seller'].includes(collector)) {
+      return res.status(400).json({ error: 'Cobrador inválido' });
+    }
+    const onlyAssessoria = req.body.onlyAssessoria !== false;
+    const onlyOpen = req.body.onlyOpen !== false;
+    const notesAppend =
+      String(req.body.notes || '').trim() ||
+      'Cobrança transferida ao vendedor — assessoria não receberá mais esta parcela';
+
+    let sql = `UPDATE charges ch
+               INNER JOIN contracts c ON c.id = ch.contract_id
+               SET ch.collector = ?,
+                   ch.notes = CASE
+                     WHEN ch.notes IS NULL OR TRIM(ch.notes) = '' THEN ?
+                     WHEN ch.notes LIKE CONCAT('%', ?, '%') THEN ch.notes
+                     ELSE CONCAT(ch.notes, '\n', ?)
+                   END
+               WHERE ch.client_id = ? AND c.status != 'cancelado'`;
+    const params = [collector, notesAppend, notesAppend, notesAppend, clientId];
+    if (onlyAssessoria) sql += " AND ch.collector = 'assessoria'";
+    if (onlyOpen) sql += " AND ch.status IN ('pendente', 'atrasado')";
+    else sql += " AND ch.status != 'cancelado'";
+
+    const [result] = await pool.execute(sql, params);
+    res.json({ success: true, updated: result.affectedRows || 0 });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao atualizar cobranças em lote' });
   }
 });
 
@@ -4065,6 +4379,68 @@ app.put('/api/charges/:id', auth(['root', 'admin', 'user']), async (req, res) =>
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Erro ao atualizar cobrança' });
+  }
+});
+
+app.get('/api/charges/:id/collection-events', auth(), async (req, res) => {
+  try {
+    if (!(await collectionEventsTableExists())) return res.json([]);
+    const chargeId = Number(req.params.id);
+    const [rows] = await pool.execute(
+      'SELECT * FROM charge_collection_events WHERE charge_id = ? ORDER BY created_at DESC, id DESC',
+      [chargeId]
+    );
+    res.json(rows.map(mapCollectionEventRow));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao listar histórico' });
+  }
+});
+
+app.post('/api/charges/:id/collection-events', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    if (!(await collectionEventsTableExists())) {
+      return res.status(400).json({
+        error: 'Histórico de cobrança não disponível. Execute migration-charge-collection-events.sql no banco.',
+      });
+    }
+    const chargeId = Number(req.params.id);
+    const note = String(req.body.note || '').trim();
+    if (!note) return res.status(400).json({ error: 'Informe a anotação da cobrança' });
+    const outcomes = ['sent', 'answered', 'no_answer', 'promised', 'paid', 'other'];
+    const channels = ['whatsapp', 'phone', 'email', 'other'];
+    const outcome = outcomes.includes(req.body.outcome) ? req.body.outcome : 'other';
+    const channel = channels.includes(req.body.channel) ? req.body.channel : 'whatsapp';
+    const promisedDate = req.body.promisedDate || null;
+
+    const [[charge]] = await pool.execute('SELECT id FROM charges WHERE id = ? LIMIT 1', [chargeId]);
+    if (!charge) return res.status(404).json({ error: 'Cobrança não encontrada' });
+
+    const [[userRow]] = await pool.execute('SELECT name FROM users WHERE id = ? LIMIT 1', [req.user.id]);
+    const [result] = await pool.execute(
+      `INSERT INTO charge_collection_events (charge_id, user_id, user_name, note, outcome, promised_date, channel)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [chargeId, req.user.id, userRow?.name || null, note, outcome, promisedDate, channel]
+    );
+    const [[row]] = await pool.execute('SELECT * FROM charge_collection_events WHERE id = ?', [result.insertId]);
+    res.json(mapCollectionEventRow(row));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao salvar histórico' });
+  }
+});
+
+app.post('/api/charges/:id/register-commission', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const amount = Number(req.body.amount || 0);
+    const notes = req.body.notes != null ? String(req.body.notes) : null;
+    const markChargePaid = req.body.markChargePaid !== false;
+    await registerSellerCommission(id, amount, notes, markChargePaid);
+    res.json({ success: true });
+  } catch (error) {
+    const status = error.status || 500;
+    res.status(status).json({ error: error.message || 'Erro ao registrar comissão' });
   }
 });
 
@@ -4461,6 +4837,18 @@ app.put('/api/payouts/:id', auth(['root', 'admin', 'user']), async (req, res) =>
   }
 });
 
+app.post('/api/payouts/:id/reverse', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const notes = req.body.notes != null ? String(req.body.notes) : null;
+    const result = await reversePayout(id, notes);
+    res.json({ success: true, status: result.newStatus });
+  } catch (error) {
+    const status = error.status || 500;
+    res.status(status).json({ error: error.message || 'Erro ao estornar repasse' });
+  }
+});
+
 // ——— Modelos de contrato (versos) ———
 app.get('/api/contract-templates', auth(), async (req, res) => {
   try {
@@ -4673,6 +5061,26 @@ app.get('/api/audit-logs', auth(['root', 'admin']), async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao listar auditoria' });
+  }
+});
+
+app.get('/api/receivables-analytical', auth(), async (req, res) => {
+  if (req.user.role === 'cliente') {
+    return res.status(403).json({ error: 'Acesso negado' });
+  }
+  try {
+    res.json(
+      await fetchReceivablesAnalytical({
+        status: req.query.status,
+        from: req.query.from,
+        to: req.query.to,
+        clientId: req.query.clientId,
+        q: req.query.q,
+      })
+    );
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao gerar relatório analítico' });
   }
 });
 

@@ -10,6 +10,7 @@ import ContractPrintView from './pages/app/ContractPrintView';
 import EventsPage from './pages/app/EventsPage';
 import AuditPage from './pages/app/AuditPage';
 import ReceivablesPage from './pages/app/ReceivablesPage';
+import ReceivablesCollectionPage from './pages/app/ReceivablesCollectionPage';
 import CompanyFinancePage from './pages/app/CompanyFinancePage';
 import SubscriptionsPage from './pages/app/SubscriptionsPage';
 import AnimalDetailPage from './pages/app/AnimalDetailPage';
@@ -148,6 +149,14 @@ function AppContent() {
             element={
               <ProtectedRoute roles={['root', 'admin', 'user']}>
                 <ReceivablesPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="relatorio-cobranca"
+            element={
+              <ProtectedRoute roles={['root', 'admin', 'user']}>
+                <ReceivablesCollectionPage />
               </ProtectedRoute>
             }
           />

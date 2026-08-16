@@ -126,8 +126,8 @@ export interface AuditLogsResponse {
 }
 
 export interface Client {
-  id: string;
-  name: string;
+    id: string;
+    name: string;
   document_type: 'CPF' | 'CNPJ';
   document: string | null;
   rg?: string | null;
@@ -224,6 +224,75 @@ export interface ReceivablesDashboard {
     contractNumber: string | null;
     daysOverdue: number;
   }>;
+}
+
+export type ReceivablesAnalyticalStatus =
+  | 'overdue_and_upcoming'
+  | 'overdue'
+  | 'upcoming'
+  | 'cancelled'
+  | 'paid'
+  | 'all';
+
+export type CollectionOutcome = 'sent' | 'answered' | 'no_answer' | 'promised' | 'paid' | 'other';
+export type CollectionChannel = 'whatsapp' | 'phone' | 'email' | 'other';
+
+export interface ChargeCollectionEvent {
+  id: string;
+  chargeId: string;
+  userId: string | null;
+  userName: string | null;
+  note: string;
+  outcome: CollectionOutcome;
+  promisedDate: string | null;
+  channel: CollectionChannel;
+  createdAt: string;
+}
+
+export interface ReceivablesAnalyticalItem {
+  id: string;
+  installmentNo: number;
+  installments: number;
+  description: string;
+  animalName: string | null;
+  contractNumber: string | null;
+  contractStatus: string;
+  amount: number;
+  paidAmount: number;
+  dueDate: string;
+  daysOverdue: number;
+  status: string;
+  collector: ChargeCollector;
+  paymentMethod: string;
+  paidAt: string | null;
+  notes: string | null;
+  collectionCount: number;
+}
+
+export interface ReceivablesAnalyticalClient {
+  clientId: string;
+  clientName: string;
+  document: string | null;
+  documentType: string | null;
+  phone: string | null;
+  whatsapp: string | null;
+  email: string | null;
+  originalTotal: number;
+  paidTotal: number;
+  openTotal: number;
+  items: ReceivablesAnalyticalItem[];
+}
+
+export interface ReceivablesAnalyticalReport {
+  summary: {
+    originalTotal: number;
+    paidTotal: number;
+    openTotal: number;
+    itemCount: number;
+    clientCount: number;
+  };
+  clients: ReceivablesAnalyticalClient[];
+  historyAvailable: boolean;
 }
 
 export interface CompanyFinanceSummary {
@@ -571,6 +640,9 @@ export interface Charge {
   status: ChargeStatus;
   paid_at: string | null;
   notes: string | null;
+  assessoria_commission_amount?: number | null;
+  assessoria_commission_status?: string | null;
+  assessoria_payout_id?: string | null;
 }
 
 export interface AnimalOwnerInput {
@@ -1148,6 +1220,29 @@ export async function updateCharge(
   });
 }
 
+export async function bulkUpdateCharges(data: {
+  clientId: string;
+  collector: ChargeCollector;
+  onlyAssessoria?: boolean;
+  onlyOpen?: boolean;
+  notes?: string;
+}) {
+  return request<{ success: boolean; updated: number }>('/charges/bulk-update', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function registerChargeCommission(
+  id: string,
+  data: { amount: number; notes?: string; markChargePaid?: boolean }
+) {
+  return request<{ success: boolean }>(`/charges/${id}/register-commission`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
 export async function getAuditLogs(filters?: {
   userId?: string;
   action?: string;
@@ -1298,6 +1393,13 @@ export async function updatePayout(id: string, data: { status: PayoutStatus; not
   });
 }
 
+export async function reversePayout(id: string, notes?: string) {
+  return request<{ success: boolean; status: PayoutStatus }>(`/payouts/${id}/reverse`, {
+    method: 'POST',
+    body: JSON.stringify({ notes }),
+  });
+}
+
 export async function getContractTemplates(filters?: { active?: boolean }) {
   const params = new URLSearchParams();
   if (filters?.active) params.set('active', '1');
@@ -1327,6 +1429,42 @@ export async function getReceivablesDashboard() {
   return request<ReceivablesDashboard>('/receivables-dashboard');
 }
 
+export async function getReceivablesAnalytical(filters?: {
+  status?: ReceivablesAnalyticalStatus;
+  from?: string;
+  to?: string;
+  clientId?: string;
+  q?: string;
+}) {
+  const params = new URLSearchParams();
+  if (filters?.status) params.set('status', filters.status);
+  if (filters?.from) params.set('from', filters.from);
+  if (filters?.to) params.set('to', filters.to);
+  if (filters?.clientId) params.set('clientId', filters.clientId);
+  if (filters?.q) params.set('q', filters.q);
+  const qs = params.toString() ? `?${params}` : '';
+  return request<ReceivablesAnalyticalReport>(`/receivables-analytical${qs}`);
+}
+
+export async function getChargeCollectionEvents(chargeId: string) {
+  return request<ChargeCollectionEvent[]>(`/charges/${chargeId}/collection-events`);
+}
+
+export async function createChargeCollectionEvent(
+  chargeId: string,
+  data: {
+    note: string;
+    outcome?: CollectionOutcome;
+    promisedDate?: string | null;
+    channel?: CollectionChannel;
+  }
+) {
+  return request<ChargeCollectionEvent>(`/charges/${chargeId}/collection-events`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
 export async function getCompanyFinance() {
   return request<CompanyFinanceSummary>('/company-finance');
 }
@@ -1347,12 +1485,12 @@ export async function updateClientModules(clientId: string, data: ClientSubscrip
 }
 
 export interface DailyReportOcorrencias {
-  clienteIrritado: boolean;
-  cobrancaIndevida: boolean;
-  questionamentoFinanceiro: boolean;
-  contestacaoRegras: boolean;
-  escaladoGestao: boolean;
-  nenhumaCritica: boolean;
+    clienteIrritado: boolean;
+    cobrancaIndevida: boolean;
+    questionamentoFinanceiro: boolean;
+    contestacaoRegras: boolean;
+    escaladoGestao: boolean;
+    nenhumaCritica: boolean;
 }
 
 export interface DailyReportPayload {
