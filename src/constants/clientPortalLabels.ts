@@ -63,7 +63,7 @@ export function resolvePageMeta(pathname: string, isCliente: boolean, isAssessor
     '/app/contratos': { title: 'Contratos', subtitle: 'Vendas e aceites digitais' },
     '/app/modelos-contrato': {
       title: 'Modelos de contrato',
-      subtitle: 'Versos (cláusulas) reutilizáveis na nota de leilão',
+      subtitle: 'Versos (cláusulas) reutilizáveis no contrato de venda',
     },
     '/app/registro-diario': {
       title: 'Registro diário',

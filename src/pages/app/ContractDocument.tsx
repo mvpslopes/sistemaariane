@@ -1,4 +1,5 @@
 import type { Contract } from '../../services/apiService';
+import { DEFAULT_CONTRACT_DOCUMENT_TITLE } from '../../constants/contractDocument';
 import { printContractPdf } from './printContractPdf';
 import { formatDateBR, formatDateTimeBR, todayDateISO } from '../../utils/dateTime';
 
@@ -102,7 +103,7 @@ export default function ContractDocument({
           />
         </div>
         <h1 className="text-2xl font-semibold tracking-tight">
-          {contract.template_title || 'Nota de Leilão e Contrato'}
+          {contract.template_title || DEFAULT_CONTRACT_DOCUMENT_TITLE}
         </h1>
         <p className="mt-1 text-sm text-brand-olive">
           Nº {contract.contract_number || contract.id}

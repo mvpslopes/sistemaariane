@@ -11,7 +11,7 @@ INSERT INTO contract_templates (name, code, title, body_text, is_default, active
 VALUES (
   'Animal 100% com comissões (ambas as partes)',
   'ANIMAL_100_COMISSOES',
-  'NOTA DE LEILÃO E CONTRATO COM RESERVA DE DOMÍNIO',
+  'CONTRATO PARTICULAR DE COMPRA E VENDA DE SEMOVENTE COM RESERVA DE DOMÍNIO',
   'Pelo presente instrumento particular de COMPRA E VENDA COM RESERVA DE DOMÍNIO, as partes acima qualificadas ajustam e firmam o presente contrato, que se regerá pelas cláusulas e condições a seguir:
 
 CLÁUSULA 1ª - DO OBJETO DO CONTRATO

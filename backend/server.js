@@ -3664,7 +3664,7 @@ async function clicksignSendContract(contract, pdfBase64Raw) {
   const lot = String(contract.lot_label || '').trim();
   const sellerName = String(contract.seller_name || '').trim();
   const buyerName = String(contract.buyer_name || '').trim();
-  const title = String(contract.template_title || '').trim() || 'Nota de Leilão e Contrato';
+  const title = String(contract.template_title || '').trim() || 'CONTRATO PARTICULAR DE COMPRA E VENDA DE SEMOVENTE COM RESERVA DE DOMÍNIO';
 
   const envelopeParts = [title, String(number)];
   if (lot && lot !== '—') envelopeParts.push(`Lote ${lot}`);
@@ -4895,7 +4895,7 @@ app.post('/api/contract-templates', auth(['root', 'admin', 'user']), async (req,
       [
         String(name).trim(),
         code || null,
-        title || 'NOTA DE LEILÃO E CONTRATO COM RESERVA DE DOMÍNIO',
+        title || 'CONTRATO PARTICULAR DE COMPRA E VENDA DE SEMOVENTE COM RESERVA DE DOMÍNIO',
         bodyText,
         isDefault ? 1 : 0,
         active ? 1 : 0,

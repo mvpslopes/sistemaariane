@@ -1,4 +1,5 @@
 import type { Contract } from '../../services/apiService';
+import { DEFAULT_CONTRACT_DOCUMENT_TITLE } from '../../constants/contractDocument';
 import { formatDateBR, formatDateLongBR, formatDateTimeBR, parseAppDate, todayDateISO, APP_TIMEZONE } from '../../utils/dateTime';
 
 const money = (v: number) =>
@@ -113,8 +114,7 @@ export function buildContractHtml(contract: Contract): string {
   const logoUrl = `${window.location.origin}/logo-ariane-wide-transparente.png`;
   const emit = formatDateTimeBR(contract.created_at || new Date());
   const number = contract.contract_number || contract.id;
-  const title =
-    contract.template_title || 'NOTA DE LEILÃO E CONTRATO COM RESERVA DE DOMÍNIO';
+  const title = contract.template_title || DEFAULT_CONTRACT_DOCUMENT_TITLE;
   const lot = contract.lot_label || '—';
   const share = contract.share_pct != null ? Number(contract.share_pct).toFixed(2) : '100,00';
   const qtyNum = Number(contract.quantity ?? 1);

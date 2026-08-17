@@ -1314,7 +1314,7 @@ function clicksign_send_contract(array $config, array $contract, string $pdfBase
     $lot = trim((string)($contract['lot_label'] ?? ''));
     $sellerName = trim((string)($contract['seller_name'] ?? ''));
     $buyerName = trim((string)($contract['buyer_name'] ?? ''));
-    $title = trim((string)($contract['template_title'] ?? '')) ?: 'Nota de Leilão e Contrato';
+    $title = trim((string)($contract['template_title'] ?? '')) ?: 'CONTRATO PARTICULAR DE COMPRA E VENDA DE SEMOVENTE COM RESERVA DE DOMÍNIO';
 
     $envelopeParts = [$title, (string)$number];
     if ($lot !== '' && $lot !== '—') $envelopeParts[] = 'Lote ' . $lot;
@@ -5290,7 +5290,7 @@ if ($resource === 'contract-templates') {
             $ins->execute([
                 $name,
                 $body['code'] ?? null,
-                $body['title'] ?? 'NOTA DE LEILÃO E CONTRATO COM RESERVA DE DOMÍNIO',
+                $body['title'] ?? 'CONTRATO PARTICULAR DE COMPRA E VENDA DE SEMOVENTE COM RESERVA DE DOMÍNIO',
                 $bodyText,
                 $isDefault ? 1 : 0,
                 $active ? 1 : 0,

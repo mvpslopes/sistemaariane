@@ -14,6 +14,7 @@ import { FilterPills } from '../../components/FilterPills';
 import { ListTableToolbar } from '../../components/ListTableToolbar';
 import { SortTh } from '../../components/SortTh';
 import { useSortableTable, cmpStr, sortRows } from '../../hooks/useSortableTable';
+import { DEFAULT_CONTRACT_DOCUMENT_TITLE } from '../../constants/contractDocument';
 
 type StatusFilter = 'all' | 'active' | 'inactive';
 type SortKey = 'name' | 'code' | 'status';
@@ -30,7 +31,7 @@ const inputClass =
 const emptyForm = {
   name: '',
   code: '',
-  title: 'NOTA DE LEILÃO E CONTRATO COM RESERVA DE DOMÍNIO',
+  title: DEFAULT_CONTRACT_DOCUMENT_TITLE,
   bodyText: '',
   isDefault: false,
   active: true,

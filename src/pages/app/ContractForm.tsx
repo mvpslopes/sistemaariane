@@ -18,6 +18,7 @@ import {
   type SaleType,
 } from '../../services/apiService';
 import { CHARGE_COLLECTOR_LABELS } from '../../constants/chargeCollectors';
+import { DEFAULT_CONTRACT_DOCUMENT_TITLE } from '../../constants/contractDocument';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import Loading from '../../components/Loading';
@@ -1080,7 +1081,7 @@ export default function ContractForm({
             value={form.versoTitle}
             onChange={(e) => set('versoTitle', e.target.value)}
             className={inputClass}
-            placeholder="NOTA DE LEILÃO E CONTRATO COM RESERVA DE DOMÍNIO"
+            placeholder={DEFAULT_CONTRACT_DOCUMENT_TITLE}
           />
         </label>
         <label className="block space-y-1.5">
