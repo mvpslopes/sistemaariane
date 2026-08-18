@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import { resolveClicksignSignerKey } from '../services/apiService';
 
 declare global {
   interface Window {
@@ -67,10 +68,12 @@ async function fetchWidgetEndpoint(): Promise<string> {
 
 export default function SignPage() {
   const { signerKey = '' } = useParams();
+  const navigate = useNavigate();
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<InstanceType<NonNullable<typeof window.Clicksign>> | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'signed' | 'error'>('loading');
   const [error, setError] = useState('');
+  const [resolvedKey, setResolvedKey] = useState<string | null>(null);
 
   const applyHeight = (requested?: number | null) => {
     const el = containerRef.current;
@@ -97,6 +100,28 @@ export default function SignPage() {
       setError('Link de assinatura inválido');
       return;
     }
+
+    (async () => {
+      try {
+        const resolved = await resolveClicksignSignerKey(key);
+        if (cancelled) return;
+        if (resolved.replaced && resolved.signerKey && resolved.signerKey !== key) {
+          navigate(`/assinar/${encodeURIComponent(resolved.signerKey)}`, { replace: true });
+          return;
+        }
+        setResolvedKey(resolved.signerKey || key);
+      } catch (e: unknown) {
+        if (cancelled) return;
+        setStatus('error');
+        setError(e instanceof Error ? e.message : 'Link de assinatura inválido');
+      }
+    })();
+  }, [signerKey, navigate]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const key = (resolvedKey || '').trim();
+    if (!key) return;
 
     const onWinResize = () => applyHeight();
     window.addEventListener('resize', onWinResize);
@@ -161,7 +186,7 @@ export default function SignPage() {
         widgetRef.current = null;
       }
     };
-  }, [signerKey]);
+  }, [resolvedKey]);
 
   return (
     <div className="flex min-h-screen flex-col bg-brand-off-white text-brand-dark-brown">
@@ -181,8 +206,8 @@ export default function SignPage() {
             <p className="font-medium">Não foi possível abrir a assinatura</p>
             <p className="mt-1">{error}</p>
             <p className="mt-3 text-red-600/80">
-              Se o erro persistir, cancele o envio no contrato e envie novamente à Clicksign, ou use o
-              link do e-mail da Clicksign.
+              Se o e-mail foi alterado recentemente, o link antigo deixa de funcionar. Peça um novo
+              link no sistema (WhatsApp) ou abra o e-mail mais recente enviado pela Clicksign.
             </p>
           </div>
         )}

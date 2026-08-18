@@ -588,6 +588,104 @@ app.get('/api/clicksign-widget', (_req, res) => {
   }
 });
 
+function clicksignParseSignerAliases(raw) {
+  if (!raw) return {};
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+async function clicksignPersistSignerAliases(contractId, newAliases) {
+  if (!newAliases || !Object.keys(newAliases).length) return;
+  try {
+    const [rows] = await pool.execute(
+      'SELECT clicksign_signer_aliases FROM contracts WHERE id = ?',
+      [contractId]
+    );
+    const aliases = clicksignParseSignerAliases(rows[0]?.clicksign_signer_aliases);
+    for (const [oldId, newId] of Object.entries(newAliases)) {
+      const o = String(oldId || '').trim();
+      const n = String(newId || '').trim();
+      if (o && n) aliases[o] = n;
+    }
+    await pool.execute('UPDATE contracts SET clicksign_signer_aliases = ? WHERE id = ?', [
+      JSON.stringify(aliases),
+      contractId,
+    ]);
+  } catch {
+    // coluna ainda não migrada
+  }
+}
+
+async function clicksignResolveSignerKey(key) {
+  const trimmed = String(key || '').trim();
+  if (!trimmed) {
+    const err = new Error('Link de assinatura inválido');
+    err.status = 400;
+    throw err;
+  }
+
+  try {
+    const [rows] = await pool.execute(
+      `SELECT id, clicksign_envelope_id, clicksign_signer_aliases
+       FROM contracts
+       WHERE clicksign_envelope_id IS NOT NULL AND clicksign_status = 'running'`
+    );
+    for (const row of rows) {
+      const aliases = clicksignParseSignerAliases(row.clicksign_signer_aliases);
+      if (aliases[trimmed]) {
+        return {
+          signerKey: String(aliases[trimmed]),
+          replaced: true,
+          contractId: String(row.id),
+        };
+      }
+    }
+  } catch {
+    /* coluna pode não existir */
+  }
+
+  const [rows] = await pool.execute(
+    `SELECT id, clicksign_envelope_id
+     FROM contracts
+     WHERE clicksign_envelope_id IS NOT NULL AND clicksign_status = 'running'`
+  );
+  for (const row of rows) {
+    const envelopeId = String(row.clicksign_envelope_id || '').trim();
+    if (!envelopeId) continue;
+    try {
+      const signersRes = await clicksignRequest('GET', `/api/v3/envelopes/${envelopeId}/signers`);
+      for (const cs of signersRes?.data || []) {
+        if (String(cs.id) === trimmed) {
+          return { signerKey: trimmed, replaced: false, contractId: String(row.id) };
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  const err = new Error(
+    'Este link de assinatura expirou (geralmente após atualização de e-mail). ' +
+      'Peça um novo link pelo WhatsApp ou abra o e-mail mais recente da Clicksign.'
+  );
+  err.status = 404;
+  throw err;
+}
+
+app.get('/api/clicksign-signer/:key', async (req, res) => {
+  try {
+    const resolved = await clicksignResolveSignerKey(req.params.key);
+    res.json({ success: true, ...resolved });
+  } catch (error) {
+    const status = error.status || 500;
+    res.status(status).json({ error: error.message || 'Falha ao validar link de assinatura' });
+  }
+});
+
 // Auth
 app.post('/api/login', async (req, res) => {
   try {
@@ -3752,7 +3850,16 @@ async function clicksignRequest(method, pathUrl, payload) {
     },
     body: payload != null ? JSON.stringify(payload) : undefined,
   });
-  const json = await res.json().catch(() => ({}));
+  if (res.status === 204) return {};
+  const text = await res.text();
+  let json = {};
+  if (text) {
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = {};
+    }
+  }
   if (!res.ok) {
     const msg =
       json?.errors?.[0]?.detail ||
@@ -3808,6 +3915,320 @@ function clicksignSignerAttributes(s) {
     warning = `${label.charAt(0).toUpperCase()}${label.slice(1)} sem ${missing.join(' e ')} no cadastro`;
   }
   return [attrs, warning];
+}
+
+function clicksignNamesMatch(a, b) {
+  const na = String(a || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, ' ');
+  const nb = String(b || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, ' ');
+  return na !== '' && na === nb;
+}
+
+function clicksignContractParties(contract) {
+  return [
+    {
+      name: String(contract.seller_name || '').trim(),
+      email: String(contract.seller_email || '').trim(),
+      document: contract.seller_document,
+      document_type: contract.seller_document_type,
+      birth_date: contract.seller_birth_date,
+      role: 'seller',
+      label: 'Vendedor',
+      partyRole: 'seller',
+    },
+    {
+      name: String(contract.buyer_name || '').trim(),
+      email: String(contract.buyer_email || '').trim(),
+      document: contract.buyer_document,
+      document_type: contract.buyer_document_type,
+      birth_date: contract.buyer_birth_date,
+      role: 'buyer',
+      label: 'Comprador',
+      partyRole: 'buyer',
+    },
+    {
+      name: String(contract.witness1_name || '').trim(),
+      email: String(contract.witness1_email || '').trim(),
+      document: contract.witness1_document,
+      document_type: contract.witness1_document_type,
+      birth_date: contract.witness1_birth_date,
+      role: 'witness',
+      label: 'Testemunha 1',
+      partyRole: 'witness1',
+    },
+    {
+      name: String(contract.witness2_name || '').trim(),
+      email: String(contract.witness2_email || '').trim(),
+      document: contract.witness2_document,
+      document_type: contract.witness2_document_type,
+      birth_date: contract.witness2_birth_date,
+      role: 'witness',
+      label: 'Testemunha 2',
+      partyRole: 'witness2',
+    },
+  ];
+}
+
+async function clicksignCollectSignedEmails(envelopeId, documentId) {
+  const signedEmails = {};
+  const collect = (events) => {
+    for (const ev of events || []) {
+      const email = String(
+        ev?.attributes?.data?.user?.email || ev?.attributes?.data?.signer?.email || ''
+      )
+        .trim()
+        .toLowerCase();
+      if (email) signedEmails[email] = true;
+    }
+  };
+  if (documentId) {
+    try {
+      const eventsRes = await clicksignRequest(
+        'GET',
+        `/api/v3/envelopes/${envelopeId}/documents/${documentId}/events?filter%5Bname%5D=sign`
+      );
+      collect(eventsRes?.data);
+    } catch {
+      /* fallback */
+    }
+  }
+  if (!Object.keys(signedEmails).length) {
+    try {
+      const eventsRes = await clicksignRequest(
+        'GET',
+        `/api/v3/envelopes/${envelopeId}/events?filter%5Bname%5D=sign`
+      );
+      collect(eventsRes?.data);
+    } catch {
+      /* segue */
+    }
+  }
+  return signedEmails;
+}
+
+function clicksignFindCsSignerForParty(party, csSigners, usedIds) {
+  const targetEmail = String(party.email || '')
+    .trim()
+    .toLowerCase();
+  for (const cs of csSigners) {
+    const id = String(cs?.id || '');
+    if (!id || usedIds[id]) continue;
+    const email = String(cs?.attributes?.email || '')
+      .trim()
+      .toLowerCase();
+    if (targetEmail && email === targetEmail) return cs;
+  }
+  for (const cs of csSigners) {
+    const id = String(cs?.id || '');
+    if (!id || usedIds[id]) continue;
+    if (clicksignNamesMatch(party.name, cs?.attributes?.name)) return cs;
+  }
+  return null;
+}
+
+async function clicksignAddBulkRequirements(envelopeId, documentId, signerId, role) {
+  await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/bulk_requirements`, {
+    'atomic:operations': [
+      {
+        op: 'add',
+        data: {
+          type: 'requirements',
+          attributes: { action: 'agree', role },
+          relationships: {
+            document: { data: { type: 'documents', id: documentId } },
+            signer: { data: { type: 'signers', id: signerId } },
+          },
+        },
+      },
+      {
+        op: 'add',
+        data: {
+          type: 'requirements',
+          attributes: { action: 'provide_evidence', auth: 'email' },
+          relationships: {
+            document: { data: { type: 'documents', id: documentId } },
+            signer: { data: { type: 'signers', id: signerId } },
+          },
+        },
+      },
+    ],
+  });
+}
+
+async function clicksignCreateSignerOnRunningEnvelope(envelopeId, documentId, signer) {
+  const [signerAttrs] = clicksignSignerAttributes(signer);
+  const signerRes = await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/signers`, {
+    data: { type: 'signers', attributes: signerAttrs },
+  });
+  const signerId = signerRes?.data?.id;
+  if (!signerId) throw new Error(`Falha ao cadastrar signatário: ${signer.label}`);
+  await clicksignAddBulkRequirements(envelopeId, documentId, String(signerId), signer.role);
+  return String(signerId);
+}
+
+async function clicksignNotifySigner(envelopeId, signerId) {
+  await clicksignRequest(
+    'POST',
+    `/api/v3/envelopes/${envelopeId}/signers/${encodeURIComponent(signerId)}/notifications`,
+    { data: { type: 'notifications', attributes: {} } }
+  );
+}
+
+async function clicksignRequirementsBySigner(envelopeId) {
+  const map = {};
+  try {
+    const reqsRes = await clicksignRequest('GET', `/api/v3/envelopes/${envelopeId}/requirements?include=signer`);
+    for (const req of reqsRes?.data || []) {
+      const signerId = String(req?.relationships?.signer?.data?.id || '');
+      if (!signerId) continue;
+      if (!map[signerId]) map[signerId] = { agree: false, evidence: false };
+      const action = String(req?.attributes?.action || '');
+      if (action === 'agree') map[signerId].agree = true;
+      if (action === 'provide_evidence') map[signerId].evidence = true;
+    }
+  } catch {
+    /* segue */
+  }
+  return map;
+}
+
+function clicksignSignerIsReady(reqStatus) {
+  return reqStatus && reqStatus.agree && reqStatus.evidence;
+}
+
+async function clicksignAddSignerWithRequirements(envelopeId, documentId, signer) {
+  const [signerAttrs] = clicksignSignerAttributes(signer);
+  const signerRes = await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/signers`, {
+    data: { type: 'signers', attributes: signerAttrs },
+  });
+  const signerId = signerRes?.data?.id;
+  if (!signerId) throw new Error(`Falha ao cadastrar signatário: ${signer.label}`);
+  await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/requirements`, {
+    data: {
+      type: 'requirements',
+      attributes: { action: 'agree', role: signer.role },
+      relationships: {
+        document: { data: { type: 'documents', id: documentId } },
+        signer: { data: { type: 'signers', id: signerId } },
+      },
+    },
+  });
+  await clicksignRequest('POST', `/api/v3/envelopes/${envelopeId}/requirements`, {
+    data: {
+      type: 'requirements',
+      attributes: { action: 'provide_evidence', auth: 'email' },
+      relationships: {
+        document: { data: { type: 'documents', id: documentId } },
+        signer: { data: { type: 'signers', id: signerId } },
+      },
+    },
+  });
+  return String(signerId);
+}
+
+async function clicksignSyncSignerEmails(contract, onlyPartyRole = null) {
+  const envelopeId = String(contract.clicksign_envelope_id || '').trim();
+  const documentId = String(contract.clicksign_document_id || '').trim();
+  if (!envelopeId || !documentId) {
+    const err = new Error('Contrato ainda não foi enviado à Clicksign');
+    err.status = 400;
+    throw err;
+  }
+  const env = await clicksignRequest('GET', `/api/v3/envelopes/${envelopeId}`);
+  const status = env?.data?.attributes?.status || contract.clicksign_status || '';
+  if (status === 'closed') {
+    const err = new Error('Contrato já finalizado — não é possível alterar signatários');
+    err.status = 400;
+    throw err;
+  }
+  if (status !== 'running') {
+    const err = new Error('Só é possível atualizar signatários enquanto o envelope está em processo');
+    err.status = 400;
+    throw err;
+  }
+  const signersRes = await clicksignRequest('GET', `/api/v3/envelopes/${envelopeId}/signers`);
+  const csSigners = Array.isArray(signersRes?.data) ? signersRes.data : [];
+  const signedEmails = await clicksignCollectSignedEmails(envelopeId, documentId);
+  const reqBySigner = await clicksignRequirementsBySigner(envelopeId);
+
+  const updated = [];
+  const unchanged = [];
+  const skipped = [];
+  const warnings = [];
+  const aliases = {};
+  const usedIds = {};
+
+  for (const party of clicksignContractParties(contract)) {
+    const partyRole = party.partyRole || '';
+    if (onlyPartyRole && partyRole !== onlyPartyRole) continue;
+
+    const label = party.label;
+    const newEmail = String(party.email || '')
+      .trim()
+      .toLowerCase();
+    if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(party.email)) {
+      skipped.push({ label, partyRole, reason: 'E-mail inválido no cadastro' });
+      continue;
+    }
+    const cs = clicksignFindCsSignerForParty(party, csSigners, usedIds);
+    if (!cs) {
+      skipped.push({ label, partyRole, reason: 'Signatário não encontrado na Clicksign' });
+      continue;
+    }
+    const csId = String(cs.id);
+    const oldEmail = String(cs.attributes?.email || '')
+      .trim()
+      .toLowerCase();
+    usedIds[csId] = true;
+
+    if (signedEmails[oldEmail] || signedEmails[newEmail]) {
+      skipped.push({ label, partyRole, reason: 'Já assinou — dados não podem ser alterados' });
+      continue;
+    }
+
+    const ready = clicksignSignerIsReady(reqBySigner[csId]);
+    const emailChanged = oldEmail !== newEmail;
+
+    if (!emailChanged && ready) {
+      unchanged.push({ label, partyRole, email: party.email });
+      continue;
+    }
+
+    let signerId = csId;
+    const fromEmail = cs.attributes?.email || oldEmail;
+
+    if (emailChanged) {
+      await clicksignRequest('DELETE', `/api/v3/envelopes/${envelopeId}/signers/${csId}`);
+      signerId = await clicksignCreateSignerOnRunningEnvelope(envelopeId, documentId, party);
+      aliases[csId] = signerId;
+      usedIds[signerId] = true;
+    } else if (!ready) {
+      await clicksignAddBulkRequirements(envelopeId, documentId, csId, party.role);
+    }
+
+    try {
+      await clicksignNotifySigner(envelopeId, signerId);
+    } catch {
+      warnings.push(`${label}: dados atualizados, mas falha ao enviar notificação`);
+    }
+
+    updated.push({
+      label,
+      partyRole,
+      from: fromEmail,
+      to: party.email,
+      oldSignerId: csId,
+      newSignerId: signerId,
+      repaired: !emailChanged && !ready,
+    });
+  }
+
+  return { updated, unchanged, skipped, warnings, aliases };
 }
 
 async function clicksignSendContract(contract, pdfBase64Raw) {
@@ -4200,6 +4621,9 @@ async function clicksignFetchStatus(contract, publicOrigin = null) {
     totalCount: signers.length,
     signers,
     signedFileUrl: null,
+    emailDrift: signers.some(
+      (s) => !s.signed && (s.role === 'other' || !s.signerId)
+    ),
   };
 }
 
@@ -4273,6 +4697,49 @@ app.get('/api/contracts/:id/clicksign/signed-pdf', auth(['root', 'admin', 'user'
     console.error(error);
     const status = error.status || 500;
     res.status(status).json({ error: error.message || 'Falha ao obter PDF assinado' });
+  }
+});
+
+app.post('/api/contracts/:id/clicksign/sync-emails', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [rows] = await pool.execute(`${contractSelect} AND c.id = ?`, [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Contrato não encontrado' });
+    const contract = mapContract(rows[0]);
+    const partyRole = String(req.body?.partyRole || '').trim();
+    const result = await clicksignSyncSignerEmails(contract, partyRole || null);
+    if (result.aliases && Object.keys(result.aliases).length) {
+      await clicksignPersistSignerAliases(id, result.aliases);
+    }
+    const summary = `${result.updated.length} signatário(s) atualizado(s)`;
+    await auditLog(
+      req,
+      req.user,
+      'update',
+      'contracts',
+      String(id),
+      `E-mails Clicksign sincronizados — ${contract.contract_number || id} — ${summary}`,
+      true,
+      { updated: result.updated }
+    );
+    const publicOrigin = `${req.protocol}://${req.get('host')}`;
+    const tracking = await clicksignFetchStatus(contract, publicOrigin);
+    await clicksignPersistProgress(
+      id,
+      Number(tracking.signedCount || 0),
+      Number(tracking.totalCount || 0),
+      tracking.status || null
+    );
+    res.json({
+      success: true,
+      message: result.updated.length ? summary : 'Dados já estão alinhados com o cadastro',
+      ...result,
+      tracking,
+    });
+  } catch (error) {
+    console.error(error);
+    const status = error.status || 500;
+    res.status(status).json({ error: error.message || 'Falha ao atualizar e-mails' });
   }
 });
 

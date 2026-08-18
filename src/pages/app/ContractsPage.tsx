@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Search, FileText, Printer, Pencil, Send, RefreshCw, CheckCircle2, Clock, Download, Copy, MessageCircle, Mail } from 'lucide-react';
+import { Plus, Search, FileText, Printer, Pencil, Send, RefreshCw, CheckCircle2, Clock, Download, Copy, MessageCircle, Mail, AtSign, UserCog } from 'lucide-react';
 import {
   getContract,
   getContracts,
@@ -8,6 +8,7 @@ import {
   sendContractToClicksign,
   notifyClicksign,
   cancelClicksignEnvelope,
+  syncClicksignEmails,
   updateContract,
   refreshContractsSignatureProgress,
   type Contract,
@@ -108,6 +109,8 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const [loadingClicksign, setLoadingClicksign] = useState(false);
   const [notifyingClicksign, setNotifyingClicksign] = useState<string | null>(null);
   const [cancellingClicksign, setCancellingClicksign] = useState(false);
+  const [syncingClicksignEmails, setSyncingClicksignEmails] = useState(false);
+  const [updatingSignerRole, setUpdatingSignerRole] = useState<string | null>(null);
   const [signatureProgressLoading, setSignatureProgressLoading] = useState(false);
   const [notifyingContractId, setNotifyingContractId] = useState<string | null>(null);
   const preselectedAnimal = initialAnimalId;
@@ -221,7 +224,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
     }
   };
 
-  const onSendClicksign = async () => {
+  const sendClicksignNow = async (skipConfirm = false) => {
     if (!detail || !canUpdate) return;
     if (!detail.witness1_id || !detail.witness2_id) {
       toastError('Cadastre as duas testemunhas no contrato antes de enviar');
@@ -236,6 +239,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
       return;
     }
     if (
+      !skipConfirm &&
       !confirm(
         'Enviar este contrato para assinatura na Clicksign?\n\nVendedor, comprador e as 2 testemunhas receberão o e-mail para assinar.'
       )
@@ -262,6 +266,8 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
       setSendingClicksign(false);
     }
   };
+
+  const onSendClicksign = () => sendClicksignNow(false);
 
   const digitsOnly = (v?: string | null) => (v || '').replace(/\D/g, '');
 
@@ -362,6 +368,63 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
       toastError(e.message || 'Erro ao cancelar envio');
     } finally {
       setCancellingClicksign(false);
+    }
+  };
+
+  const onSyncClicksignEmails = async (partyRole?: string | null) => {
+    if (!detail || !canUpdate) return;
+    const signedCount = clicksignTracking?.signedCount ?? detail.clicksign_signed_count ?? 0;
+    const targetLabel = partyRole
+      ? clicksignTracking?.signers?.find((s) => s.partyRole === partyRole)?.label
+      : null;
+    const message = targetLabel
+      ? `Atualizar dados de ${targetLabel} na Clicksign com o cadastro?\n\nQuem já assinou não será afetado.`
+      : signedCount > 0
+        ? 'Sincronizar e-mails pendentes com o cadastro?\n\nQuem já assinou não será afetado.'
+        : 'Sincronizar e-mails com o cadastro?';
+    if (!confirm(message)) return;
+
+    if (partyRole) setUpdatingSignerRole(partyRole);
+    else setSyncingClicksignEmails(true);
+    try {
+      const res = await syncClicksignEmails(detail.id, partyRole);
+      if (res.tracking) setClicksignTracking(res.tracking);
+      success(res.message || 'Dados atualizados');
+      if (res.warnings?.length) {
+        res.warnings.forEach((w) => toastError(w));
+      }
+      await load();
+    } catch (e: any) {
+      toastError(e.message || 'Erro ao atualizar dados do signatário');
+    } finally {
+      setSyncingClicksignEmails(false);
+      setUpdatingSignerRole(null);
+    }
+  };
+
+  const onResendClicksignWithUpdatedEmails = async () => {
+    if (!detail || !canUpdate) return;
+    const signedCount = clicksignTracking?.signedCount ?? detail.clicksign_signed_count ?? 0;
+    if (signedCount > 0) {
+      await onSyncClicksignEmails();
+      return;
+    }
+    if (
+      !confirm(
+        'Nenhuma assinatura feita ainda.\n\nO sistema vai CANCELAR o envio atual e ENVIAR de novo com os e-mails do cadastro.\n\nContinuar?'
+      )
+    ) {
+      return;
+    }
+    setSyncingClicksignEmails(true);
+    try {
+      await cancelClicksignEnvelope(detail.id);
+      setClicksignTracking(null);
+      await sendClicksignNow(true);
+    } catch (e: any) {
+      toastError(e.message || 'Erro ao reenviar contrato');
+    } finally {
+      setSyncingClicksignEmails(false);
     }
   };
 
@@ -804,6 +867,31 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                         (clicksignTracking?.status || detail.clicksign_status) === 'running' && (
                           <button
                             type="button"
+                            disabled={syncingClicksignEmails || sendingClicksign || loadingClicksign}
+                            onClick={() => onResendClicksignWithUpdatedEmails()}
+                            title={
+                              (clicksignTracking?.signedCount ?? 0) > 0
+                                ? 'Atualiza signatários pendentes com os e-mails do cadastro, sem afetar quem já assinou'
+                                : 'Cancela o envio atual e envia de novo com os e-mails do cadastro'
+                            }
+                            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium disabled:opacity-50 ${
+                              clicksignTracking?.emailDrift || clicksignTracking?.needsResend
+                                ? 'border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100'
+                                : 'border-brand-beige bg-white text-brand-brown hover:bg-brand-beige/40'
+                            }`}
+                          >
+                            <AtSign className="h-3.5 w-3.5" />
+                            {syncingClicksignEmails || sendingClicksign
+                              ? 'Atualizando...'
+                              : (clicksignTracking?.signedCount ?? 0) > 0
+                                ? 'Atualizar e-mails do cadastro'
+                                : 'Reenviar com e-mails atualizados'}
+                          </button>
+                        )}
+                      {canUpdate &&
+                        (clicksignTracking?.status || detail.clicksign_status) === 'running' && (
+                          <button
+                            type="button"
                             disabled={!!notifyingClicksign}
                             onClick={() => onNotifyClicksign()}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-brand-beige bg-white px-3 py-1.5 text-xs font-medium text-brand-brown hover:bg-brand-beige/40 disabled:opacity-50"
@@ -865,6 +953,19 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                       )}
                     </div>
 
+                    {(clicksignTracking?.emailDrift || clicksignTracking?.needsResend) && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                        {clicksignTracking?.needsResend
+                          ? 'Um ou mais signatários estão incompletos na Clicksign (link quebrado). Use '
+                          : 'O e-mail de alguém mudou no cadastro. Use '}
+                        <strong>Atualizar dados do signatário</strong> na linha correspondente, ou{' '}
+                        <strong>Atualizar e-mails do cadastro</strong> para sincronizar todos os pendentes.
+                        {(clicksignTracking?.signedCount ?? 0) > 0
+                          ? ' Quem já assinou não será afetado.'
+                          : ' Se ninguém assinou ainda, também é possível cancelar e reenviar.'}
+                      </div>
+                    )}
+
                     {loadingClicksign && !clicksignTracking ? (
                       <p className="text-xs text-brand-olive">Carregando acompanhamento...</p>
                     ) : clicksignTracking?.signers?.length ? (
@@ -887,7 +988,11 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                                 </p>
                                 <span
                                   className={`text-xs font-semibold ${
-                                    s.signed ? 'text-emerald-700' : 'text-amber-700'
+                                    s.signed
+                                      ? 'text-emerald-700'
+                                      : s.status === 'invalido'
+                                        ? 'text-red-700'
+                                        : 'text-amber-700'
                                   }`}
                                 >
                                   {s.signed && s.signedAt
@@ -896,7 +1001,27 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                                 </span>
                               </div>
                               {s.email && (
-                                <p className="truncate text-xs text-brand-olive">{s.email}</p>
+                                <p className="truncate text-xs text-brand-olive">
+                                  {s.email}
+                                  {s.emailDrift && s.clicksignEmail && (
+                                    <span className="ml-1 text-amber-700">
+                                      (Clicksign: {s.clicksignEmail})
+                                    </span>
+                                  )}
+                                </p>
+                              )}
+                              {!s.signed && canUpdate && s.canUpdate && (s.emailDrift || s.needsResend) && s.partyRole && (
+                                <button
+                                  type="button"
+                                  disabled={!!updatingSignerRole || syncingClicksignEmails}
+                                  onClick={() => onSyncClicksignEmails(s.partyRole)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                                >
+                                  <UserCog className="h-3 w-3" />
+                                  {updatingSignerRole === s.partyRole
+                                    ? 'Atualizando...'
+                                    : 'Atualizar dados do signatário'}
+                                </button>
                               )}
                               {!s.signed && canShareSignLinks && (
                                 <div className="space-y-1.5">
@@ -934,8 +1059,8 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                                     )}
                                   </div>
                                   <p className="text-[11px] text-brand-olive/80">
-                                    O link abre a assinatura no sistema (widget Clicksign). Contratos
-                                    enviados antes desta atualização podem exigir um novo envio.
+                                    O link abre a assinatura no sistema (widget Clicksign).
+                                    {s.needsResend && ' Este signatário precisa ser atualizado antes de copiar o link.'}
                                   </p>
                                 </div>
                               )}

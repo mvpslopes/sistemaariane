@@ -1149,17 +1149,22 @@ export async function sendContractToClicksign(id: string, pdfBase64: string) {
 
 export interface ClicksignSignerStatus {
   role: string;
+  partyRole?: string;
   label: string;
   name: string;
   email?: string | null;
+  clicksignEmail?: string | null;
   phone?: string | null;
   whatsapp?: string | null;
   signerId?: string | null;
   signUrl?: string | null;
   signed: boolean;
-  status: 'assinado' | 'pendente' | string;
+  status: 'assinado' | 'pendente' | 'invalido' | string;
   statusLabel: string;
   signedAt?: string | null;
+  needsResend?: boolean;
+  emailDrift?: boolean;
+  canUpdate?: boolean;
 }
 
 export interface ClicksignTracking {
@@ -1172,6 +1177,33 @@ export interface ClicksignTracking {
   totalCount: number;
   signers: ClicksignSignerStatus[];
   signedFileUrl?: string | null;
+  emailDrift?: boolean;
+  needsResend?: boolean;
+}
+
+export interface ClicksignEmailSyncResult {
+  success: boolean;
+  message: string;
+  updated: Array<{
+    label: string;
+    partyRole?: string;
+    from: string;
+    to: string;
+    oldSignerId?: string;
+    newSignerId?: string;
+    repaired?: boolean;
+  }>;
+  unchanged: Array<{ label: string; partyRole?: string; email: string }>;
+  skipped: Array<{ label: string; partyRole?: string; reason: string }>;
+  warnings: string[];
+  tracking?: ClicksignTracking;
+}
+
+export interface ClicksignSignerResolve {
+  success: boolean;
+  signerKey: string;
+  replaced: boolean;
+  contractId?: string;
 }
 
 export async function getClicksignStatus(id: string) {
@@ -1193,6 +1225,25 @@ export async function notifyClicksign(id: string, signerId?: string | null) {
     method: 'POST',
     body: JSON.stringify(signerId ? { signerId } : {}),
   });
+}
+
+export async function syncClicksignEmails(id: string, partyRole?: string | null) {
+  return request<ClicksignEmailSyncResult>(`/contracts/${id}/clicksign/sync-emails`, {
+    method: 'POST',
+    body: JSON.stringify(partyRole ? { partyRole } : {}),
+  });
+}
+
+/** Valida ou redireciona link de assinatura (público, sem login). */
+export async function resolveClicksignSignerKey(key: string) {
+  const apiBase = (import.meta.env.VITE_API_URL as string) || '/api.php';
+  const url = `${apiBase.replace(/\/$/, '')}/clicksign-signer/${encodeURIComponent(key)}`;
+  const res = await fetch(url);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.error || 'Link de assinatura inválido');
+  }
+  return data as ClicksignSignerResolve;
 }
 
 export async function getCharges(filters?: {
