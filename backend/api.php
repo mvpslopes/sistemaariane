@@ -124,11 +124,12 @@ function request_authorization_header(): string {
     return '';
 }
 
-function bearer_user(string $secret): ?array {
+function bearer_user(string $secret, ?PDO $pdo = null): ?array {
     $header = request_authorization_header();
     if (!preg_match('/Bearer\\s+(\\S+)/', $header, $m)) return null;
     $payload = verify_token($m[1], $secret);
     if (!$payload) return null;
+    if ($pdo !== null && !user_session_is_valid($pdo, $payload)) return null;
     return [
         'id' => (int)$payload['id'],
         'username' => $payload['username'] ?? '',
@@ -138,11 +139,139 @@ function bearer_user(string $secret): ?array {
     ];
 }
 
+function user_session_is_valid(PDO $pdo, array $payload): bool {
+    $userId = (int)($payload['id'] ?? 0);
+    if ($userId <= 0) return false;
+    try {
+        $stmt = $pdo->prepare('SELECT session_version FROM users WHERE id = ? AND active = 1 LIMIT 1');
+        $stmt->execute([$userId]);
+        $row = $stmt->fetch();
+        if (!$row) return false;
+        $dbSv = (int)$row['session_version'];
+        $tokenSv = (int)($payload['sessionVersion'] ?? 0);
+        return $dbSv === $tokenSv;
+    } catch (Throwable $e) {
+        return true;
+    }
+}
+
+function user_get_session_version(PDO $pdo, int $userId): int {
+    try {
+        $stmt = $pdo->prepare('SELECT session_version FROM users WHERE id = ? LIMIT 1');
+        $stmt->execute([$userId]);
+        $row = $stmt->fetch();
+        return $row ? (int)$row['session_version'] : 0;
+    } catch (Throwable $e) {
+        return 0;
+    }
+}
+
+function user_force_logout(PDO $pdo, int $userId): bool {
+    try {
+        $pdo->prepare('UPDATE users SET session_version = session_version + 1, last_seen_at = NULL WHERE id = ?')
+            ->execute([$userId]);
+        return true;
+    } catch (Throwable $e) {
+        return false;
+    }
+}
+
+function root_usage_metrics(PDO $pdo, int $days): array {
+    $days = min(90, max(7, $days));
+
+    $summaryStmt = $pdo->prepare(
+        'SELECT
+            SUM(CASE WHEN DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) AS logins_today,
+            SUM(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN 1 ELSE 0 END) AS logins_week,
+            COUNT(DISTINCT CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY) THEN user_id END) AS unique_users
+         FROM user_access_log
+         WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)'
+    );
+    $summaryStmt->execute([$days, $days]);
+    $summary = $summaryStmt->fetch() ?: [];
+
+    $dayStmt = $pdo->query(
+        'SELECT DATE(created_at) AS day, COUNT(*) AS count
+         FROM user_access_log
+         WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+         GROUP BY DATE(created_at)
+         ORDER BY day ASC'
+    );
+    $dayMap = [];
+    foreach ($dayStmt->fetchAll() as $row) {
+        $dayMap[(string)$row['day']] = (int)$row['count'];
+    }
+    $loginsByDay = [];
+    for ($i = 6; $i >= 0; $i--) {
+        $d = (new DateTime('now', new DateTimeZone('America/Sao_Paulo')))
+            ->modify("-{$i} day")
+            ->format('Y-m-d');
+        $loginsByDay[] = ['date' => $d, 'count' => $dayMap[$d] ?? 0];
+    }
+
+    $roleStmt = $pdo->prepare(
+        'SELECT role, COUNT(*) AS count
+         FROM user_access_log
+         WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+         GROUP BY role
+         ORDER BY count DESC'
+    );
+    $roleStmt->execute([$days]);
+    $loginsByRole = array_map(
+        fn($r) => ['role' => (string)$r['role'], 'count' => (int)$r['count']],
+        $roleStmt->fetchAll()
+    );
+
+    $activeRoleStmt = $pdo->prepare(
+        'SELECT role, COUNT(DISTINCT user_id) AS count
+         FROM user_access_log
+         WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+         GROUP BY role
+         ORDER BY count DESC'
+    );
+    $activeRoleStmt->execute([$days]);
+    $activeUsersByRole = array_map(
+        fn($r) => ['role' => (string)$r['role'], 'count' => (int)$r['count']],
+        $activeRoleStmt->fetchAll()
+    );
+
+    $hourStmt = $pdo->prepare(
+        'SELECT HOUR(created_at) AS hour, COUNT(*) AS count
+         FROM user_access_log
+         WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+         GROUP BY HOUR(created_at)
+         ORDER BY hour ASC'
+    );
+    $hourStmt->execute([$days]);
+    $hourMap = array_fill(0, 24, 0);
+    foreach ($hourStmt->fetchAll() as $row) {
+        $hourMap[(int)$row['hour']] = (int)$row['count'];
+    }
+    $peakHours = [];
+    for ($h = 0; $h < 24; $h++) {
+        $peakHours[] = ['hour' => $h, 'count' => $hourMap[$h]];
+    }
+
+    return [
+        'days' => $days,
+        'summary' => [
+            'loginsToday' => (int)($summary['logins_today'] ?? 0),
+            'loginsWeek' => (int)($summary['logins_week'] ?? 0),
+            'uniqueUsers' => (int)($summary['unique_users'] ?? 0),
+        ],
+        'loginsByDay' => $loginsByDay,
+        'loginsByRole' => $loginsByRole,
+        'activeUsersByRole' => $activeUsersByRole,
+        'peakHours' => $peakHours,
+    ];
+}
+
 function require_auth(string $secret, array $roles = []): array {
-    $user = bearer_user($secret);
+    global $pdo;
+    $user = bearer_user($secret, $pdo);
     if (!$user) {
         http_response_code(401);
-        echo json_encode(['error' => 'Não autenticado']);
+        echo json_encode(['error' => 'Não autenticado ou sessão encerrada']);
         exit;
     }
     if ($roles && !in_array($user['role'], $roles, true)) {
@@ -171,6 +300,57 @@ function can_manage_users(string $role): bool {
 
 function can_view_audit(string $role): bool {
     return in_array($role, ['root', 'admin'], true);
+}
+
+function user_touch_presence(PDO $pdo, int $userId): void {
+    try {
+        $now = (new DateTime('now', new DateTimeZone('America/Sao_Paulo')))->format('Y-m-d H:i:s');
+        $pdo->prepare('UPDATE users SET last_seen_at = ? WHERE id = ?')->execute([$now, $userId]);
+    } catch (Throwable $e) {
+        // coluna pode não existir ainda
+    }
+}
+
+function user_log_access(PDO $pdo, array $auth): void {
+    try {
+        $pdo->prepare(
+            'INSERT INTO user_access_log (user_id, username, role, ip, user_agent) VALUES (?, ?, ?, ?, ?)'
+        )->execute([
+            (int)$auth['id'],
+            (string)($auth['username'] ?? ''),
+            (string)($auth['role'] ?? ''),
+            client_ip(),
+            substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500),
+        ]);
+        user_touch_presence($pdo, (int)$auth['id']);
+    } catch (Throwable $e) {
+        // tabela pode não existir ainda
+    }
+}
+
+function user_map_online_row(array $r): array {
+    return [
+        'id' => (string)$r['id'],
+        'username' => $r['username'],
+        'name' => $r['name'],
+        'role' => $r['role'],
+        'avatarUrl' => $r['avatar_url'] ?? null,
+        'lastSeenAt' => $r['last_seen_at'],
+    ];
+}
+
+function user_map_access_row(array $r): array {
+    return [
+        'id' => (string)$r['id'],
+        'userId' => (string)$r['user_id'],
+        'username' => $r['username'],
+        'name' => $r['user_name'] ?? $r['username'],
+        'role' => $r['role'],
+        'avatarUrl' => $r['avatar_url'] ?? null,
+        'ip' => $r['ip'],
+        'userAgent' => $r['user_agent'] ?? null,
+        'createdAt' => $r['created_at'],
+    ];
 }
 
 function permissions_for_role(string $role): array {
@@ -529,11 +709,13 @@ if ($resource === 'login' && $method === 'POST') {
         json_out(['error' => 'Usuário ou senha incorretos'], 401);
     }
 
+    $sessionVersion = user_get_session_version($pdo, (int)$user['id']);
     $token = sign_token([
         'id' => (int)$user['id'],
         'username' => $user['username'],
         'role' => $user['role'],
         'clientId' => $user['client_id'] ? (int)$user['client_id'] : null,
+        'sessionVersion' => $sessionVersion,
     ], $config['jwt_secret']);
 
     $authUser = [
@@ -542,6 +724,7 @@ if ($resource === 'login' && $method === 'POST') {
         'role' => $user['role'],
     ];
     audit_log($pdo, $authUser, 'login', 'auth', (string)$user['id'], 'Login realizado');
+    user_log_access($pdo, $authUser);
 
     json_out(['success' => true, 'token' => $token, 'user' => map_user($user, $pdo)]);
 }
@@ -5998,6 +6181,19 @@ function chat_other_participant(PDO $pdo, int $threadId, int $userId): ?array {
     return $row ? chat_map_user_row($row) : null;
 }
 
+function chat_peer_last_read_at(PDO $pdo, int $threadId, int $viewerId): ?string {
+    $stmt = $pdo->prepare(
+        'SELECT cp.last_read_at
+         FROM chat_participants cp
+         WHERE cp.thread_id = ? AND cp.user_id != ?
+         LIMIT 1'
+    );
+    $stmt->execute([$threadId, $viewerId]);
+    $row = $stmt->fetch();
+    $at = $row['last_read_at'] ?? null;
+    return $at ? (string)$at : null;
+}
+
 function chat_map_message(array $r, int $viewerId): array {
     return [
         'id' => (string)$r['id'],
@@ -6025,6 +6221,96 @@ function chat_find_or_create_thread(PDO $pdo, int $userId, int $otherUserId): in
     $ins->execute([$threadId, $userId]);
     $ins->execute([$threadId, $otherUserId]);
     return $threadId;
+}
+
+if ($resource === 'presence' && $id === 'heartbeat' && $method === 'POST') {
+    $auth = require_auth($config['jwt_secret']);
+    user_touch_presence($pdo, (int)$auth['id']);
+    json_out(['success' => true]);
+}
+
+if ($resource === 'root') {
+    $auth = require_auth($config['jwt_secret'], ['root']);
+
+    try {
+        if ($id === 'online' && $method === 'GET') {
+            $minutes = min(30, max(1, (int)($_GET['minutes'] ?? 5)));
+            $stmt = $pdo->prepare(
+                'SELECT id, username, name, avatar_url, role, last_seen_at
+                 FROM users
+                 WHERE active = 1
+                   AND last_seen_at IS NOT NULL
+                   AND last_seen_at >= DATE_SUB(NOW(), INTERVAL ? MINUTE)
+                 ORDER BY last_seen_at DESC
+                 LIMIT 200'
+            );
+            $stmt->execute([$minutes]);
+            json_out([
+                'items' => array_map('user_map_online_row', $stmt->fetchAll()),
+                'onlineMinutes' => $minutes,
+            ]);
+        }
+
+        if ($id === 'access-log' && $method === 'GET') {
+            $page = max(1, (int)($_GET['page'] ?? 1));
+            $limit = min(100, max(1, (int)($_GET['limit'] ?? 50)));
+            $offset = ($page - 1) * $limit;
+
+            $countStmt = $pdo->query('SELECT COUNT(*) AS total FROM user_access_log');
+            $total = (int)$countStmt->fetch()['total'];
+
+            $stmt = $pdo->prepare(
+                'SELECT l.*, u.name AS user_name, u.avatar_url
+                 FROM user_access_log l
+                 LEFT JOIN users u ON u.id = l.user_id
+                 ORDER BY l.created_at DESC
+                 LIMIT ? OFFSET ?'
+            );
+            $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+            $stmt->bindValue(2, $offset, PDO::PARAM_INT);
+            $stmt->execute();
+            json_out([
+                'items' => array_map('user_map_access_row', $stmt->fetchAll()),
+                'page' => $page,
+                'limit' => $limit,
+                'total' => $total,
+            ]);
+        }
+
+        if ($id === 'usage-metrics' && $method === 'GET') {
+            $days = (int)($_GET['days'] ?? 30);
+            json_out(root_usage_metrics($pdo, $days));
+        }
+
+        if ($id === 'force-logout' && $action && is_numeric($action) && $method === 'POST') {
+            $targetId = (int)$action;
+            if ($targetId <= 0) {
+                json_out(['error' => 'Usuário inválido'], 400);
+            }
+            $stmt = $pdo->prepare('SELECT id, username, name, role FROM users WHERE id = ? LIMIT 1');
+            $stmt->execute([$targetId]);
+            $target = $stmt->fetch();
+            if (!$target) {
+                json_out(['error' => 'Usuário não encontrado'], 404);
+            }
+            if (!user_force_logout($pdo, $targetId)) {
+                json_out(['error' => 'Não foi possível encerrar a sessão — rode database/migration-user-session.sql'], 500);
+            }
+            audit_log(
+                $pdo,
+                $auth,
+                'status_change',
+                'users',
+                (string)$targetId,
+                'Sessão encerrada remotamente: ' . ($target['name'] ?? $target['username'])
+            );
+            json_out(['success' => true]);
+        }
+    } catch (Throwable $e) {
+        json_out(['error' => 'Painel Root indisponível — rode database/migration-user-presence.sql'], 500);
+    }
+
+    json_out(['error' => 'Rota Root inválida'], 404);
 }
 
 if ($resource === 'chat') {
@@ -6144,6 +6430,7 @@ if ($resource === 'chat') {
             json_out([
                 'items' => array_map(fn($r) => chat_map_message($r, $authId), $rows),
                 'peer' => chat_other_participant($pdo, $threadId, $authId),
+                'peerLastReadAt' => chat_peer_last_read_at($pdo, $threadId, $authId),
             ]);
         }
 
@@ -6183,7 +6470,10 @@ if ($resource === 'chat') {
             $now = (new DateTime('now', new DateTimeZone('America/Sao_Paulo')))->format('Y-m-d H:i:s');
             $pdo->prepare('UPDATE chat_participants SET last_read_at = ? WHERE thread_id = ? AND user_id = ?')
                 ->execute([$now, $threadId, $authId]);
-            json_out(['success' => true]);
+            json_out([
+                'success' => true,
+                'peerLastReadAt' => chat_peer_last_read_at($pdo, $threadId, $authId),
+            ]);
         }
     } catch (Throwable $e) {
         json_out(['error' => 'Chat indisponível — rode database/migration-chat.sql'], 500);

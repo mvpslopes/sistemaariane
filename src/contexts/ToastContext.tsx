@@ -15,14 +15,15 @@ export interface ToastItem {
   id: string;
   type: ToastType;
   message: string;
+  onClick?: () => void;
 }
 
 interface ToastContextValue {
   toasts: ToastItem[];
-  toast: (message: string, type?: ToastType) => void;
-  success: (message: string) => void;
-  error: (message: string) => void;
-  info: (message: string) => void;
+  toast: (message: string, type?: ToastType, options?: { onClick?: () => void }) => void;
+  success: (message: string, options?: { onClick?: () => void }) => void;
+  error: (message: string, options?: { onClick?: () => void }) => void;
+  info: (message: string, options?: { onClick?: () => void }) => void;
   dismiss: (id: string) => void;
 }
 
@@ -66,17 +67,29 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const toast = useCallback(
-    (message: string, type: ToastType = 'info') => {
+    (message: string, type: ToastType = 'info', options?: { onClick?: () => void }) => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      setToasts((prev) => [...prev.slice(-(MAX_VISIBLE_TOASTS - 1)), { id, type, message }]);
+      setToasts((prev) => [
+        ...prev.slice(-(MAX_VISIBLE_TOASTS - 1)),
+        { id, type, message, onClick: options?.onClick },
+      ]);
       window.setTimeout(() => dismiss(id), AUTO_DISMISS_MS);
     },
     [dismiss]
   );
 
-  const success = useCallback((message: string) => toast(message, 'success'), [toast]);
-  const error = useCallback((message: string) => toast(message, 'error'), [toast]);
-  const info = useCallback((message: string) => toast(message, 'info'), [toast]);
+  const success = useCallback(
+    (message: string, options?: { onClick?: () => void }) => toast(message, 'success', options),
+    [toast]
+  );
+  const error = useCallback(
+    (message: string, options?: { onClick?: () => void }) => toast(message, 'error', options),
+    [toast]
+  );
+  const info = useCallback(
+    (message: string, options?: { onClick?: () => void }) => toast(message, 'info', options),
+    [toast]
+  );
 
   const value = useMemo<ToastContextValue>(
     () => ({
@@ -153,8 +166,16 @@ function ToastCard({
     <div
       className={`pointer-events-auto relative overflow-hidden rounded-2xl border shadow-card backdrop-blur-md ${container} ${
         isMobile ? 'animate-toast-slide-down' : 'animate-toast-slide-up'
-      }`}
+      } ${toast.onClick ? 'cursor-pointer' : ''}`}
       role="status"
+      onClick={
+        toast.onClick
+          ? () => {
+              toast.onClick?.();
+              onDismiss();
+            }
+          : undefined
+      }
     >
       <span className={`absolute inset-y-0 left-0 w-1 ${accent}`} aria-hidden />
 
@@ -176,7 +197,10 @@ function ToastCard({
 
         <button
           type="button"
-          onClick={onDismiss}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDismiss();
+          }}
           className="-mr-1 mt-0.5 shrink-0 rounded-xl p-1.5 text-brand-brown/60 transition hover:bg-brand-off-white hover:text-brand-dark-brown"
           aria-label="Fechar notificação"
         >

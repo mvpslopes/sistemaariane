@@ -17,6 +17,7 @@ import {
   MessageCircle,
   ClipboardList,
   MessagesSquare,
+  Crown,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -38,6 +39,7 @@ const linkClass =
 export default function MobileMoreSheet({ open, onClose, onLogout, onOpenAssistant }: MobileMoreSheetProps) {
   const { user, canManageUsers, canViewAudit, canUpdate, hasRole } = useAuth();
   const isStaff = !hasRole('cliente');
+  const isRoot = hasRole('root');
   const isAssessor = !!user?.isAssessor && hasRole('cliente');
   const { mounted, visible, duration } = useAnimatedPresence(open, 320);
   const { count: chatUnread } = useChatUnread(open);
@@ -58,6 +60,10 @@ export default function MobileMoreSheet({ open, onClose, onLogout, onOpenAssista
       subtitle: TECH_SUPPORT.phoneDisplay,
     },
   ];
+
+  if (isRoot) {
+    items.unshift({ type: 'link', to: '/app/root', icon: Crown, label: 'Root' });
+  }
 
   if (isStaff) {
     items.push(

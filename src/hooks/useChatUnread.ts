@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getChatUnreadCount } from '../services/apiService';
 
-export function useChatUnread(enabled = true, intervalMs = 30000) {
+export function useChatUnread(enabled = true, intervalMs = 5000) {
   const [count, setCount] = useState(0);
 
   const refresh = useCallback(async () => {

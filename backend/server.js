@@ -94,14 +94,117 @@ function signToken(user) {
       username: user.username,
       role: user.role,
       clientId: user.client_id ?? null,
+      sessionVersion: Number(user.session_version ?? 0),
     },
     JWT_SECRET,
     { expiresIn: '12h' }
   );
 }
 
+async function userGetSessionVersion(userId) {
+  try {
+    const [rows] = await pool.execute('SELECT session_version FROM users WHERE id = ? LIMIT 1', [userId]);
+    return Number(rows[0]?.session_version ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
+async function userSessionIsValid(payload) {
+  try {
+    const [rows] = await pool.execute(
+      'SELECT session_version FROM users WHERE id = ? AND active = 1 LIMIT 1',
+      [Number(payload.id)]
+    );
+    if (!rows.length) return false;
+    return Number(rows[0].session_version ?? 0) === Number(payload.sessionVersion ?? 0);
+  } catch {
+    return true;
+  }
+}
+
+async function userForceLogout(userId) {
+  await pool.execute(
+    'UPDATE users SET session_version = session_version + 1, last_seen_at = NULL WHERE id = ?',
+    [userId]
+  );
+}
+
+async function rootUsageMetrics(days = 30) {
+  const period = Math.min(90, Math.max(7, Number(days) || 30));
+
+  const [[summary]] = await pool.execute(
+    `SELECT
+       SUM(CASE WHEN DATE(created_at) = CURDATE() THEN 1 ELSE 0 END) AS logins_today,
+       SUM(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) THEN 1 ELSE 0 END) AS logins_week,
+       COUNT(DISTINCT CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY) THEN user_id END) AS unique_users
+     FROM user_access_log
+     WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
+    [period, period]
+  );
+
+  const [dayRows] = await pool.execute(
+    `SELECT DATE(created_at) AS day, COUNT(*) AS count
+     FROM user_access_log
+     WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+     GROUP BY DATE(created_at)
+     ORDER BY day ASC`
+  );
+  const dayMap = Object.fromEntries(dayRows.map((r) => [String(r.day), Number(r.count)]));
+  const loginsByDay = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    loginsByDay.push({ date: key, count: dayMap[key] ?? 0 });
+  }
+
+  const [roleRows] = await pool.execute(
+    `SELECT role, COUNT(*) AS count
+     FROM user_access_log
+     WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+     GROUP BY role
+     ORDER BY count DESC`,
+    [period]
+  );
+
+  const [activeRoleRows] = await pool.execute(
+    `SELECT role, COUNT(DISTINCT user_id) AS count
+     FROM user_access_log
+     WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+     GROUP BY role
+     ORDER BY count DESC`,
+    [period]
+  );
+
+  const [hourRows] = await pool.execute(
+    `SELECT HOUR(created_at) AS hour, COUNT(*) AS count
+     FROM user_access_log
+     WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+     GROUP BY HOUR(created_at)
+     ORDER BY hour ASC`,
+    [period]
+  );
+  const hourMap = Array.from({ length: 24 }, () => 0);
+  for (const row of hourRows) hourMap[Number(row.hour)] = Number(row.count);
+  const peakHours = hourMap.map((count, hour) => ({ hour, count }));
+
+  return {
+    days: period,
+    summary: {
+      loginsToday: Number(summary?.logins_today ?? 0),
+      loginsWeek: Number(summary?.logins_week ?? 0),
+      uniqueUsers: Number(summary?.unique_users ?? 0),
+    },
+    loginsByDay,
+    loginsByRole: roleRows.map((r) => ({ role: r.role, count: Number(r.count) })),
+    activeUsersByRole: activeRoleRows.map((r) => ({ role: r.role, count: Number(r.count) })),
+    peakHours,
+  };
+}
+
 function auth(requiredRoles = []) {
-  return (req, res, next) => {
+  return async (req, res, next) => {
     try {
       const header = req.headers.authorization || '';
       const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -109,6 +212,10 @@ function auth(requiredRoles = []) {
         return res.status(401).json({ error: 'Não autenticado' });
       }
       const payload = jwt.verify(token, JWT_SECRET);
+      const valid = await userSessionIsValid(payload);
+      if (!valid) {
+        return res.status(401).json({ error: 'Sessão encerrada. Faça login novamente.' });
+      }
       req.user = {
         id: Number(payload.id),
         username: payload.username,
@@ -327,9 +434,61 @@ async function auditLog(req, auth, action, resource, resourceId = null, summary 
         meta ? JSON.stringify(meta) : null,
       ]
     );
-  } catch {
+  } catch (e) {
     /* não interrompe operação principal */
   }
+}
+
+async function userTouchPresence(userId) {
+  try {
+    const mysqlNow = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    await pool.execute('UPDATE users SET last_seen_at = ? WHERE id = ?', [mysqlNow, userId]);
+  } catch {
+    /* coluna pode não existir */
+  }
+}
+
+async function userLogAccess(req, auth) {
+  try {
+    await pool.execute(
+      'INSERT INTO user_access_log (user_id, username, role, ip, user_agent) VALUES (?, ?, ?, ?, ?)',
+      [
+        auth.id,
+        auth.username,
+        auth.role,
+        clientIp(req),
+        String(req.headers['user-agent'] || '').slice(0, 500),
+      ]
+    );
+    await userTouchPresence(auth.id);
+  } catch {
+    /* tabela pode não existir */
+  }
+}
+
+function mapOnlineUser(r) {
+  return {
+    id: String(r.id),
+    username: r.username,
+    name: r.name,
+    role: r.role,
+    avatarUrl: r.avatar_url || null,
+    lastSeenAt: r.last_seen_at,
+  };
+}
+
+function mapAccessLogRow(r) {
+  return {
+    id: String(r.id),
+    userId: String(r.user_id),
+    username: r.username,
+    name: r.user_name || r.username,
+    role: r.role,
+    avatarUrl: r.avatar_url || null,
+    ip: r.ip,
+    userAgent: r.user_agent || null,
+    createdAt: r.created_at,
+  };
 }
 
 function mapAuditRow(r) {
@@ -459,8 +618,10 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: 'Usuário ou senha incorretos' });
     }
 
+    user.session_version = await userGetSessionVersion(user.id);
     const token = signToken(user);
     await auditLog(req, { id: user.id, username: user.username, role: user.role }, 'login', 'auth', String(user.id), 'Login realizado');
+    await userLogAccess(req, { id: user.id, username: user.username, role: user.role });
     res.json({ success: true, token, user: await enrichUserWithClientProfile(mapUser(user)) });
   } catch (error) {
     console.error('Erro no login:', error);
@@ -5845,6 +6006,18 @@ async function chatOtherParticipant(threadId, userId) {
   return rows[0] ? chatMapUser(rows[0]) : null;
 }
 
+async function chatPeerLastReadAt(threadId, viewerId) {
+  const [rows] = await pool.execute(
+    `SELECT cp.last_read_at
+     FROM chat_participants cp
+     WHERE cp.thread_id = ? AND cp.user_id != ?
+     LIMIT 1`,
+    [threadId, viewerId]
+  );
+  const at = rows[0]?.last_read_at;
+  return at ? String(at) : null;
+}
+
 async function chatFindOrCreateThread(userId, otherUserId) {
   const dmKey = chatDmKey(userId, otherUserId);
   const [existing] = await pool.execute('SELECT id FROM chat_threads WHERE dm_key = ? LIMIT 1', [dmKey]);
@@ -5859,6 +6032,97 @@ async function chatFindOrCreateThread(userId, otherUserId) {
   ]);
   return threadId;
 }
+
+app.post('/api/presence/heartbeat', auth(), async (req, res) => {
+  try {
+    await userTouchPresence(Number(req.user.id));
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao atualizar presença' });
+  }
+});
+
+app.get('/api/root/online', auth(['root']), async (req, res) => {
+  try {
+    const minutes = Math.min(30, Math.max(1, Number(req.query.minutes) || 5));
+    const [rows] = await pool.execute(
+      `SELECT id, username, name, avatar_url, role, last_seen_at
+       FROM users
+       WHERE active = 1
+         AND last_seen_at IS NOT NULL
+         AND last_seen_at >= DATE_SUB(NOW(), INTERVAL ? MINUTE)
+       ORDER BY last_seen_at DESC
+       LIMIT 200`,
+      [minutes]
+    );
+    res.json({ items: rows.map(mapOnlineUser), onlineMinutes: minutes });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Painel Root indisponível — rode database/migration-user-presence.sql' });
+  }
+});
+
+app.get('/api/root/access-log', auth(['root']), async (req, res) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+    const offset = (page - 1) * limit;
+    const [[countRow]] = await pool.execute('SELECT COUNT(*) AS total FROM user_access_log');
+    const [rows] = await pool.execute(
+      `SELECT l.*, u.name AS user_name, u.avatar_url
+       FROM user_access_log l
+       LEFT JOIN users u ON u.id = l.user_id
+       ORDER BY l.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [limit, offset]
+    );
+    res.json({
+      items: rows.map(mapAccessLogRow),
+      page,
+      limit,
+      total: Number(countRow?.total || 0),
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Painel Root indisponível — rode database/migration-user-presence.sql' });
+  }
+});
+
+app.get('/api/root/usage-metrics', auth(['root']), async (req, res) => {
+  try {
+    res.json(await rootUsageMetrics(req.query.days));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Métricas indisponíveis — rode database/migration-user-presence.sql' });
+  }
+});
+
+app.post('/api/root/force-logout/:userId', auth(['root']), async (req, res) => {
+  try {
+    const targetId = Number(req.params.userId);
+    if (!targetId) return res.status(400).json({ error: 'Usuário inválido' });
+    const [users] = await pool.execute(
+      'SELECT id, username, name, role FROM users WHERE id = ? LIMIT 1',
+      [targetId]
+    );
+    const target = users[0];
+    if (!target) return res.status(404).json({ error: 'Usuário não encontrado' });
+    await userForceLogout(targetId);
+    await auditLog(
+      req,
+      req.user,
+      'status_change',
+      'users',
+      String(targetId),
+      `Sessão encerrada remotamente: ${target.name || target.username}`
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Não foi possível encerrar a sessão — rode database/migration-user-session.sql' });
+  }
+});
 
 app.get('/api/chat/contacts', auth(), async (req, res) => {
   try {
@@ -5984,6 +6248,7 @@ app.get('/api/chat/threads/:threadId/messages', auth(), async (req, res) => {
     res.json({
       items: rows.reverse().map((r) => chatMapMessage(r, authId)),
       peer,
+      peerLastReadAt: await chatPeerLastReadAt(threadId, authId),
     });
   } catch (error) {
     console.error(error);
@@ -6036,7 +6301,10 @@ app.put('/api/chat/threads/:threadId/read', auth(), async (req, res) => {
       threadId,
       authId,
     ]);
-    res.json({ success: true });
+    res.json({
+      success: true,
+      peerLastReadAt: await chatPeerLastReadAt(threadId, authId),
+    });
   } catch (error) {
     console.error(error);
     res.status(error.status || 500).json({ error: error.message || 'Erro ao marcar como lida' });

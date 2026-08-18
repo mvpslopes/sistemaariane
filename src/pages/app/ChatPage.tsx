@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Loader2, MessageSquarePlus, Search, Send, Users } from 'lucide-react';
+import { ArrowLeft, Check, CheckCheck, Loader2, MessageSquarePlus, Search, Send, Users } from 'lucide-react';
 import {
   getChatContacts,
   getChatMessages,
@@ -20,9 +20,16 @@ import UserAvatar from '../../components/UserAvatar';
 import Modal from '../../components/Modal';
 import AppButton from '../../components/AppButton';
 import { formatDateTimeBR } from '../../utils/dateTime';
+import {
+  formatReadReceiptLabel,
+  getLastReadOwnMessageId,
+  isMessageReadByPeer,
+} from '../../utils/chatReadReceipt';
 import { auditRoleLabel } from '../../constants/auditLabels';
 
 const roleLabel = (role: string) => auditRoleLabel(role);
+
+const CHAT_POLL_MS = 4000;
 
 function threadPreview(text: string | null) {
   if (!text) return 'Nenhuma mensagem ainda';
@@ -50,6 +57,7 @@ export default function ChatPage() {
   const [contacts, setContacts] = useState<ChatUser[]>([]);
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [threadSearch, setThreadSearch] = useState('');
+  const [peerLastReadAt, setPeerLastReadAt] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<number | null>(null);
@@ -71,9 +79,10 @@ export default function ChatPage() {
     async (threadId: string, silent = false) => {
       if (!silent) setLoadingMessages(true);
       try {
-        const { items, peer } = await getChatMessages(threadId);
+        const { items, peer, peerLastReadAt: peerReadAt } = await getChatMessages(threadId);
         setMessages(items);
         setActivePeer(peer);
+        setPeerLastReadAt(peerReadAt);
         await markChatThreadRead(threadId);
         refreshUnread();
         setThreads((prev) =>
@@ -96,10 +105,11 @@ export default function ChatPage() {
     if (!activeThreadId) {
       setMessages([]);
       setActivePeer(null);
+      setPeerLastReadAt(null);
       return;
     }
     loadMessages(activeThreadId);
-    pollRef.current = window.setInterval(() => loadMessages(activeThreadId, true), 8000);
+    pollRef.current = window.setInterval(() => loadMessages(activeThreadId, true), CHAT_POLL_MS);
     return () => {
       if (pollRef.current) window.clearInterval(pollRef.current);
     };
@@ -135,6 +145,11 @@ export default function ChatPage() {
         (t.lastMessage || '').toLowerCase().includes(q)
     );
   }, [threads, threadSearch]);
+
+  const lastReadOwnMessageId = useMemo(
+    () => getLastReadOwnMessageId(messages, peerLastReadAt),
+    [messages, peerLastReadAt]
+  );
 
   const openThread = (thread: ChatThread) => {
     navigate(`/app/mensagens/${thread.id}`);
@@ -327,31 +342,52 @@ export default function ChatPage() {
                     Envie a primeira mensagem para {activePeer?.name || 'este contato'}.
                   </p>
                 ) : (
-                  messages.map((msg) => (
-                    <div key={msg.id} className={`flex ${msg.mine ? 'justify-end' : 'justify-start'}`}>
-                      <div
-                        className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
-                          msg.mine
-                            ? 'bg-brand-brown text-white'
-                            : 'border border-brand-beige bg-brand-off-white text-brand-dark-brown'
-                        }`}
-                      >
-                        {!msg.mine && (
-                          <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-olive">
-                            {msg.senderName}
-                          </p>
-                        )}
-                        <p className="whitespace-pre-wrap break-words">{msg.body}</p>
-                        <p
-                          className={`mt-1 text-[10px] ${
-                            msg.mine ? 'text-white/70' : 'text-brand-olive/80'
+                  messages.map((msg) => {
+                    const read = isMessageReadByPeer(msg, peerLastReadAt);
+                    const showSeenLabel = msg.mine && msg.id === lastReadOwnMessageId && read;
+
+                    return (
+                      <div key={msg.id} className={`flex ${msg.mine ? 'justify-end' : 'justify-start'}`}>
+                        <div
+                          className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
+                            msg.mine
+                              ? 'bg-brand-brown text-white'
+                              : 'border border-brand-beige bg-brand-off-white text-brand-dark-brown'
                           }`}
                         >
-                          {formatDateTimeBR(msg.createdAt, msg.createdAt)}
-                        </p>
+                          {!msg.mine && (
+                            <p className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-olive">
+                              {msg.senderName}
+                            </p>
+                          )}
+                          <p className="whitespace-pre-wrap break-words">{msg.body}</p>
+                          <div
+                            className={`mt-1 flex items-center justify-end gap-1 ${
+                              msg.mine ? 'text-white/70' : 'text-brand-olive/80'
+                            }`}
+                          >
+                            <span className="text-[10px]">
+                              {formatDateTimeBR(msg.createdAt, msg.createdAt)}
+                            </span>
+                            {msg.mine && (
+                              <span className="inline-flex items-center gap-0.5" title={read ? formatReadReceiptLabel(peerLastReadAt) : 'Enviada'}>
+                                {read ? (
+                                  <CheckCheck className="h-3.5 w-3.5 text-sky-300" strokeWidth={2.5} />
+                                ) : (
+                                  <Check className="h-3.5 w-3.5 opacity-70" strokeWidth={2.5} />
+                                )}
+                              </span>
+                            )}
+                          </div>
+                          {showSeenLabel && (
+                            <p className="mt-0.5 text-right text-[10px] text-sky-200/90">
+                              {formatReadReceiptLabel(peerLastReadAt)}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
                 <div ref={messagesEndRef} />
               </div>

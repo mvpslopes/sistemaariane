@@ -19,7 +19,8 @@ export function buildAssistantKnowledge(ctx: HelpViewerContext): string {
     ...lines,
     '',
     'Rotas úteis: /app (dashboard), /app/pessoas, /app/animais, /app/contratos, /app/cobrancas,',
-    '/app/recebiveis, /app/leiloes, /app/reproducao, /app/registro-diario, /app/repasses, /app/perfil',
+    '/app/recebiveis, /app/relatorio-cobranca, /app/mensagens, /app/leiloes, /app/reproducao,',
+    '/app/registro-diario, /app/repasses, /app/perfil',
   ].join('\n');
 }
 
@@ -40,8 +41,8 @@ export function suggestedAssistantPrompts(ctx: HelpViewerContext): string[] {
   }
   return [
     'Como cadastro um animal?',
-    'Onde fica o registro diário?',
+    'Onde fica o relatório de cobrança?',
     'Como enviar contrato para assinatura?',
-    'O que significa o sininho de avisos?',
+    'Como usar as mensagens internas?',
   ];
 }

@@ -36,6 +36,10 @@ export function resolvePageMeta(pathname: string, isCliente: boolean, isAssessor
           ? clientPortalLabels.dashboardSubtitle
           : 'Visão geral do plantel e cadastros',
     },
+    '/app/root': {
+      title: 'Root',
+      subtitle: 'Usuários online e histórico de acessos ao sistema',
+    },
     '/app/pessoas': {
       title: 'Pessoas',
       subtitle: 'Compradores, vendedores, assessores, testemunhas e avalistas em um só cadastro',

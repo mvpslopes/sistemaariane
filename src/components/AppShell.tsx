@@ -28,6 +28,7 @@ import {
   Settings,
   ClipboardList,
   MessageCircle,
+  Crown,
 } from 'lucide-react';
 import {
   NavAccordion,
@@ -48,6 +49,8 @@ import { AiAssistantProvider, useAiAssistant } from '../contexts/AiAssistantCont
 import AiAssistantFab from './AiAssistantFab';
 import AssistantSidebarButton from './AssistantSidebarButton';
 import ChatSidebarLink from './ChatSidebarLink';
+import { useChatMessageNotifications } from '../hooks/useChatMessageNotifications';
+import { usePresenceHeartbeat } from '../hooks/usePresenceHeartbeat';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useOperationalAlerts } from '../hooks/useOperationalAlerts';
 import PageTransition from './PageTransition';
@@ -90,9 +93,12 @@ function AppShellInner() {
   const [sistemaOpen, setSistemaOpen] = useState(false);
   const [contaOpen, setContaOpen] = useState(false);
   const isCliente = hasRole('cliente');
+  const isRoot = hasRole('root');
   const isAssessor = !!user?.isAssessor && isCliente;
   const pathname = location.pathname;
   const { stats: alertStats, loading: alertsLoading } = useOperationalAlerts(!!user);
+  useChatMessageNotifications(!!user);
+  usePresenceHeartbeat(!!user);
 
   const compact = !isMobile && collapsed;
 
@@ -253,6 +259,9 @@ function AppShellInner() {
         <nav className="scrollbar-sidebar flex flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pb-2 pt-1">
           <NavSectionLabel compact={compact}>Principal</NavSectionLabel>
           <NavTopLink to="/app" end icon={LayoutDashboard} label="Dashboard" compact={compact} />
+          {isRoot && (
+            <NavTopLink to="/app/root" icon={Crown} label="Root" compact={compact} />
+          )}
           <ChatSidebarLink compact={compact} />
 
           {/* ——— Staff ——— */}

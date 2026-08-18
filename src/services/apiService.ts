@@ -1620,7 +1620,7 @@ export async function getChatMessages(threadId: string, before?: string) {
   const params = new URLSearchParams();
   if (before) params.set('before', before);
   const qs = params.toString() ? `?${params}` : '';
-  return request<{ items: ChatMessage[]; peer: ChatUser | null }>(
+  return request<{ items: ChatMessage[]; peer: ChatUser | null; peerLastReadAt: string | null }>(
     `/chat/threads/${threadId}/messages${qs}`
   );
 }
@@ -1636,4 +1636,62 @@ export async function markChatThreadRead(threadId: string) {
   return request<{ success: boolean }>(`/chat/threads/${threadId}/read`, {
     method: 'PUT',
   });
+}
+
+export interface OnlineUser {
+  id: string;
+  username: string;
+  name: string;
+  role: Role;
+  avatarUrl?: string | null;
+  lastSeenAt: string;
+}
+
+export interface UserAccessLogEntry {
+  id: string;
+  userId: string;
+  username: string;
+  name: string;
+  role: Role;
+  avatarUrl?: string | null;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: string;
+}
+
+export async function sendPresenceHeartbeat() {
+  return request<{ success: boolean }>('/presence/heartbeat', { method: 'POST' });
+}
+
+export async function getRootOnlineUsers(minutes = 5) {
+  return request<{ items: OnlineUser[]; onlineMinutes: number }>(
+    `/root/online?minutes=${minutes}`
+  );
+}
+
+export async function getRootAccessLog(page = 1, limit = 50) {
+  return request<{ items: UserAccessLogEntry[]; page: number; limit: number; total: number }>(
+    `/root/access-log?page=${page}&limit=${limit}`
+  );
+}
+
+export interface RootUsageMetrics {
+  days: number;
+  summary: {
+    loginsToday: number;
+    loginsWeek: number;
+    uniqueUsers: number;
+  };
+  loginsByDay: Array<{ date: string; count: number }>;
+  loginsByRole: Array<{ role: Role; count: number }>;
+  activeUsersByRole: Array<{ role: Role; count: number }>;
+  peakHours: Array<{ hour: number; count: number }>;
+}
+
+export async function getRootUsageMetrics(days = 30) {
+  return request<RootUsageMetrics>(`/root/usage-metrics?days=${days}`);
+}
+
+export async function forceLogoutUser(userId: string) {
+  return request<{ success: boolean }>(`/root/force-logout/${userId}`, { method: 'POST' });
 }

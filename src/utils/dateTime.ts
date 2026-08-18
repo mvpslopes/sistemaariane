@@ -65,6 +65,17 @@ export function formatLongDateBR(value: Date = new Date()): string {
   }).format(value);
 }
 
+/** hh:mm (horário de Brasília) */
+export function formatTimeHM(value: string | Date | null | undefined, fallback = ''): string {
+  const d = parseAppDate(value);
+  if (!d) return fallback;
+  return new Intl.DateTimeFormat(APP_LOCALE, {
+    timeZone: APP_TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(d);
+}
+
 /** Ex.: 14:30:45 (horário de Brasília) */
 export function formatTimeBR(value: Date = new Date()): string {
   return new Intl.DateTimeFormat(APP_LOCALE, {
