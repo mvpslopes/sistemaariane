@@ -133,6 +133,8 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
             ...c,
             clicksign_signed_count: p.signedCount,
             clicksign_total_count: p.totalCount,
+            ...(p.status ? { status: p.status } : {}),
+            ...(p.clicksignStatus !== undefined ? { clicksign_status: p.clicksignStatus } : {}),
           };
         })
       );
@@ -183,6 +185,9 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
               clicksign_status: tracking.status,
               clicksign_signed_count: tracking.signedCount,
               clicksign_total_count: tracking.totalCount,
+              ...(tracking.status === 'closed' && prev.status === 'aguardando_assinatura'
+                ? { status: 'ativo' as const }
+                : {}),
             }
           : prev
       );
@@ -194,6 +199,9 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                 clicksign_status: tracking.status,
                 clicksign_signed_count: tracking.signedCount,
                 clicksign_total_count: tracking.totalCount,
+                ...(tracking.status === 'closed' && c.status === 'aguardando_assinatura'
+                  ? { status: 'ativo' as const }
+                  : {}),
               }
             : c
         )

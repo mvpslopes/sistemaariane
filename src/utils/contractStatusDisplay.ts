@@ -34,6 +34,18 @@ const BASE_STATUS_TONE: Record<Contract['status'], string> = {
 };
 
 export function contractStatusDisplay(c: Contract, short = false): { label: string; tone: string } {
+  const total = c.clicksign_total_count ?? 0;
+  const signed = c.clicksign_signed_count ?? 0;
+  const signaturesComplete =
+    c.clicksign_status === 'closed' || (total > 0 && signed >= total);
+
+  if (signaturesComplete && c.status === 'aguardando_assinatura') {
+    return {
+      label: BASE_STATUS_LABEL.ativo,
+      tone: BASE_STATUS_TONE.ativo,
+    };
+  }
+
   if (isSignatureNotSent(c)) {
     return {
       label: short ? 'Não enviada' : 'Assinatura não enviada',

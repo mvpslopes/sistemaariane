@@ -4671,14 +4671,18 @@ if ($resource === 'contracts') {
             $total = (int)($r['clicksign_total_count'] ?? 0);
             $shouldRefresh = $refresh && ($mapped['status'] ?? '') === 'aguardando_assinatura';
 
+            $clicksignStatus = null;
+            $newStatus = null;
             if ($shouldRefresh) {
                 try {
                     $statusInfo = clicksign_fetch_status($config, $mapped);
                     $signed = (int)($statusInfo['signedCount'] ?? 0);
                     $total = (int)($statusInfo['totalCount'] ?? 0);
                     clicksign_persist_progress($pdo, $contractId, $signed, $total, $statusInfo['status'] ?? null);
+                    $clicksignStatus = $statusInfo['status'] ?? null;
                     if (($statusInfo['status'] ?? '') === 'closed' && ($r['status'] ?? '') === 'aguardando_assinatura') {
                         $pdo->prepare("UPDATE contracts SET status='ativo' WHERE id=?")->execute([$contractId]);
+                        $newStatus = 'ativo';
                     }
                 } catch (Throwable $e) {
                     // mantém cache local
@@ -4688,12 +4692,19 @@ if ($resource === 'contracts') {
             }
 
             if ($total > 0) {
-                $items[] = [
+                $item = [
                     'contractId' => (string)$contractId,
                     'signedCount' => $signed,
                     'totalCount' => $total,
                     'pendingCount' => max(0, $total - $signed),
                 ];
+                if ($clicksignStatus !== null) {
+                    $item['clicksignStatus'] = $clicksignStatus;
+                }
+                if ($newStatus !== null) {
+                    $item['status'] = $newStatus;
+                }
+                $items[] = $item;
             }
         }
 

@@ -3450,6 +3450,8 @@ app.post('/api/contracts/clicksign-progress', auth(), async (req, res) => {
       let total = Number(r.clicksign_total_count || 0);
       const shouldRefresh = refresh && contract.status === 'aguardando_assinatura';
 
+      let clicksignStatus = null;
+      let newStatus = null;
       if (shouldRefresh) {
         try {
           const statusInfo = await clicksignFetchStatus(contract, publicOrigin);
@@ -3457,8 +3459,10 @@ app.post('/api/contracts/clicksign-progress', auth(), async (req, res) => {
           total = Number(statusInfo.totalCount || 0);
           await clicksignPersistProgress(Number(r.id), signed, total, statusInfo.status);
           await pool.execute('UPDATE contracts SET clicksign_status=? WHERE id=?', [statusInfo.status, r.id]);
+          clicksignStatus = statusInfo.status || null;
           if (statusInfo.status === 'closed' && contract.status === 'aguardando_assinatura') {
             await pool.execute("UPDATE contracts SET status='ativo' WHERE id=?", [r.id]);
+            newStatus = 'ativo';
           }
         } catch (e) {
           console.error('clicksign-progress refresh:', e.message);
@@ -3468,12 +3472,15 @@ app.post('/api/contracts/clicksign-progress', auth(), async (req, res) => {
       }
 
       if (total > 0) {
-        items.push({
+        const item = {
           contractId: String(r.id),
           signedCount: signed,
           totalCount: total,
           pendingCount: Math.max(0, total - signed),
-        });
+        };
+        if (clicksignStatus !== null) item.clicksignStatus = clicksignStatus;
+        if (newStatus !== null) item.status = newStatus;
+        items.push(item);
       }
     }
 

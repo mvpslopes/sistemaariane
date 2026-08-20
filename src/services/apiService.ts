@@ -1097,6 +1097,8 @@ export interface ContractSignatureProgressItem {
   signedCount: number;
   totalCount: number;
   pendingCount: number;
+  status?: ContractStatus;
+  clicksignStatus?: string | null;
 }
 
 export async function refreshContractsSignatureProgress(ids: string[], refresh = true) {
