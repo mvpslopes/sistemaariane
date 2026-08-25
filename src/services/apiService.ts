@@ -167,7 +167,15 @@ export interface Client {
   created_at?: string;
 }
 
-export type ClientModuleCode = 'plantel' | 'reproducao' | 'sanitario' | 'contratos' | 'leiloes';
+export type ClientModuleCode =
+  | 'plantel'
+  | 'reproducao'
+  | 'sanitario'
+  | 'contratos'
+  | 'leiloes'
+  | 'estoque'
+  | 'hospedagem'
+  | 'financeiro_haras';
 
 export interface ClientModule {
   code: ClientModuleCode;
@@ -819,6 +827,247 @@ export async function updateBreedingCovering(id: string, data: Partial<BreedingC
 
 export async function deleteBreedingCovering(id: string) {
   return request<{ success: boolean }>(`/breeding-coverings/${id}`, { method: 'DELETE' });
+}
+
+export interface HarasPropertyOption {
+  id: string;
+  clientId: string;
+  name: string;
+  city?: string | null;
+  state?: string | null;
+  isPrimary: boolean;
+  propertyType?: string | null;
+  ownerName?: string | null;
+}
+
+export async function getHarasProperties() {
+  return request<HarasPropertyOption[]>('/haras-properties');
+}
+
+export interface HarasVetRecord {
+  id: string;
+  propertyId?: string | null;
+  propertyName?: string | null;
+  propertyOwnerName?: string | null;
+  animalId: string;
+  animalName?: string | null;
+  recordType: 'vacina' | 'vermifugo' | 'exame' | 'tratamento' | 'outro';
+  title: string;
+  product?: string | null;
+  recordDate: string;
+  nextDueDate?: string | null;
+  veterinarian?: string | null;
+  resultNotes?: string | null;
+  cost?: number | null;
+  notes?: string | null;
+}
+
+export type HarasVetInput = Omit<HarasVetRecord, 'id' | 'animalName' | 'propertyName' | 'propertyOwnerName'>;
+
+export async function getHarasVetRecords(filters?: { q?: string; type?: string; animalId?: string; propertyId?: string }) {
+  const params = new URLSearchParams();
+  if (filters?.q) params.set('q', filters.q);
+  if (filters?.type) params.set('type', filters.type);
+  if (filters?.animalId) params.set('animalId', filters.animalId);
+  if (filters?.propertyId) params.set('propertyId', filters.propertyId);
+  const qs = params.toString() ? `?${params}` : '';
+  return request<HarasVetRecord[]>(`/haras-vet${qs}`);
+}
+
+export async function createHarasVetRecord(data: HarasVetInput) {
+  return request<{ success: boolean; id: string }>('/haras-vet', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateHarasVetRecord(id: string, data: Partial<HarasVetInput>) {
+  return request<{ success: boolean }>(`/haras-vet/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteHarasVetRecord(id: string) {
+  return request<{ success: boolean }>(`/haras-vet/${id}`, { method: 'DELETE' });
+}
+
+export interface HarasStockItem {
+  id: string;
+  propertyId?: string | null;
+  propertyName?: string | null;
+  propertyOwnerName?: string | null;
+  name: string;
+  category: 'medicamento' | 'insumo' | 'racao' | 'material' | 'outro';
+  unit: string;
+  quantity: number;
+  minQuantity: number;
+  unitCost?: number | null;
+  location?: string | null;
+  notes?: string | null;
+  lowStock: boolean;
+}
+
+export interface HarasStockMove {
+  id: string;
+  itemId: string;
+  itemName?: string | null;
+  moveType: 'entrada' | 'saida' | 'ajuste';
+  quantity: number;
+  reason?: string | null;
+  animalId?: string | null;
+  animalName?: string | null;
+  createdAt?: string | null;
+}
+
+export async function getHarasStock(filters?: { q?: string; category?: string; propertyId?: string }) {
+  const params = new URLSearchParams();
+  if (filters?.q) params.set('q', filters.q);
+  if (filters?.category) params.set('category', filters.category);
+  if (filters?.propertyId) params.set('propertyId', filters.propertyId);
+  const qs = params.toString() ? `?${params}` : '';
+  return request<HarasStockItem[]>(`/haras-stock${qs}`);
+}
+
+export async function createHarasStockItem(data: Omit<HarasStockItem, 'id' | 'lowStock' | 'propertyName' | 'propertyOwnerName'>) {
+  return request<{ success: boolean; id: string }>('/haras-stock', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateHarasStockItem(id: string, data: Partial<Omit<HarasStockItem, 'id' | 'lowStock' | 'quantity' | 'propertyName' | 'propertyOwnerName'>>) {
+  return request<{ success: boolean }>(`/haras-stock/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteHarasStockItem(id: string) {
+  return request<{ success: boolean }>(`/haras-stock/${id}`, { method: 'DELETE' });
+}
+
+export async function moveHarasStock(
+  id: string,
+  data: { moveType: 'entrada' | 'saida' | 'ajuste'; quantity: number; reason?: string; animalId?: string }
+) {
+  return request<{ success: boolean; quantity: number }>(`/haras-stock/${id}/move`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getHarasStockMoves(id: string) {
+  return request<HarasStockMove[]>(`/haras-stock/${id}/moves`);
+}
+
+export interface HarasStay {
+  id: string;
+  propertyId?: string | null;
+  propertyName?: string | null;
+  propertyOwnerName?: string | null;
+  animalId: string;
+  animalName?: string | null;
+  ownerClientId?: string | null;
+  ownerName?: string | null;
+  stall?: string | null;
+  checkIn: string;
+  checkOut?: string | null;
+  dailyRate: number;
+  status: 'hospedado' | 'encerrado';
+  notes?: string | null;
+  days: number;
+  estimatedTotal: number;
+}
+
+export type HarasStayInput = {
+  propertyId: string;
+  animalId: string;
+  ownerClientId?: string | null;
+  stall?: string | null;
+  checkIn: string;
+  checkOut?: string | null;
+  dailyRate: number;
+  status?: 'hospedado' | 'encerrado';
+  notes?: string | null;
+};
+
+export async function getHarasStays(filters?: { q?: string; status?: string; animalId?: string; propertyId?: string }) {
+  const params = new URLSearchParams();
+  if (filters?.q) params.set('q', filters.q);
+  if (filters?.status) params.set('status', filters.status);
+  if (filters?.animalId) params.set('animalId', filters.animalId);
+  if (filters?.propertyId) params.set('propertyId', filters.propertyId);
+  const qs = params.toString() ? `?${params}` : '';
+  return request<HarasStay[]>(`/haras-stays${qs}`);
+}
+
+export async function createHarasStay(data: HarasStayInput) {
+  return request<{ success: boolean; id: string }>('/haras-stays', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateHarasStay(id: string, data: Partial<HarasStayInput>) {
+  return request<{ success: boolean }>(`/haras-stays/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteHarasStay(id: string) {
+  return request<{ success: boolean }>(`/haras-stays/${id}`, { method: 'DELETE' });
+}
+
+export interface HarasFinanceEntry {
+  id: string;
+  propertyId?: string | null;
+  propertyName?: string | null;
+  propertyOwnerName?: string | null;
+  entryType: 'receita' | 'despesa';
+  category: string;
+  amount: number;
+  entryDate: string;
+  description: string;
+  animalId?: string | null;
+  animalName?: string | null;
+  stayId?: string | null;
+  notes?: string | null;
+}
+
+export interface HarasFinanceList {
+  items: HarasFinanceEntry[];
+  totals: { income: number; expense: number; balance: number };
+}
+
+export async function getHarasFinance(filters?: { q?: string; type?: string; from?: string; to?: string; propertyId?: string }) {
+  const params = new URLSearchParams();
+  if (filters?.q) params.set('q', filters.q);
+  if (filters?.type) params.set('type', filters.type);
+  if (filters?.from) params.set('from', filters.from);
+  if (filters?.to) params.set('to', filters.to);
+  if (filters?.propertyId) params.set('propertyId', filters.propertyId);
+  const qs = params.toString() ? `?${params}` : '';
+  return request<HarasFinanceList>(`/haras-finance${qs}`);
+}
+
+export async function createHarasFinance(data: Omit<HarasFinanceEntry, 'id' | 'animalName' | 'propertyName' | 'propertyOwnerName'>) {
+  return request<{ success: boolean; id: string }>('/haras-finance', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateHarasFinance(id: string, data: Partial<Omit<HarasFinanceEntry, 'id' | 'animalName' | 'propertyName' | 'propertyOwnerName'>>) {
+  return request<{ success: boolean }>(`/haras-finance/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteHarasFinance(id: string) {
+  return request<{ success: boolean }>(`/haras-finance/${id}`, { method: 'DELETE' });
 }
 
 export async function getClients(q?: string, role?: 'seller' | 'buyer' | 'assessor' | 'witness' | 'avalista') {

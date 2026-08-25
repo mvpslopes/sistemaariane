@@ -1,5 +1,6 @@
-import { CLIENT_MODULES, clientModuleLabel } from '../constants/clientModules';
+import { CLIENT_MODULES, clientModuleLabel, HARAS_CLIENT_MODULE_LINKS } from '../constants/clientModules';
 import type { MyModulesPayload } from '../services/apiService';
+import { Link } from 'react-router-dom';
 
 export default function ClientModulesPanel({ data }: { data: MyModulesPayload }) {
   const activeSet = new Set((data.modules || []).filter((m) => m.active).map((m) => m.code));
@@ -37,6 +38,19 @@ export default function ClientModulesPanel({ data }: { data: MyModulesPayload })
           );
         })}
       </div>
+      {HARAS_CLIENT_MODULE_LINKS.some((l) => activeSet.has(l.code)) && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {HARAS_CLIENT_MODULE_LINKS.filter((l) => activeSet.has(l.code)).map((l) => (
+            <Link
+              key={l.code}
+              to={l.to}
+              className="rounded-xl border border-brand-beige bg-white px-3 py-1.5 text-xs font-medium text-brand-brown hover:bg-brand-off-white"
+            >
+              Abrir {l.label.toLowerCase()}
+            </Link>
+          ))}
+        </div>
+      )}
       {!activeSet.size && data.modules.length === 0 && (
         <p className="mt-3 text-xs text-brand-olive">
           Módulos serão exibidos quando configurados pela assessoria em Assinaturas SaaS.

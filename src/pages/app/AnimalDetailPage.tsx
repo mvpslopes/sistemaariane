@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, FileText, Pencil, PawPrint } from 'lucide-react';
+import { ArrowLeft, FileText, Home, Pencil, PawPrint, Stethoscope } from 'lucide-react';
 import {
   getAnimal,
   getContracts,
+  getHarasStays,
+  getHarasVetRecords,
   mediaUrl,
   type AnimalDetail,
   type Contract,
+  type HarasStay,
+  type HarasVetRecord,
 } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -14,6 +18,7 @@ import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
 import { formatDateBR } from '../../utils/dateTime';
 import Modal from '../../components/Modal';
 import AnimalForm from './AnimalForm';
+import { moneyBRL, vetTypeLabel } from '../../constants/haras';
 
 const SEX_LABEL: Record<string, string> = { M: 'Macho', F: 'Fêmea', C: 'Castrado' };
 const STATUS_LABEL: Record<string, string> = {
@@ -31,6 +36,8 @@ export default function AnimalDetailPage() {
   const { error: toastError } = useToast();
   const [animal, setAnimal] = useState<AnimalDetail | null>(null);
   const [contracts, setContracts] = useState<Contract[]>([]);
+  const [vetRecords, setVetRecords] = useState<HarasVetRecord[]>([]);
+  const [stays, setStays] = useState<HarasStay[]>([]);
   const [loading, setLoading] = useState(true);
   const [editOpen, setEditOpen] = useState(false);
 
@@ -38,9 +45,16 @@ export default function AnimalDetailPage() {
     if (!id) return;
     setLoading(true);
     try {
-      const [a, allContracts] = await Promise.all([getAnimal(id), getContracts()]);
+      const [a, allContracts, vetList, stayList] = await Promise.all([
+        getAnimal(id),
+        getContracts(),
+        getHarasVetRecords({ animalId: id }).catch(() => []),
+        getHarasStays({ animalId: id }).catch(() => []),
+      ]);
       setAnimal(a);
       setContracts(allContracts.filter((c) => c.animal_id === id));
+      setVetRecords(vetList);
+      setStays(stayList);
     } catch (e: unknown) {
       toastError(e instanceof Error ? e.message : 'Erro ao carregar animal');
     } finally {
@@ -163,6 +177,71 @@ export default function AnimalDetailPage() {
           </ul>
         )}
       </section>
+
+      <section className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
+          <div className="flex items-center justify-between border-b border-brand-beige px-4 py-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-brand-dark-brown">
+              <Stethoscope className="h-4 w-4" /> Histórico veterinário
+            </h3>
+            <Link to="/app/haras/veterinario" className="text-xs font-medium text-brand-brown hover:underline">
+              Ver módulo
+            </Link>
+          </div>
+          {vetRecords.length === 0 ? (
+            <p className="px-4 py-8 text-center text-sm text-brand-olive">Nenhum registro veterinário para este animal.</p>
+          ) : (
+            <ul className="divide-y divide-brand-beige/70">
+              {vetRecords.slice(0, 8).map((r) => (
+                <li key={r.id} className="flex flex-wrap items-start justify-between gap-2 px-4 py-3 text-sm">
+                  <div>
+                    <p className="font-medium text-brand-dark-brown">
+                      {vetTypeLabel(r.recordType)} · {r.title}
+                    </p>
+                    <p className="text-xs text-brand-olive">
+                      {formatDateBR(r.recordDate)}
+                      {r.product ? ` · ${r.product}` : ''}
+                      {r.nextDueDate ? ` · próxima ${formatDateBR(r.nextDueDate)}` : ''}
+                    </p>
+                  </div>
+                  {r.cost != null && <span className="text-xs text-brand-olive">{moneyBRL(r.cost)}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+      <section className="overflow-hidden rounded-2xl border border-brand-beige bg-white shadow-card">
+          <div className="flex items-center justify-between border-b border-brand-beige px-4 py-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-brand-dark-brown">
+              <Home className="h-4 w-4" /> Hospedagem
+            </h3>
+            <Link to="/app/haras/hospedagem" className="text-xs font-medium text-brand-brown hover:underline">
+              Ver módulo
+            </Link>
+          </div>
+          {stays.length === 0 ? (
+            <p className="px-4 py-8 text-center text-sm text-brand-olive">Nenhuma hospedagem registrada.</p>
+          ) : (
+            <ul className="divide-y divide-brand-beige/70">
+              {stays.slice(0, 6).map((s) => (
+                <li key={s.id} className="flex flex-wrap items-start justify-between gap-2 px-4 py-3 text-sm">
+                  <div>
+                    <p className="font-medium text-brand-dark-brown">
+                      {s.status === 'hospedado' ? 'Hospedado' : 'Encerrado'}
+                      {s.stall ? ` · baia ${s.stall}` : ''}
+                    </p>
+                    <p className="text-xs text-brand-olive">
+                      {formatDateBR(s.checkIn)}
+                      {s.checkOut ? ` → ${formatDateBR(s.checkOut)}` : ' · em aberto'}
+                      {` · ${s.days} diária(s)`}
+                    </p>
+                  </div>
+                  <span className="text-xs font-medium text-brand-dark-brown">{moneyBRL(s.estimatedTotal)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
       <Modal open={editOpen} title="Editar animal" onClose={() => setEditOpen(false)} size="lg">
         <AnimalForm

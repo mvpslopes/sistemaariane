@@ -2,12 +2,50 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { LogIn, Lock, User, PawPrint, ShieldCheck, Users } from 'lucide-react';
+import {
+  LogIn,
+  Lock,
+  User,
+  PawPrint,
+  FileSignature,
+  Banknote,
+  Gavel,
+  Eye,
+  EyeOff,
+  Loader2,
+  MessageCircle,
+} from 'lucide-react';
 import PwaInstallBanner from '../components/PwaInstallBanner';
+import ThemeIconButton from '../components/ThemeIconButton';
+import { supportWhatsAppHref } from '../constants/support';
+
+const FEATURES = [
+  {
+    icon: PawPrint,
+    text: 'Plantel completo: animais, genealogia e reprodução',
+    short: 'Plantel',
+  },
+  {
+    icon: FileSignature,
+    text: 'Contratos com assinatura eletrônica integrada',
+    short: 'Contratos',
+  },
+  {
+    icon: Banknote,
+    text: 'Cobranças, recebíveis e repasses financeiros',
+    short: 'Cobranças',
+  },
+  {
+    icon: Gavel,
+    text: 'Leilões, lotes e arremates em um só lugar',
+    short: 'Leilões',
+  },
+];
 
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { login, isAuthenticated, authChecking } = useAuth();
   const { error: toastError, success } = useToast();
@@ -49,6 +87,10 @@ export default function Login() {
     }
   };
 
+  const forgotPasswordHref = supportWhatsAppHref(
+    `Olá! Esqueci minha senha do Sistema Ariane.${username.trim() ? `\nUsuário: ${username.trim()}` : ''}`
+  );
+
   return (
     <div className="flex min-h-screen bg-brand-off-white">
       {/* Painel decorativo — visível em telas grandes */}
@@ -74,18 +116,21 @@ export default function Login() {
         </div>
 
         <div className="relative z-10 max-w-md">
+          <span className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-brand-gold/30 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-gold-light">
+            Sistema de gestão
+          </span>
           <h2 className="text-3xl font-semibold leading-tight text-white">
             Gestão completa do seu plantel, em um só lugar.
           </h2>
           <p className="mt-4 text-sm text-brand-beige/60">
-            Cadastro de clientes, animais e genealogia com segurança e organização — pensado para
+            Cadastros, contratos, cobranças e leilões organizados com segurança — pensado para
             haras e assessorias equestres.
           </p>
 
           <div className="mt-8 space-y-4">
-            <Feature icon={PawPrint} text="Ficha completa dos animais, com foto e genealogia" />
-            <Feature icon={Users} text="Clientes e proprietários organizados por haras" />
-            <Feature icon={ShieldCheck} text="Acesso por perfil: root, admin, usuário e cliente" />
+            {FEATURES.map(({ icon, text }) => (
+              <Feature key={text} icon={icon} text={text} />
+            ))}
           </div>
         </div>
 
@@ -101,7 +146,9 @@ export default function Login() {
           <div className="absolute -right-10 bottom-10 h-96 w-96 rounded-full bg-brand-olive/10 blur-3xl" />
         </div>
 
-        <div className="relative z-10 w-full max-w-md">
+        <ThemeIconButton className="absolute right-4 top-4 z-20 bg-white/70 backdrop-blur-sm lg:right-6 lg:top-6" />
+
+        <div className="relative z-10 w-full max-w-md animate-scale-in">
           <div className="rounded-2xl border border-brand-olive/20 bg-white/90 p-8 shadow-soft-xl backdrop-blur-sm md:p-10">
             <div className="mb-8 text-center">
               <img
@@ -117,6 +164,20 @@ export default function Login() {
               </h1>
               <p className="mt-2 text-sm text-brand-olive/70">Entre para acessar seu painel</p>
               <div className="mx-auto mt-4 h-1 w-20 rounded-full bg-gradient-to-r from-brand-brown to-brand-olive" />
+            </div>
+
+            {/* Chips com os módulos reais — visíveis só quando o painel decorativo está oculto */}
+            <div className="mb-6 flex flex-wrap justify-center gap-1.5 lg:hidden">
+              {FEATURES.map(({ icon: Icon, text, short }) => (
+                <span
+                  key={text}
+                  title={text}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-brand-beige/50 px-2.5 py-1 text-[11px] font-medium text-brand-brown"
+                >
+                  <Icon className="h-3 w-3" />
+                  {short}
+                </span>
+              ))}
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
@@ -147,15 +208,33 @@ export default function Login() {
                   <Lock className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-brand-olive/50" />
                   <input
                     id="password"
-                    type="password"
+                    type={showPassword ? 'text' : 'password'}
                     autoComplete="current-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    className="w-full rounded-xl border border-brand-olive/20 py-3 pl-10 pr-4 text-sm outline-none transition focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
+                    className="w-full rounded-xl border border-brand-olive/20 py-3 pl-10 pr-10 text-sm outline-none transition focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
                     placeholder="••••••••"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-olive/50 transition hover:text-brand-brown"
+                    aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  </button>
                 </div>
+                <a
+                  href={forgotPasswordHref}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-brand-olive/80 transition hover:text-brand-brown"
+                >
+                  <MessageCircle className="h-3 w-3" />
+                  Esqueci a senha
+                </a>
               </div>
 
               <button
@@ -163,7 +242,11 @@ export default function Login() {
                 disabled={isLoading}
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-brown py-3 text-sm font-semibold text-white shadow-lg shadow-brand-brown/25 transition hover:bg-brand-olive disabled:opacity-60"
               >
-                <LogIn className="h-5 w-5" />
+                {isLoading ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <LogIn className="h-5 w-5" />
+                )}
                 {isLoading ? 'Entrando...' : 'Entrar'}
               </button>
             </form>

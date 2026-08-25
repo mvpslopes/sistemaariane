@@ -18,9 +18,14 @@ import {
   ClipboardList,
   MessagesSquare,
   Crown,
+  Warehouse,
+  Home,
+  Stethoscope,
+  Wallet,
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useClienteHarasLinks } from '../hooks/useClienteHarasLinks';
 import { useAnimatedPresence } from '../hooks/useAnimatedPresence';
 import { buildSupportMessage, supportWhatsAppHref, TECH_SUPPORT } from '../constants/support';
 import AssistantMark from './AssistantMark';
@@ -41,6 +46,7 @@ export default function MobileMoreSheet({ open, onClose, onLogout, onOpenAssista
   const isStaff = !hasRole('cliente');
   const isRoot = hasRole('root');
   const isAssessor = !!user?.isAssessor && hasRole('cliente');
+  const clienteHarasLinks = useClienteHarasLinks();
   const { mounted, visible, duration } = useAnimatedPresence(open, 320);
   const { count: chatUnread } = useChatUnread(open);
 
@@ -69,6 +75,10 @@ export default function MobileMoreSheet({ open, onClose, onLogout, onOpenAssista
     items.push(
       { type: 'link', to: '/app/leiloes', icon: Gavel, label: 'Leilões' },
       { type: 'link', to: '/app/reproducao', icon: Dna, label: 'Reprodução' },
+      { type: 'link', to: '/app/haras/veterinario', icon: Stethoscope, label: 'Controle veterinário' },
+      { type: 'link', to: '/app/haras/estoque', icon: Warehouse, label: 'Controle de estoque' },
+      { type: 'link', to: '/app/haras/hospedagem', icon: Home, label: 'Controle de hospedagem' },
+      { type: 'link', to: '/app/haras/financeiro', icon: Wallet, label: 'Controle financeiro' },
       { type: 'link', to: '/app/registro-diario', icon: ClipboardList, label: 'Registro diário' },
       { type: 'link', to: '/app/recebiveis', icon: PieChart, label: 'Recebíveis' },
       { type: 'link', to: '/app/financeiro-empresa', icon: Landmark, label: 'Financeiro da empresa' }
@@ -88,6 +98,16 @@ export default function MobileMoreSheet({ open, onClose, onLogout, onOpenAssista
     }
   } else if (isAssessor) {
     items.push({ type: 'link', to: '/app/leiloes', icon: Gavel, label: 'Leilões' });
+  } else {
+    const iconByCode = { sanitario: Stethoscope, estoque: Warehouse, hospedagem: Home, financeiro_haras: Wallet } as const;
+    for (const l of clienteHarasLinks) {
+      items.push({
+        type: 'link',
+        to: l.to,
+        icon: iconByCode[l.code],
+        label: l.label,
+      });
+    }
   }
 
   items.push(

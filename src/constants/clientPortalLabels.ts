@@ -25,7 +25,7 @@ export const clientPortalLabels = {
 
 export function resolvePageMeta(pathname: string, isCliente: boolean, isAssessor = false) {
   if (pathname.startsWith('/app/animais/') && pathname !== '/app/animais') {
-    return { title: 'Ficha do animal', subtitle: 'Dados, proprietários e contratos vinculados' };
+    return { title: 'Ficha do animal', subtitle: 'Dados, proprietários, veterinário e hospedagem' };
   }
   const defaults: Record<string, { title: string; subtitle: string }> = {
     '/app': {
@@ -53,6 +53,22 @@ export function resolvePageMeta(pathname: string, isCliente: boolean, isAssessor
     '/app/reproducao': {
       title: 'Reprodução',
       subtitle: 'Cobrições, estações e status ABCCMM (manual)',
+    },
+    '/app/haras/veterinario': {
+      title: 'Controle veterinário',
+      subtitle: 'Vacinas, vermífugos, exames e tratamentos do plantel',
+    },
+    '/app/haras/estoque': {
+      title: 'Controle de estoque',
+      subtitle: 'Medicamentos, ração, insumos e movimentações',
+    },
+    '/app/haras/hospedagem': {
+      title: 'Controle de hospedagem',
+      subtitle: 'Baias, diárias e ocupação dos animais hospedados',
+    },
+    '/app/haras/financeiro': {
+      title: 'Financeiro do haras',
+      subtitle: 'Receitas e despesas da propriedade',
     },
     '/app/leiloes': {
       title: 'Leilões',

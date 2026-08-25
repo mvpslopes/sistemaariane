@@ -19,11 +19,15 @@ import {
   Landmark,
   Package,
   Dna,
+  Wallet,
   Settings,
   ClipboardList,
   MessageCircle,
   Crown,
   Briefcase,
+  Warehouse,
+  Home,
+  Stethoscope,
 } from 'lucide-react';
 import {
   NavAccordion,
@@ -48,6 +52,7 @@ import { useChatMessageNotifications } from '../hooks/useChatMessageNotification
 import { usePresenceHeartbeat } from '../hooks/usePresenceHeartbeat';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useOperationalAlerts } from '../hooks/useOperationalAlerts';
+import { useClienteHarasLinks } from '../hooks/useClienteHarasLinks';
 import { AI_ASSISTANT_ENABLED } from '../constants/featureFlags';
 import PageTransition from './PageTransition';
 import PwaInstallBanner from './PwaInstallBanner';
@@ -58,6 +63,7 @@ const assessoriaPaths = [
   '/app/pessoas',
   '/app/animais',
   '/app/reproducao',
+  '/app/haras',
   '/app/contratos',
   '/app/modelos-contrato',
   '/app/registro-diario',
@@ -86,6 +92,7 @@ function AppShellInner() {
   const isCliente = hasRole('cliente');
   const isRoot = hasRole('root');
   const isAssessor = !!user?.isAssessor && isCliente;
+  const clienteHarasLinks = useClienteHarasLinks();
   const pathname = location.pathname;
   const { stats: alertStats, loading: alertsLoading } = useOperationalAlerts(!!user);
   useChatMessageNotifications(!!user);
@@ -269,6 +276,13 @@ function AppShellInner() {
                 <NavSubLink to="/app/pessoas" icon={Users} label="Pessoas" compact={compact} />
                 <NavSubLink to="/app/animais" icon={PawPrint} label="Animais" compact={compact} />
                 <NavSubLink to="/app/reproducao" icon={Dna} label="Reprodução" compact={compact} />
+                {!compact && (
+                  <NavSectionLabel compact={compact}>Plantel / Haras</NavSectionLabel>
+                )}
+                <NavSubLink to="/app/haras/veterinario" icon={Stethoscope} label="Controle veterinário" compact={compact} />
+                <NavSubLink to="/app/haras/estoque" icon={Warehouse} label="Controle de estoque" compact={compact} />
+                <NavSubLink to="/app/haras/hospedagem" icon={Home} label="Controle de hospedagem" compact={compact} />
+                <NavSubLink to="/app/haras/financeiro" icon={Wallet} label="Controle financeiro" compact={compact} />
                 <NavSubLink to="/app/contratos" icon={FileText} label="Contratos" compact={compact} />
                 <NavSubLink to="/app/modelos-contrato" icon={FileStack} label="Modelos" compact={compact} />
                 <NavSubLink to="/app/registro-diario" icon={ClipboardList} label="Registro diário" compact={compact} />
@@ -347,6 +361,28 @@ function AppShellInner() {
               />
               <NavTopLink to="/app/contratos" icon={FileText} label="Contratos" compact={compact} />
               <NavTopLink to="/app/cobrancas" icon={Banknote} label="Cobranças" compact={compact} />
+              {clienteHarasLinks.length > 0 && (
+                <>
+                  <NavSectionLabel compact={compact}>Meu haras</NavSectionLabel>
+                  {clienteHarasLinks.map((l) => (
+                    <NavTopLink
+                      key={l.to}
+                      to={l.to}
+                      icon={
+                        l.code === 'sanitario'
+                          ? Stethoscope
+                          : l.code === 'estoque'
+                            ? Warehouse
+                            : l.code === 'hospedagem'
+                              ? Home
+                              : Wallet
+                      }
+                      label={l.label}
+                      compact={compact}
+                    />
+                  ))}
+                </>
+              )}
             </>
           )}
 

@@ -19,9 +19,11 @@ import DailyReportsPage from './pages/app/DailyReportsPage';
 import DailyReportFormPage from './pages/app/DailyReportFormPage';
 import ChatPage from './pages/app/ChatPage';
 import RootPanelPage from './pages/app/RootPanelPage';
-import HarasModulePage from './pages/app/HarasModulePage';
+import HarasVetPage from './pages/app/HarasVetPage';
+import HarasStockPage from './pages/app/HarasStockPage';
+import HarasStaysPage from './pages/app/HarasStaysPage';
+import HarasFinancePage from './pages/app/HarasFinancePage';
 import HelpPage from './pages/app/HelpPage';
-import { Warehouse, Home, Stethoscope, Wallet } from 'lucide-react';
 import ChangePassword from './pages/ChangePassword';
 import ProfilePage from './pages/app/ProfilePage';
 import SessionWarning from './components/SessionWarning';
@@ -180,48 +182,32 @@ function AppContent() {
           <Route
             path="haras/estoque"
             element={
-              <ProtectedRoute roles={['root', 'admin', 'user']}>
-                <HarasModulePage
-                  title="Controle de estoque"
-                  description="Medicamentos, insumos, ração e materiais do haras — em breve neste módulo."
-                  icon={Warehouse}
-                />
+              <ProtectedRoute roles={['root', 'admin', 'user', 'cliente']}>
+                <HarasStockPage />
               </ProtectedRoute>
             }
           />
           <Route
             path="haras/hospedagem"
             element={
-              <ProtectedRoute roles={['root', 'admin', 'user']}>
-                <HarasModulePage
-                  title="Controle de hospedagem"
-                  description="Animais hospedados, diárias e ocupação de baias — em breve neste módulo."
-                  icon={Home}
-                />
+              <ProtectedRoute roles={['root', 'admin', 'user', 'cliente']}>
+                <HarasStaysPage />
               </ProtectedRoute>
             }
           />
           <Route
             path="haras/financeiro"
             element={
-              <ProtectedRoute roles={['root', 'admin', 'user']}>
-                <HarasModulePage
-                  title="Controle financeiro do haras"
-                  description="Receitas, despesas e fluxo de caixa por propriedade — em breve neste módulo."
-                  icon={Wallet}
-                />
+              <ProtectedRoute roles={['root', 'admin', 'user', 'cliente']}>
+                <HarasFinancePage />
               </ProtectedRoute>
             }
           />
           <Route
             path="haras/veterinario"
             element={
-              <ProtectedRoute roles={['root', 'admin', 'user']}>
-                <HarasModulePage
-                  title="Controle veterinário"
-                  description="Vacinas, vermífugos, exames e histórico sanitário — em breve neste módulo."
-                  icon={Stethoscope}
-                />
+              <ProtectedRoute roles={['root', 'admin', 'user', 'cliente']}>
+                <HarasVetPage />
               </ProtectedRoute>
             }
           />

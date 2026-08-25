@@ -2997,7 +2997,7 @@ function fetch_assessor_auction_finance(PDO $pdo, int $auctionId, int $assessorC
     ];
 }
 
-const CLIENT_MODULE_CODES = ['plantel', 'reproducao', 'sanitario', 'contratos', 'leiloes'];
+const CLIENT_MODULE_CODES = ['plantel', 'reproducao', 'sanitario', 'contratos', 'leiloes', 'estoque', 'hospedagem', 'financeiro_haras'];
 
 function normalize_client_module_code(?string $code): ?string {
     $code = $code ?? '';
@@ -6400,6 +6400,222 @@ function map_breeding_covering(array $r): array {
     ];
 }
 
+function haras_is_staff(array $auth): bool {
+    return ($auth['role'] ?? '') !== 'cliente';
+}
+
+function haras_client_id(array $auth): int {
+    return (int)($auth['clientId'] ?? 0);
+}
+
+function haras_require_module(PDO $pdo, array $auth, string $code): void {
+    if (haras_is_staff($auth)) return;
+    $cid = haras_client_id($auth);
+    if ($cid <= 0) json_out(['error' => 'Acesso negado'], 403);
+    try {
+        $stmt = $pdo->prepare('SELECT active FROM client_modules WHERE client_id = ? AND module_code = ? LIMIT 1');
+        $stmt->execute([$cid, $code]);
+        $row = $stmt->fetch();
+    } catch (Throwable $e) {
+        json_out(['error' => 'Módulo indisponível'], 403);
+    }
+    if (!$row || empty($row['active'])) {
+        json_out(['error' => 'Este módulo não está ativo no seu plano'], 403);
+    }
+}
+
+function haras_resolve_property_id(PDO $pdo, array $auth, $raw, bool $required = true): ?int {
+    $propertyId = (int)$raw;
+    if ($propertyId <= 0) {
+        if ($required) json_out(['error' => 'Selecione o haras'], 400);
+        return null;
+    }
+    if (haras_is_staff($auth)) {
+        $stmt = $pdo->prepare('SELECT id FROM client_properties WHERE id = ? LIMIT 1');
+        $stmt->execute([$propertyId]);
+        if (!$stmt->fetch()) json_out(['error' => 'Haras não encontrado'], 400);
+        return $propertyId;
+    }
+    $stmt = $pdo->prepare('SELECT id FROM client_properties WHERE id = ? AND client_id = ? LIMIT 1');
+    $stmt->execute([$propertyId, haras_client_id($auth)]);
+    if (!$stmt->fetch()) json_out(['error' => 'Haras não encontrado'], 403);
+    return $propertyId;
+}
+
+function haras_can_access_property(PDO $pdo, array $auth, $propertyId): bool {
+    if (haras_is_staff($auth)) return true;
+    $pid = (int)$propertyId;
+    $cid = haras_client_id($auth);
+    if ($pid <= 0 || $cid <= 0) return false;
+    $stmt = $pdo->prepare('SELECT 1 FROM client_properties WHERE id = ? AND client_id = ? LIMIT 1');
+    $stmt->execute([$pid, $cid]);
+    return (bool)$stmt->fetch();
+}
+
+function haras_apply_property_scope(string $alias, array $auth, int $filterPropertyId, bool $unassigned, string &$sql, array &$params): void {
+    if (!haras_is_staff($auth)) {
+        $sql .= " AND {$alias}.property_id IN (SELECT id FROM client_properties WHERE client_id = ?)";
+        $params[] = haras_client_id($auth);
+    } elseif ($unassigned) {
+        $sql .= " AND {$alias}.property_id IS NULL";
+    }
+    if ($filterPropertyId > 0) {
+        $sql .= " AND {$alias}.property_id = ?";
+        $params[] = $filterPropertyId;
+    }
+}
+
+function map_haras_vet(array $r): array {
+    return [
+        'id' => (string)$r['id'],
+        'propertyId' => !empty($r['property_id']) ? (string)$r['property_id'] : null,
+        'propertyName' => $r['property_name'] ?? null,
+        'propertyOwnerName' => $r['property_owner_name'] ?? null,
+        'animalId' => (string)$r['animal_id'],
+        'animalName' => $r['animal_name'] ?? null,
+        'recordType' => $r['record_type'],
+        'title' => $r['title'],
+        'product' => $r['product'],
+        'recordDate' => $r['record_date'],
+        'nextDueDate' => $r['next_due_date'],
+        'veterinarian' => $r['veterinarian'],
+        'resultNotes' => $r['result_notes'],
+        'cost' => $r['cost'] !== null ? (float)$r['cost'] : null,
+        'notes' => $r['notes'],
+        'createdAt' => $r['created_at'] ?? null,
+    ];
+}
+
+function map_haras_stock(array $r): array {
+    $qty = (float)$r['quantity'];
+    $min = (float)$r['min_quantity'];
+    return [
+        'id' => (string)$r['id'],
+        'propertyId' => !empty($r['property_id']) ? (string)$r['property_id'] : null,
+        'propertyName' => $r['property_name'] ?? null,
+        'propertyOwnerName' => $r['property_owner_name'] ?? null,
+        'name' => $r['name'],
+        'category' => $r['category'],
+        'unit' => $r['unit'],
+        'quantity' => $qty,
+        'minQuantity' => $min,
+        'unitCost' => $r['unit_cost'] !== null ? (float)$r['unit_cost'] : null,
+        'location' => $r['location'],
+        'notes' => $r['notes'],
+        'lowStock' => $min > 0 && $qty <= $min,
+        'createdAt' => $r['created_at'] ?? null,
+    ];
+}
+
+function map_haras_stock_move(array $r): array {
+    return [
+        'id' => (string)$r['id'],
+        'itemId' => (string)$r['item_id'],
+        'itemName' => $r['item_name'] ?? null,
+        'moveType' => $r['move_type'],
+        'quantity' => (float)$r['quantity'],
+        'reason' => $r['reason'],
+        'animalId' => $r['animal_id'] ? (string)$r['animal_id'] : null,
+        'animalName' => $r['animal_name'] ?? null,
+        'createdAt' => $r['created_at'] ?? null,
+    ];
+}
+
+function haras_stay_days(?string $checkIn, ?string $checkOut): int {
+    if (!$checkIn) return 1;
+    try {
+        $start = new DateTime($checkIn);
+        $end = new DateTime($checkOut ?: date('Y-m-d'));
+        $days = (int)$start->diff($end)->days;
+        return max(1, $days ?: 1);
+    } catch (Throwable $e) {
+        return 1;
+    }
+}
+
+function map_haras_stay(array $r): array {
+    $days = haras_stay_days($r['check_in'] ?? null, $r['check_out'] ?? null);
+    $rate = (float)($r['daily_rate'] ?? 0);
+    return [
+        'id' => (string)$r['id'],
+        'propertyId' => !empty($r['property_id']) ? (string)$r['property_id'] : null,
+        'propertyName' => $r['property_name'] ?? null,
+        'propertyOwnerName' => $r['property_owner_name'] ?? null,
+        'animalId' => (string)$r['animal_id'],
+        'animalName' => $r['animal_name'] ?? null,
+        'ownerClientId' => $r['owner_client_id'] ? (string)$r['owner_client_id'] : null,
+        'ownerName' => $r['owner_name'] ?? null,
+        'stall' => $r['stall'],
+        'checkIn' => $r['check_in'],
+        'checkOut' => $r['check_out'],
+        'dailyRate' => $rate,
+        'status' => $r['status'],
+        'notes' => $r['notes'],
+        'days' => $days,
+        'estimatedTotal' => round($days * $rate, 2),
+        'createdAt' => $r['created_at'] ?? null,
+    ];
+}
+
+function haras_ensure_stay_income(PDO $pdo, int $stayId, int $userId): void {
+    try {
+        $stmt = $pdo->prepare(
+            'SELECT s.*, a.name AS animal_name
+             FROM haras_stays s
+             INNER JOIN animals a ON a.id = s.animal_id
+             WHERE s.id = ?'
+        );
+        $stmt->execute([$stayId]);
+        $stay = $stmt->fetch();
+        if (!$stay || ($stay['status'] ?? '') !== 'encerrado' || empty($stay['check_out'])) return;
+        $rate = (float)($stay['daily_rate'] ?? 0);
+        if ($rate <= 0) return;
+        $exists = $pdo->prepare('SELECT id FROM haras_finance_entries WHERE stay_id = ? LIMIT 1');
+        $exists->execute([$stayId]);
+        if ($exists->fetch()) return;
+        $days = haras_stay_days($stay['check_in'] ?? null, $stay['check_out'] ?? null);
+        $amount = round($days * $rate, 2);
+        if ($amount <= 0) return;
+        $desc = 'Diárias — ' . $stay['animal_name'] . ' (' . $days . ' dia' . ($days > 1 ? 's' : '') . ')';
+        $pdo->prepare(
+            'INSERT INTO haras_finance_entries (entry_type, category, amount, entry_date, description, animal_id, stay_id, property_id, notes, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([
+            'receita',
+            'diarias',
+            $amount,
+            $stay['check_out'],
+            $desc,
+            (int)$stay['animal_id'],
+            $stayId,
+            $stay['property_id'] ? (int)$stay['property_id'] : null,
+            null,
+            $userId,
+        ]);
+    } catch (Throwable $e) {
+        // Financeiro do haras pode ainda não ter migration; a hospedagem já foi salva.
+    }
+}
+
+function map_haras_finance(array $r): array {
+    return [
+        'id' => (string)$r['id'],
+        'propertyId' => !empty($r['property_id']) ? (string)$r['property_id'] : null,
+        'propertyName' => $r['property_name'] ?? null,
+        'propertyOwnerName' => $r['property_owner_name'] ?? null,
+        'entryType' => $r['entry_type'],
+        'category' => $r['category'],
+        'amount' => (float)$r['amount'],
+        'entryDate' => $r['entry_date'],
+        'description' => $r['description'],
+        'animalId' => $r['animal_id'] ? (string)$r['animal_id'] : null,
+        'animalName' => $r['animal_name'] ?? null,
+        'stayId' => $r['stay_id'] ? (string)$r['stay_id'] : null,
+        'notes' => $r['notes'],
+        'createdAt' => $r['created_at'] ?? null,
+    ];
+}
+
 if ($resource === 'search' && $method === 'GET') {
     $auth = require_auth($config['jwt_secret']);
     $q = trim($_GET['q'] ?? '');
@@ -7301,6 +7517,580 @@ if ($resource === 'breeding-coverings') {
         $stmt = $pdo->prepare('DELETE FROM breeding_coverings WHERE id = ?');
         $stmt->execute([(int)$id]);
         if ($stmt->rowCount() === 0) json_out(['error' => 'Cobertura não encontrada'], 404);
+        json_out(['success' => true]);
+    }
+}
+
+if ($resource === 'haras-properties' && $method === 'GET') {
+    $auth = require_auth($config['jwt_secret']);
+    try {
+        $sql = "SELECT p.id, p.client_id, p.name, p.city, p.state, p.is_primary, p.property_type, c.name AS owner_name
+                FROM client_properties p
+                INNER JOIN clients c ON c.id = p.client_id
+                WHERE 1=1";
+        $params = [];
+        if (!haras_is_staff($auth)) {
+            $cid = haras_client_id($auth);
+            if ($cid <= 0) json_out([]);
+            $sql .= ' AND p.client_id = ?';
+            $params[] = $cid;
+        }
+        $sql .= ' ORDER BY c.name ASC, p.is_primary DESC, p.name ASC';
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        json_out(array_map(function ($r) {
+            return [
+                'id' => (string)$r['id'],
+                'clientId' => (string)$r['client_id'],
+                'name' => $r['name'],
+                'city' => $r['city'],
+                'state' => $r['state'],
+                'isPrimary' => (bool)$r['is_primary'],
+                'propertyType' => $r['property_type'],
+                'ownerName' => $r['owner_name'],
+            ];
+        }, $stmt->fetchAll()));
+    } catch (Throwable $e) {
+        json_out(['error' => 'Não foi possível listar os haras'], 500);
+    }
+}
+
+if ($resource === 'haras-vet') {
+    $auth = require_auth($config['jwt_secret']);
+    haras_require_module($pdo, $auth, 'sanitario');
+    $vetTypes = ['vacina', 'vermifugo', 'exame', 'tratamento', 'outro'];
+
+    if ($method === 'GET' && !$id) {
+        try {
+            $q = trim($_GET['q'] ?? '');
+            $type = trim($_GET['type'] ?? '');
+            $animalId = (int)($_GET['animalId'] ?? 0);
+            $propertyId = (int)($_GET['propertyId'] ?? 0);
+            $unassigned = haras_is_staff($auth) && (($_GET['unassigned'] ?? '') === '1');
+            $sql = "SELECT v.*, a.name AS animal_name, hp.name AS property_name, hpc.name AS property_owner_name
+                    FROM haras_vet_records v
+                    INNER JOIN animals a ON a.id = v.animal_id
+                    LEFT JOIN client_properties hp ON hp.id = v.property_id
+                    LEFT JOIN clients hpc ON hpc.id = hp.client_id
+                    WHERE 1=1";
+            $params = [];
+            haras_apply_property_scope('v', $auth, $propertyId, $unassigned, $sql, $params);
+            if ($animalId > 0) {
+                $sql .= ' AND v.animal_id = ?';
+                $params[] = $animalId;
+            }
+            if ($type !== '' && in_array($type, $vetTypes, true)) {
+                $sql .= ' AND v.record_type = ?';
+                $params[] = $type;
+            }
+            if ($q !== '') {
+                $sql .= ' AND (a.name LIKE ? OR v.title LIKE ? OR v.product LIKE ? OR v.veterinarian LIKE ? OR hp.name LIKE ?)';
+                $like = "%$q%";
+                array_push($params, $like, $like, $like, $like, $like);
+            }
+            $sql .= ' ORDER BY v.record_date DESC, v.id DESC LIMIT 300';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            json_out(array_map('map_haras_vet', $stmt->fetchAll()));
+        } catch (Throwable $e) {
+            json_out(['error' => 'Módulo veterinário indisponível — rode database/migration-haras-modules.sql'], 500);
+        }
+    }
+
+    if ($method === 'POST' && !$id) {
+        require_create($config['jwt_secret']);
+        $animalId = (int)($body['animalId'] ?? 0);
+        $title = trim($body['title'] ?? '');
+        $date = trim($body['recordDate'] ?? '');
+        if ($animalId <= 0 || $title === '' || $date === '') json_out(['error' => 'Animal, título e data são obrigatórios'], 400);
+        $propertyId = haras_resolve_property_id($pdo, $auth, $body['propertyId'] ?? 0);
+        $type = $body['recordType'] ?? 'vacina';
+        if (!in_array($type, $vetTypes, true)) $type = 'vacina';
+        try {
+            $pdo->prepare(
+                'INSERT INTO haras_vet_records (property_id, animal_id, record_type, title, product, record_date, next_due_date, veterinarian, result_notes, cost, notes, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $propertyId, $animalId, $type, $title,
+                trim($body['product'] ?? '') ?: null,
+                $date,
+                trim($body['nextDueDate'] ?? '') ?: null,
+                trim($body['veterinarian'] ?? '') ?: null,
+                trim($body['resultNotes'] ?? '') ?: null,
+                isset($body['cost']) && $body['cost'] !== '' ? (float)$body['cost'] : null,
+                trim($body['notes'] ?? '') ?: null,
+                $auth['id'],
+            ]);
+            json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao salvar registro veterinário'], 500);
+        }
+    }
+
+    if ($method === 'PUT' && $id) {
+        require_update($config['jwt_secret']);
+        $stmt = $pdo->prepare('SELECT * FROM haras_vet_records WHERE id = ?');
+        $stmt->execute([(int)$id]);
+        $cur = $stmt->fetch();
+        if (!$cur) json_out(['error' => 'Registro não encontrado'], 404);
+        $propertyId = array_key_exists('propertyId', $body)
+            ? haras_resolve_property_id($pdo, $auth, $body['propertyId'])
+            : ($cur['property_id'] ? (int)$cur['property_id'] : haras_resolve_property_id($pdo, $auth, 0));
+        $type = $body['recordType'] ?? $cur['record_type'];
+        if (!in_array($type, $vetTypes, true)) $type = $cur['record_type'];
+        try {
+            $pdo->prepare(
+                'UPDATE haras_vet_records SET property_id=?, animal_id=?, record_type=?, title=?, product=?, record_date=?, next_due_date=?, veterinarian=?, result_notes=?, cost=?, notes=? WHERE id=?'
+            )->execute([
+                $propertyId,
+                (int)($body['animalId'] ?? $cur['animal_id']),
+                $type,
+                trim($body['title'] ?? $cur['title']),
+                array_key_exists('product', $body) ? (trim((string)$body['product']) ?: null) : $cur['product'],
+                $body['recordDate'] ?? $cur['record_date'],
+                array_key_exists('nextDueDate', $body) ? (trim((string)$body['nextDueDate']) ?: null) : $cur['next_due_date'],
+                array_key_exists('veterinarian', $body) ? (trim((string)$body['veterinarian']) ?: null) : $cur['veterinarian'],
+                array_key_exists('resultNotes', $body) ? (trim((string)$body['resultNotes']) ?: null) : $cur['result_notes'],
+                array_key_exists('cost', $body) ? ($body['cost'] === '' || $body['cost'] === null ? null : (float)$body['cost']) : $cur['cost'],
+                array_key_exists('notes', $body) ? (trim((string)$body['notes']) ?: null) : $cur['notes'],
+                (int)$id,
+            ]);
+            json_out(['success' => true]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao atualizar registro'], 500);
+        }
+    }
+
+    if ($method === 'DELETE' && $id) {
+        require_delete($config['jwt_secret']);
+        $stmt = $pdo->prepare('DELETE FROM haras_vet_records WHERE id = ?');
+        $stmt->execute([(int)$id]);
+        if ($stmt->rowCount() === 0) json_out(['error' => 'Registro não encontrado'], 404);
+        json_out(['success' => true]);
+    }
+}
+
+if ($resource === 'haras-stock') {
+    $auth = require_auth($config['jwt_secret']);
+    haras_require_module($pdo, $auth, 'estoque');
+    $cats = ['medicamento', 'insumo', 'racao', 'material', 'outro'];
+
+    if ($method === 'GET' && $id && $action === 'moves') {
+        try {
+            $chk = $pdo->prepare('SELECT property_id FROM haras_stock_items WHERE id = ?');
+            $chk->execute([(int)$id]);
+            $itemRow = $chk->fetch();
+            if (!$itemRow) json_out(['error' => 'Item não encontrado'], 404);
+            if (!haras_can_access_property($pdo, $auth, $itemRow['property_id'])) json_out(['error' => 'Acesso negado'], 403);
+            $stmt = $pdo->prepare(
+                "SELECT m.*, i.name AS item_name, a.name AS animal_name
+                 FROM haras_stock_moves m
+                 INNER JOIN haras_stock_items i ON i.id = m.item_id
+                 LEFT JOIN animals a ON a.id = m.animal_id
+                 WHERE m.item_id = ?
+                 ORDER BY m.created_at DESC LIMIT 100"
+            );
+            $stmt->execute([(int)$id]);
+            json_out(array_map('map_haras_stock_move', $stmt->fetchAll()));
+        } catch (Throwable $e) {
+            json_out(['error' => 'Módulo de estoque indisponível — rode database/migration-haras-modules.sql'], 500);
+        }
+    }
+
+    if ($method === 'POST' && $id && $action === 'move') {
+        require_update($config['jwt_secret']);
+        $moveType = $body['moveType'] ?? 'entrada';
+        if (!in_array($moveType, ['entrada', 'saida', 'ajuste'], true)) $moveType = 'entrada';
+        $qty = (float)($body['quantity'] ?? 0);
+        if ($qty <= 0) json_out(['error' => 'Quantidade deve ser maior que zero'], 400);
+        try {
+            $pdo->beginTransaction();
+            $stmt = $pdo->prepare('SELECT * FROM haras_stock_items WHERE id = ? FOR UPDATE');
+            $stmt->execute([(int)$id]);
+            $item = $stmt->fetch();
+            if (!$item) {
+                $pdo->rollBack();
+                json_out(['error' => 'Item não encontrado'], 404);
+            }
+            if (!haras_can_access_property($pdo, $auth, $item['property_id'])) {
+                $pdo->rollBack();
+                json_out(['error' => 'Acesso negado'], 403);
+            }
+            $current = (float)$item['quantity'];
+            if ($moveType === 'entrada') $next = $current + $qty;
+            elseif ($moveType === 'saida') $next = $current - $qty;
+            else $next = $qty;
+            if ($next < 0) {
+                $pdo->rollBack();
+                json_out(['error' => 'Estoque insuficiente para esta saída'], 400);
+            }
+            $pdo->prepare('UPDATE haras_stock_items SET quantity=? WHERE id=?')->execute([$next, (int)$id]);
+            $pdo->prepare(
+                'INSERT INTO haras_stock_moves (item_id, move_type, quantity, reason, animal_id, created_by) VALUES (?, ?, ?, ?, ?, ?)'
+            )->execute([
+                (int)$id,
+                $moveType,
+                $qty,
+                trim($body['reason'] ?? '') ?: null,
+                (int)($body['animalId'] ?? 0) ?: null,
+                $auth['id'],
+            ]);
+            $pdo->commit();
+            json_out(['success' => true, 'quantity' => $next]);
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            json_out(['error' => 'Erro ao registrar movimentação'], 500);
+        }
+    }
+
+    if ($method === 'GET' && !$id) {
+        try {
+            $q = trim($_GET['q'] ?? '');
+            $cat = trim($_GET['category'] ?? '');
+            $propertyId = (int)($_GET['propertyId'] ?? 0);
+            $unassigned = haras_is_staff($auth) && (($_GET['unassigned'] ?? '') === '1');
+            $sql = "SELECT i.*, hp.name AS property_name, hpc.name AS property_owner_name
+                    FROM haras_stock_items i
+                    LEFT JOIN client_properties hp ON hp.id = i.property_id
+                    LEFT JOIN clients hpc ON hpc.id = hp.client_id
+                    WHERE 1=1";
+            $params = [];
+            haras_apply_property_scope('i', $auth, $propertyId, $unassigned, $sql, $params);
+            if ($cat !== '' && in_array($cat, $cats, true)) {
+                $sql .= ' AND i.category = ?';
+                $params[] = $cat;
+            }
+            if ($q !== '') {
+                $sql .= ' AND (i.name LIKE ? OR i.location LIKE ? OR hp.name LIKE ?)';
+                $like = "%$q%";
+                array_push($params, $like, $like, $like);
+            }
+            $sql .= ' ORDER BY i.name ASC LIMIT 300';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            json_out(array_map('map_haras_stock', $stmt->fetchAll()));
+        } catch (Throwable $e) {
+            json_out(['error' => 'Módulo de estoque indisponível — rode database/migration-haras-modules.sql'], 500);
+        }
+    }
+
+    if ($method === 'POST' && !$id) {
+        require_create($config['jwt_secret']);
+        $name = trim($body['name'] ?? '');
+        if ($name === '') json_out(['error' => 'Nome do item é obrigatório'], 400);
+        $propertyId = haras_resolve_property_id($pdo, $auth, $body['propertyId'] ?? 0);
+        $cat = $body['category'] ?? 'insumo';
+        if (!in_array($cat, $cats, true)) $cat = 'insumo';
+        try {
+            $pdo->prepare(
+                'INSERT INTO haras_stock_items (property_id, name, category, unit, quantity, min_quantity, unit_cost, location, notes, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $propertyId, $name, $cat,
+                trim($body['unit'] ?? '') ?: 'un',
+                (float)($body['quantity'] ?? 0),
+                (float)($body['minQuantity'] ?? 0),
+                isset($body['unitCost']) && $body['unitCost'] !== '' ? (float)$body['unitCost'] : null,
+                trim($body['location'] ?? '') ?: null,
+                trim($body['notes'] ?? '') ?: null,
+                $auth['id'],
+            ]);
+            json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao cadastrar item'], 500);
+        }
+    }
+
+    if ($method === 'PUT' && $id && !$action) {
+        require_update($config['jwt_secret']);
+        $stmt = $pdo->prepare('SELECT * FROM haras_stock_items WHERE id = ?');
+        $stmt->execute([(int)$id]);
+        $cur = $stmt->fetch();
+        if (!$cur) json_out(['error' => 'Item não encontrado'], 404);
+        $propertyId = array_key_exists('propertyId', $body)
+            ? haras_resolve_property_id($pdo, $auth, $body['propertyId'])
+            : ($cur['property_id'] ? (int)$cur['property_id'] : haras_resolve_property_id($pdo, $auth, 0));
+        $cat = $body['category'] ?? $cur['category'];
+        if (!in_array($cat, $cats, true)) $cat = $cur['category'];
+        try {
+            $pdo->prepare(
+                'UPDATE haras_stock_items SET property_id=?, name=?, category=?, unit=?, min_quantity=?, unit_cost=?, location=?, notes=? WHERE id=?'
+            )->execute([
+                $propertyId,
+                trim($body['name'] ?? $cur['name']),
+                $cat,
+                trim($body['unit'] ?? $cur['unit']) ?: 'un',
+                (float)($body['minQuantity'] ?? $cur['min_quantity']),
+                array_key_exists('unitCost', $body) ? ($body['unitCost'] === '' || $body['unitCost'] === null ? null : (float)$body['unitCost']) : $cur['unit_cost'],
+                array_key_exists('location', $body) ? (trim((string)$body['location']) ?: null) : $cur['location'],
+                array_key_exists('notes', $body) ? (trim((string)$body['notes']) ?: null) : $cur['notes'],
+                (int)$id,
+            ]);
+            json_out(['success' => true]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao atualizar item'], 500);
+        }
+    }
+
+    if ($method === 'DELETE' && $id && !$action) {
+        require_delete($config['jwt_secret']);
+        $stmt = $pdo->prepare('DELETE FROM haras_stock_items WHERE id = ?');
+        $stmt->execute([(int)$id]);
+        if ($stmt->rowCount() === 0) json_out(['error' => 'Item não encontrado'], 404);
+        json_out(['success' => true]);
+    }
+}
+
+if ($resource === 'haras-stays') {
+    $auth = require_auth($config['jwt_secret']);
+    haras_require_module($pdo, $auth, 'hospedagem');
+
+    if ($method === 'GET' && !$id) {
+        try {
+            $q = trim($_GET['q'] ?? '');
+            $status = trim($_GET['status'] ?? '');
+            $animalId = (int)($_GET['animalId'] ?? 0);
+            $propertyId = (int)($_GET['propertyId'] ?? 0);
+            $unassigned = haras_is_staff($auth) && (($_GET['unassigned'] ?? '') === '1');
+            $sql = "SELECT s.*, a.name AS animal_name, c.name AS owner_name, hp.name AS property_name, hpc.name AS property_owner_name
+                    FROM haras_stays s
+                    INNER JOIN animals a ON a.id = s.animal_id
+                    LEFT JOIN clients c ON c.id = s.owner_client_id
+                    LEFT JOIN client_properties hp ON hp.id = s.property_id
+                    LEFT JOIN clients hpc ON hpc.id = hp.client_id
+                    WHERE 1=1";
+            $params = [];
+            haras_apply_property_scope('s', $auth, $propertyId, $unassigned, $sql, $params);
+            if ($animalId > 0) {
+                $sql .= ' AND s.animal_id = ?';
+                $params[] = $animalId;
+            }
+            if ($status === 'hospedado' || $status === 'encerrado') {
+                $sql .= ' AND s.status = ?';
+                $params[] = $status;
+            }
+            if ($q !== '') {
+                $sql .= ' AND (a.name LIKE ? OR s.stall LIKE ? OR c.name LIKE ? OR hp.name LIKE ?)';
+                $like = "%$q%";
+                array_push($params, $like, $like, $like, $like);
+            }
+            $sql .= ' ORDER BY s.status ASC, s.check_in DESC LIMIT 300';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            json_out(array_map('map_haras_stay', $stmt->fetchAll()));
+        } catch (Throwable $e) {
+            json_out(['error' => 'Módulo de hospedagem indisponível — rode database/migration-haras-modules.sql'], 500);
+        }
+    }
+
+    if ($method === 'POST' && !$id) {
+        require_create($config['jwt_secret']);
+        $animalId = (int)($body['animalId'] ?? 0);
+        $checkIn = trim($body['checkIn'] ?? '');
+        if ($animalId <= 0 || $checkIn === '') json_out(['error' => 'Animal e data de entrada são obrigatórios'], 400);
+        $propertyId = haras_resolve_property_id($pdo, $auth, $body['propertyId'] ?? 0);
+        $ownerClientId = (int)($body['ownerClientId'] ?? 0);
+        if ($ownerClientId <= 0) {
+            $own = $pdo->prepare('SELECT client_id FROM client_properties WHERE id = ?');
+            $own->execute([$propertyId]);
+            $ownerClientId = (int)($own->fetch()['client_id'] ?? 0);
+        }
+        try {
+            $open = $pdo->prepare("SELECT id FROM haras_stays WHERE animal_id = ? AND status = 'hospedado' LIMIT 1");
+            $open->execute([$animalId]);
+            if ($open->fetch()) json_out(['error' => 'Este animal já está hospedado'], 400);
+            $pdo->prepare(
+                'INSERT INTO haras_stays (property_id, animal_id, owner_client_id, stall, check_in, check_out, daily_rate, status, notes, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $propertyId,
+                $animalId,
+                $ownerClientId ?: null,
+                trim($body['stall'] ?? '') ?: null,
+                $checkIn,
+                trim($body['checkOut'] ?? '') ?: null,
+                (float)($body['dailyRate'] ?? 0),
+                trim($body['checkOut'] ?? '') ? 'encerrado' : 'hospedado',
+                trim($body['notes'] ?? '') ?: null,
+                $auth['id'],
+            ]);
+            $newId = (int)$pdo->lastInsertId();
+            haras_ensure_stay_income($pdo, $newId, (int)$auth['id']);
+            json_out(['success' => true, 'id' => (string)$newId]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao registrar hospedagem'], 500);
+        }
+    }
+
+    if ($method === 'PUT' && $id) {
+        require_update($config['jwt_secret']);
+        $stmt = $pdo->prepare('SELECT * FROM haras_stays WHERE id = ?');
+        $stmt->execute([(int)$id]);
+        $cur = $stmt->fetch();
+        if (!$cur) json_out(['error' => 'Hospedagem não encontrada'], 404);
+        $propertyId = array_key_exists('propertyId', $body)
+            ? haras_resolve_property_id($pdo, $auth, $body['propertyId'])
+            : ($cur['property_id'] ? (int)$cur['property_id'] : haras_resolve_property_id($pdo, $auth, 0));
+        $checkOut = array_key_exists('checkOut', $body) ? (trim((string)$body['checkOut']) ?: null) : $cur['check_out'];
+        $status = $body['status'] ?? $cur['status'];
+        if ($checkOut) $status = 'encerrado';
+        if (!in_array($status, ['hospedado', 'encerrado'], true)) $status = $cur['status'];
+        try {
+            $pdo->prepare(
+                'UPDATE haras_stays SET property_id=?, animal_id=?, owner_client_id=?, stall=?, check_in=?, check_out=?, daily_rate=?, status=?, notes=? WHERE id=?'
+            )->execute([
+                $propertyId,
+                (int)($body['animalId'] ?? $cur['animal_id']),
+                array_key_exists('ownerClientId', $body) ? ((int)$body['ownerClientId'] ?: null) : $cur['owner_client_id'],
+                array_key_exists('stall', $body) ? (trim((string)$body['stall']) ?: null) : $cur['stall'],
+                $body['checkIn'] ?? $cur['check_in'],
+                $checkOut,
+                (float)($body['dailyRate'] ?? $cur['daily_rate']),
+                $status,
+                array_key_exists('notes', $body) ? (trim((string)$body['notes']) ?: null) : $cur['notes'],
+                (int)$id,
+            ]);
+            haras_ensure_stay_income($pdo, (int)$id, (int)$auth['id']);
+            json_out(['success' => true]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao atualizar hospedagem'], 500);
+        }
+    }
+
+    if ($method === 'DELETE' && $id) {
+        require_delete($config['jwt_secret']);
+        $stmt = $pdo->prepare('DELETE FROM haras_stays WHERE id = ?');
+        $stmt->execute([(int)$id]);
+        if ($stmt->rowCount() === 0) json_out(['error' => 'Hospedagem não encontrada'], 404);
+        json_out(['success' => true]);
+    }
+}
+
+if ($resource === 'haras-finance') {
+    $auth = require_auth($config['jwt_secret']);
+    haras_require_module($pdo, $auth, 'financeiro_haras');
+
+    if ($method === 'GET' && !$id) {
+        try {
+            $q = trim($_GET['q'] ?? '');
+            $type = trim($_GET['type'] ?? '');
+            $from = trim($_GET['from'] ?? '');
+            $to = trim($_GET['to'] ?? '');
+            $propertyId = (int)($_GET['propertyId'] ?? 0);
+            $unassigned = haras_is_staff($auth) && (($_GET['unassigned'] ?? '') === '1');
+            $sql = "SELECT e.*, a.name AS animal_name, hp.name AS property_name, hpc.name AS property_owner_name
+                    FROM haras_finance_entries e
+                    LEFT JOIN animals a ON a.id = e.animal_id
+                    LEFT JOIN client_properties hp ON hp.id = e.property_id
+                    LEFT JOIN clients hpc ON hpc.id = hp.client_id
+                    WHERE 1=1";
+            $params = [];
+            haras_apply_property_scope('e', $auth, $propertyId, $unassigned, $sql, $params);
+            if ($type === 'receita' || $type === 'despesa') {
+                $sql .= ' AND e.entry_type = ?';
+                $params[] = $type;
+            }
+            if ($from !== '') {
+                $sql .= ' AND e.entry_date >= ?';
+                $params[] = $from;
+            }
+            if ($to !== '') {
+                $sql .= ' AND e.entry_date <= ?';
+                $params[] = $to;
+            }
+            if ($q !== '') {
+                $sql .= ' AND (e.description LIKE ? OR e.category LIKE ? OR a.name LIKE ? OR hp.name LIKE ?)';
+                $like = "%$q%";
+                array_push($params, $like, $like, $like, $like);
+            }
+            $sql .= ' ORDER BY e.entry_date DESC, e.id DESC LIMIT 400';
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            $rows = array_map('map_haras_finance', $stmt->fetchAll());
+            $income = 0.0;
+            $expense = 0.0;
+            foreach ($rows as $row) {
+                if ($row['entryType'] === 'receita') $income += $row['amount'];
+                else $expense += $row['amount'];
+            }
+            json_out(['items' => $rows, 'totals' => [
+                'income' => round($income, 2),
+                'expense' => round($expense, 2),
+                'balance' => round($income - $expense, 2),
+            ]]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Módulo financeiro do haras indisponível — rode database/migration-haras-modules.sql'], 500);
+        }
+    }
+
+    if ($method === 'POST' && !$id) {
+        require_create($config['jwt_secret']);
+        $entryType = $body['entryType'] ?? 'despesa';
+        if (!in_array($entryType, ['receita', 'despesa'], true)) $entryType = 'despesa';
+        $desc = trim($body['description'] ?? '');
+        $date = trim($body['entryDate'] ?? '');
+        $amount = (float)($body['amount'] ?? 0);
+        if ($desc === '' || $date === '' || $amount <= 0) json_out(['error' => 'Descrição, data e valor são obrigatórios'], 400);
+        $propertyId = haras_resolve_property_id($pdo, $auth, $body['propertyId'] ?? 0);
+        try {
+            $pdo->prepare(
+                'INSERT INTO haras_finance_entries (property_id, entry_type, category, amount, entry_date, description, animal_id, stay_id, notes, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $propertyId,
+                $entryType,
+                trim($body['category'] ?? '') ?: 'outros',
+                $amount,
+                $date,
+                $desc,
+                (int)($body['animalId'] ?? 0) ?: null,
+                (int)($body['stayId'] ?? 0) ?: null,
+                trim($body['notes'] ?? '') ?: null,
+                $auth['id'],
+            ]);
+            json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao lançar movimento'], 500);
+        }
+    }
+
+    if ($method === 'PUT' && $id) {
+        require_update($config['jwt_secret']);
+        $stmt = $pdo->prepare('SELECT * FROM haras_finance_entries WHERE id = ?');
+        $stmt->execute([(int)$id]);
+        $cur = $stmt->fetch();
+        if (!$cur) json_out(['error' => 'Lançamento não encontrado'], 404);
+        $entryType = $body['entryType'] ?? $cur['entry_type'];
+        if (!in_array($entryType, ['receita', 'despesa'], true)) $entryType = $cur['entry_type'];
+        $propertyId = array_key_exists('propertyId', $body)
+            ? haras_resolve_property_id($pdo, $auth, $body['propertyId'])
+            : ($cur['property_id'] ? (int)$cur['property_id'] : haras_resolve_property_id($pdo, $auth, 0));
+        try {
+            $pdo->prepare(
+                'UPDATE haras_finance_entries SET property_id=?, entry_type=?, category=?, amount=?, entry_date=?, description=?, animal_id=?, stay_id=?, notes=? WHERE id=?'
+            )->execute([
+                $propertyId,
+                $entryType,
+                trim($body['category'] ?? $cur['category']) ?: 'outros',
+                (float)($body['amount'] ?? $cur['amount']),
+                $body['entryDate'] ?? $cur['entry_date'],
+                trim($body['description'] ?? $cur['description']),
+                array_key_exists('animalId', $body) ? ((int)$body['animalId'] ?: null) : $cur['animal_id'],
+                array_key_exists('stayId', $body) ? ((int)$body['stayId'] ?: null) : $cur['stay_id'],
+                array_key_exists('notes', $body) ? (trim((string)$body['notes']) ?: null) : $cur['notes'],
+                (int)$id,
+            ]);
+            json_out(['success' => true]);
+        } catch (Throwable $e) {
+            json_out(['error' => 'Erro ao atualizar lançamento'], 500);
+        }
+    }
+
+    if ($method === 'DELETE' && $id) {
+        require_delete($config['jwt_secret']);
+        $stmt = $pdo->prepare('DELETE FROM haras_finance_entries WHERE id = ?');
+        $stmt->execute([(int)$id]);
+        if ($stmt->rowCount() === 0) json_out(['error' => 'Lançamento não encontrado'], 404);
         json_out(['success' => true]);
     }
 }

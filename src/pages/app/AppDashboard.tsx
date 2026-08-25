@@ -12,6 +12,10 @@ import {
   Briefcase,
   FileText,
   Banknote,
+  Stethoscope,
+  Warehouse,
+  Home,
+  Wallet,
 } from 'lucide-react';
 import {
   getDashboard,
@@ -505,6 +509,48 @@ export default function AppDashboard() {
           </div>
         )}
       </section>
+
+      {!isCliente && (
+        <section className="space-y-3">
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-neutral-500">
+            Gestão de haras
+          </h3>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Link
+              to="/app/haras/veterinario"
+              className="rounded-2xl border border-brand-beige bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-card-hover"
+            >
+              <Stethoscope className="h-5 w-5 text-brand-forest" />
+              <p className="mt-3 text-sm font-semibold text-neutral-950">Veterinário</p>
+              <p className="mt-1 text-xs text-neutral-600">Vacinas, exames e tratamentos</p>
+            </Link>
+            <Link
+              to="/app/haras/estoque"
+              className="rounded-2xl border border-brand-beige bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-card-hover"
+            >
+              <Warehouse className="h-5 w-5 text-brand-gold" />
+              <p className="mt-3 text-sm font-semibold text-neutral-950">Estoque</p>
+              <p className="mt-1 text-xs text-neutral-600">Medicamentos, ração e insumos</p>
+            </Link>
+            <Link
+              to="/app/haras/hospedagem"
+              className="rounded-2xl border border-brand-beige bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-card-hover"
+            >
+              <Home className="h-5 w-5 text-brand-brown" />
+              <p className="mt-3 text-sm font-semibold text-neutral-950">Hospedagem</p>
+              <p className="mt-1 text-xs text-neutral-600">Baias, diárias e ocupação</p>
+            </Link>
+            <Link
+              to="/app/haras/financeiro"
+              className="rounded-2xl border border-brand-beige bg-white p-4 shadow-card transition hover:-translate-y-0.5 hover:shadow-card-hover"
+            >
+              <Wallet className="h-5 w-5 text-brand-olive" />
+              <p className="mt-3 text-sm font-semibold text-neutral-950">Financeiro do haras</p>
+              <p className="mt-1 text-xs text-neutral-600">Receitas e despesas da propriedade</p>
+            </Link>
+          </div>
+        </section>
+      )}
 
       {/* Relatórios / gráficos */}
       <section className="space-y-3">

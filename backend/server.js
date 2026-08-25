@@ -1081,7 +1081,7 @@ function mapClient(r) {
   };
 }
 
-const CLIENT_MODULE_CODES = ['plantel', 'reproducao', 'sanitario', 'contratos', 'leiloes'];
+const CLIENT_MODULE_CODES = ['plantel', 'reproducao', 'sanitario', 'contratos', 'leiloes', 'estoque', 'hospedagem', 'financeiro_haras'];
 
 function normalizeClientModuleCode(code) {
   return CLIENT_MODULE_CODES.includes(code) ? code : null;
@@ -6146,6 +6146,747 @@ app.delete('/api/breeding-coverings/:id', auth(['root', 'admin', 'user']), async
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao excluir cobertura' });
+  }
+});
+
+function isHarasStaff(user) {
+  return (user?.role || '') !== 'cliente';
+}
+
+async function requireHarasModule(req, res, code) {
+  if (isHarasStaff(req.user)) return true;
+  const cid = Number(req.user.clientId || 0);
+  if (!cid) {
+    res.status(403).json({ error: 'Acesso negado' });
+    return false;
+  }
+  try {
+    const [rows] = await pool.execute(
+      'SELECT active FROM client_modules WHERE client_id = ? AND module_code = ? LIMIT 1',
+      [cid, code]
+    );
+    if (!rows[0] || !rows[0].active) {
+      res.status(403).json({ error: 'Este módulo não está ativo no seu plano' });
+      return false;
+    }
+  } catch {
+    res.status(403).json({ error: 'Módulo indisponível' });
+    return false;
+  }
+  return true;
+}
+
+async function resolveHarasPropertyId(user, raw) {
+  const propertyId = Number(raw || 0);
+  if (propertyId <= 0) {
+    const err = new Error('Selecione o haras');
+    err.status = 400;
+    throw err;
+  }
+  if (isHarasStaff(user)) {
+    const [rows] = await pool.execute('SELECT id FROM client_properties WHERE id = ? LIMIT 1', [propertyId]);
+    if (!rows[0]) {
+      const err = new Error('Haras não encontrado');
+      err.status = 400;
+      throw err;
+    }
+    return propertyId;
+  }
+  const [rows] = await pool.execute(
+    'SELECT id FROM client_properties WHERE id = ? AND client_id = ? LIMIT 1',
+    [propertyId, Number(user.clientId || 0)]
+  );
+  if (!rows[0]) {
+    const err = new Error('Haras não encontrado');
+    err.status = 403;
+    throw err;
+  }
+  return propertyId;
+}
+
+async function canAccessHarasProperty(user, propertyId) {
+  if (isHarasStaff(user)) return true;
+  const pid = Number(propertyId || 0);
+  const cid = Number(user.clientId || 0);
+  if (!pid || !cid) return false;
+  const [rows] = await pool.execute(
+    'SELECT 1 FROM client_properties WHERE id = ? AND client_id = ? LIMIT 1',
+    [pid, cid]
+  );
+  return !!rows[0];
+}
+
+function applyHarasPropertyScope(alias, user, query, sql, params) {
+  const propertyId = Number(query.propertyId || 0);
+  const unassigned = isHarasStaff(user) && String(query.unassigned || '') === '1';
+  if (!isHarasStaff(user)) {
+    sql += ` AND ${alias}.property_id IN (SELECT id FROM client_properties WHERE client_id = ?)`;
+    params.push(Number(user.clientId || 0));
+  } else if (unassigned) {
+    sql += ` AND ${alias}.property_id IS NULL`;
+  }
+  if (propertyId > 0) {
+    sql += ` AND ${alias}.property_id = ?`;
+    params.push(propertyId);
+  }
+  return { sql, params };
+}
+
+function harasPropertyFields(r) {
+  return {
+    propertyId: r.property_id ? String(r.property_id) : null,
+    propertyName: r.property_name || null,
+    propertyOwnerName: r.property_owner_name || null,
+  };
+}
+
+function mapHarasVet(r) {
+  return {
+    id: String(r.id),
+    ...harasPropertyFields(r),
+    animalId: String(r.animal_id),
+    animalName: r.animal_name || null,
+    recordType: r.record_type,
+    title: r.title,
+    product: r.product,
+    recordDate: r.record_date,
+    nextDueDate: r.next_due_date,
+    veterinarian: r.veterinarian,
+    resultNotes: r.result_notes,
+    cost: r.cost != null ? Number(r.cost) : null,
+    notes: r.notes,
+    createdAt: r.created_at || null,
+  };
+}
+
+function mapHarasStock(r) {
+  const quantity = Number(r.quantity);
+  const minQuantity = Number(r.min_quantity);
+  return {
+    id: String(r.id),
+    ...harasPropertyFields(r),
+    name: r.name,
+    category: r.category,
+    unit: r.unit,
+    quantity,
+    minQuantity,
+    unitCost: r.unit_cost != null ? Number(r.unit_cost) : null,
+    location: r.location,
+    notes: r.notes,
+    lowStock: minQuantity > 0 && quantity <= minQuantity,
+    createdAt: r.created_at || null,
+  };
+}
+
+function mapHarasStockMove(r) {
+  return {
+    id: String(r.id),
+    itemId: String(r.item_id),
+    itemName: r.item_name || null,
+    moveType: r.move_type,
+    quantity: Number(r.quantity),
+    reason: r.reason,
+    animalId: r.animal_id ? String(r.animal_id) : null,
+    animalName: r.animal_name || null,
+    createdAt: r.created_at || null,
+  };
+}
+
+function stayDaysJs(checkIn, checkOut) {
+  if (!checkIn) return 1;
+  const start = new Date(`${checkIn}T12:00:00`);
+  const end = new Date(`${checkOut || new Date().toISOString().slice(0, 10)}T12:00:00`);
+  const days = Math.round((end - start) / 86400000);
+  return Math.max(1, days || 1);
+}
+
+async function harasEnsureStayIncome(pool, stayId, userId) {
+  try {
+    const [rows] = await pool.execute(
+      `SELECT s.*, a.name AS animal_name
+       FROM haras_stays s
+       INNER JOIN animals a ON a.id = s.animal_id
+       WHERE s.id = ?`,
+      [stayId]
+    );
+    const stay = rows[0];
+    if (!stay || stay.status !== 'encerrado' || !stay.check_out) return;
+    const rate = Number(stay.daily_rate || 0);
+    if (rate <= 0) return;
+    const [existing] = await pool.execute('SELECT id FROM haras_finance_entries WHERE stay_id = ? LIMIT 1', [stayId]);
+    if (existing[0]) return;
+    const days = stayDaysJs(stay.check_in, stay.check_out);
+    const amount = Math.round(days * rate * 100) / 100;
+    if (amount <= 0) return;
+    const desc = `Diárias — ${stay.animal_name} (${days} dia${days > 1 ? 's' : ''})`;
+    await pool.execute(
+      `INSERT INTO haras_finance_entries (property_id, entry_type, category, amount, entry_date, description, animal_id, stay_id, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['receita', 'diarias', amount, stay.check_out, desc, stay.animal_id, stayId, stay.property_id || null, null, userId]
+    );
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function mapHarasStay(r) {
+  const days = stayDaysJs(r.check_in, r.check_out);
+  const dailyRate = Number(r.daily_rate || 0);
+  return {
+    id: String(r.id),
+    ...harasPropertyFields(r),
+    animalId: String(r.animal_id),
+    animalName: r.animal_name || null,
+    ownerClientId: r.owner_client_id ? String(r.owner_client_id) : null,
+    ownerName: r.owner_name || null,
+    stall: r.stall,
+    checkIn: r.check_in,
+    checkOut: r.check_out,
+    dailyRate,
+    status: r.status,
+    notes: r.notes,
+    days,
+    estimatedTotal: Math.round(days * dailyRate * 100) / 100,
+    createdAt: r.created_at || null,
+  };
+}
+
+function mapHarasFinance(r) {
+  return {
+    id: String(r.id),
+    ...harasPropertyFields(r),
+    entryType: r.entry_type,
+    category: r.category,
+    amount: Number(r.amount),
+    entryDate: r.entry_date,
+    description: r.description,
+    animalId: r.animal_id ? String(r.animal_id) : null,
+    animalName: r.animal_name || null,
+    stayId: r.stay_id ? String(r.stay_id) : null,
+    notes: r.notes,
+    createdAt: r.created_at || null,
+  };
+}
+
+const MIG_HARAS = 'Módulo indisponível — rode database/migration-haras-modules.sql';
+
+app.get('/api/haras-properties', auth(), async (req, res) => {
+  try {
+    let sql = `SELECT p.id, p.client_id, p.name, p.city, p.state, p.is_primary, p.property_type, c.name AS owner_name
+      FROM client_properties p INNER JOIN clients c ON c.id = p.client_id WHERE 1=1`;
+    const params = [];
+    if (!isHarasStaff(req.user)) {
+      const cid = Number(req.user.clientId || 0);
+      if (!cid) return res.json([]);
+      sql += ' AND p.client_id = ?';
+      params.push(cid);
+    }
+    sql += ' ORDER BY c.name ASC, p.is_primary DESC, p.name ASC';
+    const [rows] = await pool.execute(sql, params);
+    res.json(rows.map((r) => ({
+      id: String(r.id),
+      clientId: String(r.client_id),
+      name: r.name,
+      city: r.city,
+      state: r.state,
+      isPrimary: !!r.is_primary,
+      propertyType: r.property_type,
+      ownerName: r.owner_name,
+    })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Não foi possível listar os haras' });
+  }
+});
+
+app.get('/api/haras-vet', auth(), async (req, res) => {
+  if (!(await requireHarasModule(req, res, 'sanitario'))) return;
+  try {
+    const q = String(req.query.q || '').trim();
+    const type = String(req.query.type || '').trim();
+    const animalId = Number(req.query.animalId || 0);
+    let sql = `SELECT v.*, a.name AS animal_name, hp.name AS property_name, hpc.name AS property_owner_name
+      FROM haras_vet_records v
+      INNER JOIN animals a ON a.id = v.animal_id
+      LEFT JOIN client_properties hp ON hp.id = v.property_id
+      LEFT JOIN clients hpc ON hpc.id = hp.client_id WHERE 1=1`;
+    const scoped = applyHarasPropertyScope('v', req.user, req.query, sql, []);
+    sql = scoped.sql;
+    const params = scoped.params;
+    if (animalId > 0) {
+      sql += ' AND v.animal_id = ?';
+      params.push(animalId);
+    }
+    if (['vacina', 'vermifugo', 'exame', 'tratamento', 'outro'].includes(type)) {
+      sql += ' AND v.record_type = ?';
+      params.push(type);
+    }
+    if (q) {
+      sql += ' AND (a.name LIKE ? OR v.title LIKE ? OR v.product LIKE ? OR v.veterinarian LIKE ? OR hp.name LIKE ?)';
+      const like = `%${q}%`;
+      params.push(like, like, like, like, like);
+    }
+    sql += ' ORDER BY v.record_date DESC LIMIT 300';
+    const [rows] = await pool.execute(sql, params);
+    res.json(rows.map(mapHarasVet));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: MIG_HARAS });
+  }
+});
+
+app.post('/api/haras-vet', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const animalId = Number(body.animalId || 0);
+    const title = String(body.title || '').trim();
+    const recordDate = String(body.recordDate || '').trim();
+    if (!animalId || !title || !recordDate) return res.status(400).json({ error: 'Animal, título e data são obrigatórios' });
+    const propertyId = await resolveHarasPropertyId(req.user, body.propertyId);
+    const recordType = ['vacina', 'vermifugo', 'exame', 'tratamento', 'outro'].includes(body.recordType)
+      ? body.recordType
+      : 'vacina';
+    const [result] = await pool.execute(
+      `INSERT INTO haras_vet_records (property_id, animal_id, record_type, title, product, record_date, next_due_date, veterinarian, result_notes, cost, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        propertyId, animalId, recordType, title, body.product || null, recordDate, body.nextDueDate || null,
+        body.veterinarian || null, body.resultNotes || null,
+        body.cost === '' || body.cost == null ? null : Number(body.cost),
+        body.notes || null, req.user.id,
+      ]
+    );
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao salvar registro veterinário' });
+  }
+});
+
+app.put('/api/haras-vet/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [curRows] = await pool.execute('SELECT * FROM haras_vet_records WHERE id = ?', [id]);
+    const cur = curRows[0];
+    if (!cur) return res.status(404).json({ error: 'Registro não encontrado' });
+    const b = req.body || {};
+    const recordType = ['vacina', 'vermifugo', 'exame', 'tratamento', 'outro'].includes(b.recordType)
+      ? b.recordType
+      : cur.record_type;
+    const propertyId = b.propertyId !== undefined
+      ? await resolveHarasPropertyId(req.user, b.propertyId)
+      : (cur.property_id || await resolveHarasPropertyId(req.user, 0));
+    await pool.execute(
+      `UPDATE haras_vet_records SET property_id=?, animal_id=?, record_type=?, title=?, product=?, record_date=?, next_due_date=?, veterinarian=?, result_notes=?, cost=?, notes=? WHERE id=?`,
+      [
+        propertyId, Number(b.animalId || cur.animal_id), recordType, b.title || cur.title,
+        b.product !== undefined ? b.product || null : cur.product,
+        b.recordDate || cur.record_date,
+        b.nextDueDate !== undefined ? b.nextDueDate || null : cur.next_due_date,
+        b.veterinarian !== undefined ? b.veterinarian || null : cur.veterinarian,
+        b.resultNotes !== undefined ? b.resultNotes || null : cur.result_notes,
+        b.cost !== undefined ? (b.cost === '' || b.cost == null ? null : Number(b.cost)) : cur.cost,
+        b.notes !== undefined ? b.notes || null : cur.notes, id,
+      ]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao atualizar registro' });
+  }
+});
+
+app.delete('/api/haras-vet/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const [result] = await pool.execute('DELETE FROM haras_vet_records WHERE id = ?', [Number(req.params.id)]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Registro não encontrado' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir registro' });
+  }
+});
+
+app.get('/api/haras-stock', auth(), async (req, res) => {
+  if (!(await requireHarasModule(req, res, 'estoque'))) return;
+  try {
+    const q = String(req.query.q || '').trim();
+    const category = String(req.query.category || '').trim();
+    let sql = `SELECT i.*, hp.name AS property_name, hpc.name AS property_owner_name
+      FROM haras_stock_items i
+      LEFT JOIN client_properties hp ON hp.id = i.property_id
+      LEFT JOIN clients hpc ON hpc.id = hp.client_id WHERE 1=1`;
+    const scoped = applyHarasPropertyScope('i', req.user, req.query, sql, []);
+    sql = scoped.sql;
+    const params = scoped.params;
+    if (['medicamento', 'insumo', 'racao', 'material', 'outro'].includes(category)) {
+      sql += ' AND i.category = ?';
+      params.push(category);
+    }
+    if (q) {
+      sql += ' AND (i.name LIKE ? OR i.location LIKE ? OR hp.name LIKE ?)';
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    }
+    sql += ' ORDER BY i.name ASC LIMIT 300';
+    const [rows] = await pool.execute(sql, params);
+    res.json(rows.map(mapHarasStock));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: MIG_HARAS });
+  }
+});
+
+app.get('/api/haras-stock/:id/moves', auth(), async (req, res) => {
+  if (!(await requireHarasModule(req, res, 'estoque'))) return;
+  try {
+    const [itemRows] = await pool.execute('SELECT property_id FROM haras_stock_items WHERE id = ?', [Number(req.params.id)]);
+    if (!itemRows[0]) return res.status(404).json({ error: 'Item não encontrado' });
+    if (!(await canAccessHarasProperty(req.user, itemRows[0].property_id))) {
+      return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const [rows] = await pool.execute(
+      `SELECT m.*, i.name AS item_name, a.name AS animal_name
+       FROM haras_stock_moves m
+       INNER JOIN haras_stock_items i ON i.id = m.item_id
+       LEFT JOIN animals a ON a.id = m.animal_id
+       WHERE m.item_id = ? ORDER BY m.created_at DESC LIMIT 100`,
+      [Number(req.params.id)]
+    );
+    res.json(rows.map(mapHarasStockMove));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: MIG_HARAS });
+  }
+});
+
+app.post('/api/haras-stock/:id/move', auth(['root', 'admin', 'user']), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const body = req.body || {};
+    const moveType = ['entrada', 'saida', 'ajuste'].includes(body.moveType) ? body.moveType : 'entrada';
+    const qty = Number(body.quantity || 0);
+    if (qty <= 0) return res.status(400).json({ error: 'Quantidade deve ser maior que zero' });
+    await conn.beginTransaction();
+    const [rows] = await conn.execute('SELECT * FROM haras_stock_items WHERE id = ? FOR UPDATE', [Number(req.params.id)]);
+    const item = rows[0];
+    if (!item) {
+      await conn.rollback();
+      return res.status(404).json({ error: 'Item não encontrado' });
+    }
+    if (!(await canAccessHarasProperty(req.user, item.property_id))) {
+      await conn.rollback();
+      return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const current = Number(item.quantity);
+    let next = current;
+    if (moveType === 'entrada') next = current + qty;
+    else if (moveType === 'saida') next = current - qty;
+    else next = qty;
+    if (next < 0) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'Estoque insuficiente para esta saída' });
+    }
+    await conn.execute('UPDATE haras_stock_items SET quantity=? WHERE id=?', [next, item.id]);
+    await conn.execute(
+      'INSERT INTO haras_stock_moves (item_id, move_type, quantity, reason, animal_id, created_by) VALUES (?, ?, ?, ?, ?, ?)',
+      [item.id, moveType, qty, body.reason || null, Number(body.animalId || 0) || null, req.user.id]
+    );
+    await conn.commit();
+    res.json({ success: true, quantity: next });
+  } catch (error) {
+    await conn.rollback();
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao registrar movimentação' });
+  } finally {
+    conn.release();
+  }
+});
+
+app.post('/api/haras-stock', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const name = String(body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Nome do item é obrigatório' });
+    const propertyId = await resolveHarasPropertyId(req.user, body.propertyId);
+    const category = ['medicamento', 'insumo', 'racao', 'material', 'outro'].includes(body.category)
+      ? body.category
+      : 'insumo';
+    const [result] = await pool.execute(
+      `INSERT INTO haras_stock_items (property_id, name, category, unit, quantity, min_quantity, unit_cost, location, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        propertyId, name, category, body.unit || 'un', Number(body.quantity || 0), Number(body.minQuantity || 0),
+        body.unitCost === '' || body.unitCost == null ? null : Number(body.unitCost),
+        body.location || null, body.notes || null, req.user.id,
+      ]
+    );
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao cadastrar item' });
+  }
+});
+
+app.put('/api/haras-stock/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [curRows] = await pool.execute('SELECT * FROM haras_stock_items WHERE id = ?', [id]);
+    const cur = curRows[0];
+    if (!cur) return res.status(404).json({ error: 'Item não encontrado' });
+    const b = req.body || {};
+    const category = ['medicamento', 'insumo', 'racao', 'material', 'outro'].includes(b.category)
+      ? b.category
+      : cur.category;
+    const propertyId = b.propertyId !== undefined
+      ? await resolveHarasPropertyId(req.user, b.propertyId)
+      : (cur.property_id || await resolveHarasPropertyId(req.user, 0));
+    await pool.execute(
+      'UPDATE haras_stock_items SET property_id=?, name=?, category=?, unit=?, min_quantity=?, unit_cost=?, location=?, notes=? WHERE id=?',
+      [
+        propertyId, b.name || cur.name, category, b.unit || cur.unit, Number(b.minQuantity ?? cur.min_quantity),
+        b.unitCost !== undefined ? (b.unitCost === '' || b.unitCost == null ? null : Number(b.unitCost)) : cur.unit_cost,
+        b.location !== undefined ? b.location || null : cur.location,
+        b.notes !== undefined ? b.notes || null : cur.notes, id,
+      ]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao atualizar item' });
+  }
+});
+
+app.delete('/api/haras-stock/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const [result] = await pool.execute('DELETE FROM haras_stock_items WHERE id = ?', [Number(req.params.id)]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Item não encontrado' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir item' });
+  }
+});
+
+app.get('/api/haras-stays', auth(), async (req, res) => {
+  if (!(await requireHarasModule(req, res, 'hospedagem'))) return;
+  try {
+    const q = String(req.query.q || '').trim();
+    const status = String(req.query.status || '').trim();
+    const animalId = Number(req.query.animalId || 0);
+    let sql = `SELECT s.*, a.name AS animal_name, c.name AS owner_name, hp.name AS property_name, hpc.name AS property_owner_name
+      FROM haras_stays s
+      INNER JOIN animals a ON a.id = s.animal_id
+      LEFT JOIN clients c ON c.id = s.owner_client_id
+      LEFT JOIN client_properties hp ON hp.id = s.property_id
+      LEFT JOIN clients hpc ON hpc.id = hp.client_id WHERE 1=1`;
+    const scoped = applyHarasPropertyScope('s', req.user, req.query, sql, []);
+    sql = scoped.sql;
+    const params = scoped.params;
+    if (animalId > 0) {
+      sql += ' AND s.animal_id = ?';
+      params.push(animalId);
+    }
+    if (status === 'hospedado' || status === 'encerrado') {
+      sql += ' AND s.status = ?';
+      params.push(status);
+    }
+    if (q) {
+      sql += ' AND (a.name LIKE ? OR s.stall LIKE ? OR c.name LIKE ?)';
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    }
+    sql += ' ORDER BY s.status ASC, s.check_in DESC LIMIT 300';
+    const [rows] = await pool.execute(sql, params);
+    res.json(rows.map(mapHarasStay));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: MIG_HARAS });
+  }
+});
+
+app.post('/api/haras-stays', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const animalId = Number(body.animalId || 0);
+    const checkIn = String(body.checkIn || '').trim();
+    if (!animalId || !checkIn) return res.status(400).json({ error: 'Animal e data de entrada são obrigatórios' });
+    const propertyId = await resolveHarasPropertyId(req.user, body.propertyId);
+    let ownerClientId = Number(body.ownerClientId || 0) || null;
+    if (!ownerClientId) {
+      const [own] = await pool.execute('SELECT client_id FROM client_properties WHERE id = ?', [propertyId]);
+      ownerClientId = own[0]?.client_id || null;
+    }
+    const [open] = await pool.execute("SELECT id FROM haras_stays WHERE animal_id = ? AND status = 'hospedado' LIMIT 1", [animalId]);
+    if (open[0]) return res.status(400).json({ error: 'Este animal já está hospedado' });
+    const checkOut = body.checkOut || null;
+    const [result] = await pool.execute(
+      `INSERT INTO haras_stays (property_id, animal_id, owner_client_id, stall, check_in, check_out, daily_rate, status, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        propertyId, animalId, ownerClientId, body.stall || null, checkIn, checkOut || null,
+        Number(body.dailyRate || 0), checkOut ? 'encerrado' : 'hospedado', body.notes || null, req.user.id,
+      ]
+    );
+    const newId = Number(result.insertId);
+    await harasEnsureStayIncome(pool, newId, req.user.id);
+    res.json({ success: true, id: String(newId) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao registrar hospedagem' });
+  }
+});
+
+app.put('/api/haras-stays/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [curRows] = await pool.execute('SELECT * FROM haras_stays WHERE id = ?', [id]);
+    const cur = curRows[0];
+    if (!cur) return res.status(404).json({ error: 'Hospedagem não encontrada' });
+    const b = req.body || {};
+    const propertyId = b.propertyId !== undefined
+      ? await resolveHarasPropertyId(req.user, b.propertyId)
+      : (cur.property_id || await resolveHarasPropertyId(req.user, 0));
+    const checkOut = b.checkOut !== undefined ? b.checkOut || null : cur.check_out;
+    let status = b.status || cur.status;
+    if (checkOut) status = 'encerrado';
+    if (!['hospedado', 'encerrado'].includes(status)) status = cur.status;
+    await pool.execute(
+      'UPDATE haras_stays SET property_id=?, animal_id=?, owner_client_id=?, stall=?, check_in=?, check_out=?, daily_rate=?, status=?, notes=? WHERE id=?',
+      [
+        propertyId,
+        Number(b.animalId || cur.animal_id),
+        b.ownerClientId !== undefined ? Number(b.ownerClientId || 0) || null : cur.owner_client_id,
+        b.stall !== undefined ? b.stall || null : cur.stall,
+        b.checkIn || cur.check_in, checkOut, Number(b.dailyRate ?? cur.daily_rate),
+        status, b.notes !== undefined ? b.notes || null : cur.notes, id,
+      ]
+    );
+    await harasEnsureStayIncome(pool, id, req.user.id);
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao atualizar hospedagem' });
+  }
+});
+
+app.delete('/api/haras-stays/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const [result] = await pool.execute('DELETE FROM haras_stays WHERE id = ?', [Number(req.params.id)]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Hospedagem não encontrada' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir hospedagem' });
+  }
+});
+
+app.get('/api/haras-finance', auth(), async (req, res) => {
+  if (!(await requireHarasModule(req, res, 'financeiro_haras'))) return;
+  try {
+    const q = String(req.query.q || '').trim();
+    const type = String(req.query.type || '').trim();
+    const from = String(req.query.from || '').trim();
+    const to = String(req.query.to || '').trim();
+    let sql = `SELECT e.*, a.name AS animal_name, hp.name AS property_name, hpc.name AS property_owner_name
+      FROM haras_finance_entries e
+      LEFT JOIN animals a ON a.id = e.animal_id
+      LEFT JOIN client_properties hp ON hp.id = e.property_id
+      LEFT JOIN clients hpc ON hpc.id = hp.client_id WHERE 1=1`;
+    const scoped = applyHarasPropertyScope('e', req.user, req.query, sql, []);
+    sql = scoped.sql;
+    const params = scoped.params;
+    if (type === 'receita' || type === 'despesa') {
+      sql += ' AND e.entry_type = ?';
+      params.push(type);
+    }
+    if (from) {
+      sql += ' AND e.entry_date >= ?';
+      params.push(from);
+    }
+    if (to) {
+      sql += ' AND e.entry_date <= ?';
+      params.push(to);
+    }
+    if (q) {
+      sql += ' AND (e.description LIKE ? OR e.category LIKE ? OR a.name LIKE ? OR hp.name LIKE ?)';
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`);
+    }
+    sql += ' ORDER BY e.entry_date DESC LIMIT 400';
+    const [rows] = await pool.execute(sql, params);
+    const items = rows.map(mapHarasFinance);
+    const income = items.filter((i) => i.entryType === 'receita').reduce((s, i) => s + i.amount, 0);
+    const expense = items.filter((i) => i.entryType === 'despesa').reduce((s, i) => s + i.amount, 0);
+    res.json({
+      items,
+      totals: { income: Math.round(income * 100) / 100, expense: Math.round(expense * 100) / 100, balance: Math.round((income - expense) * 100) / 100 },
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: MIG_HARAS });
+  }
+});
+
+app.post('/api/haras-finance', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const entryType = b.entryType === 'receita' ? 'receita' : 'despesa';
+    const description = String(b.description || '').trim();
+    const entryDate = String(b.entryDate || '').trim();
+    const amount = Number(b.amount || 0);
+    if (!description || !entryDate || amount <= 0) {
+      return res.status(400).json({ error: 'Descrição, data e valor são obrigatórios' });
+    }
+    const propertyId = await resolveHarasPropertyId(req.user, b.propertyId);
+    const [result] = await pool.execute(
+      `INSERT INTO haras_finance_entries (property_id, entry_type, category, amount, entry_date, description, animal_id, stay_id, notes, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        propertyId, entryType, b.category || 'outros', amount, entryDate, description,
+        Number(b.animalId || 0) || null, Number(b.stayId || 0) || null, b.notes || null, req.user.id,
+      ]
+    );
+    res.json({ success: true, id: String(result.insertId) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao lançar movimento' });
+  }
+});
+
+app.put('/api/haras-finance/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [curRows] = await pool.execute('SELECT * FROM haras_finance_entries WHERE id = ?', [id]);
+    const cur = curRows[0];
+    if (!cur) return res.status(404).json({ error: 'Lançamento não encontrado' });
+    const b = req.body || {};
+    const entryType = b.entryType === 'receita' || b.entryType === 'despesa' ? b.entryType : cur.entry_type;
+    const propertyId = b.propertyId !== undefined
+      ? await resolveHarasPropertyId(req.user, b.propertyId)
+      : (cur.property_id || await resolveHarasPropertyId(req.user, 0));
+    await pool.execute(
+      'UPDATE haras_finance_entries SET property_id=?, entry_type=?, category=?, amount=?, entry_date=?, description=?, animal_id=?, stay_id=?, notes=? WHERE id=?',
+      [
+        propertyId, entryType, b.category || cur.category, Number(b.amount ?? cur.amount), b.entryDate || cur.entry_date,
+        b.description || cur.description,
+        b.animalId !== undefined ? Number(b.animalId || 0) || null : cur.animal_id,
+        b.stayId !== undefined ? Number(b.stayId || 0) || null : cur.stay_id,
+        b.notes !== undefined ? b.notes || null : cur.notes, id,
+      ]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao atualizar lançamento' });
+  }
+});
+
+app.delete('/api/haras-finance/:id', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    const [result] = await pool.execute('DELETE FROM haras_finance_entries WHERE id = ?', [Number(req.params.id)]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Lançamento não encontrado' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir lançamento' });
   }
 });
 
