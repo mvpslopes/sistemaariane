@@ -11,19 +11,18 @@ import {
   type ReceivablesAnalyticalReport,
   type ReceivablesAnalyticalStatus,
 } from '../../services/apiService';
+import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import AppButton from '../../components/AppButton';
 import Modal from '../../components/Modal';
 import CollectionHistoryModal from '../../components/CollectionHistoryModal';
+import ReceivablesWhatsappTemplateEditor from '../../components/ReceivablesWhatsappTemplateEditor';
+import { useReceivablesWhatsappTemplate } from '../../hooks/useReceivablesWhatsappTemplate';
 import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
 import { CHARGE_COLLECTOR_SHORT } from '../../constants/chargeCollectors';
 import { cobrarButtonClassName } from '../../constants/collectionActions';
 import { formatDateBR } from '../../utils/dateTime';
-import {
-  applyReceivablesWhatsappTemplate,
-  loadReceivablesWhatsappTemplate,
-  whatsAppHref,
-} from '../../utils/receivablesWhatsapp';
+import { applyReceivablesWhatsappTemplate, whatsAppHref } from '../../utils/receivablesWhatsapp';
 
 const money = (v: number) =>
   v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -57,6 +56,8 @@ type WaTarget = {
 
 export default function ReceivablesCollectionPage() {
   const { success, error: toastError } = useToast();
+  const { canUpdate } = useAuth();
+  const { settings, resolveTemplate, saveSettings } = useReceivablesWhatsappTemplate(!!canUpdate);
   const bounds = yearBounds();
   const [status, setStatus] = useState<ReceivablesAnalyticalStatus>('overdue_and_upcoming');
   const [from, setFrom] = useState(bounds.from);
@@ -102,17 +103,26 @@ export default function ReceivablesCollectionPage() {
   };
 
   const openWhatsApp = (client: ReceivablesAnalyticalClient, charge: ReceivablesAnalyticalItem) => {
-    const template = loadReceivablesWhatsappTemplate();
     setWaTarget({ phone: client.whatsapp || client.phone, charge, client });
     setWaMessage(
-      applyReceivablesWhatsappTemplate(template, {
+      applyReceivablesWhatsappTemplate(resolveTemplate(), {
         clientName: client.clientName,
         overdueAmount: charge.amount,
         chargesCount: 1,
         oldestDue: charge.dueDate,
         animalName: charge.animalName,
+        contractNumber: charge.contractNumber,
+        bankDetails: settings.bankDetails,
       })
     );
+  };
+
+  const handleSaveSettings = async (next: typeof settings) => {
+    await saveSettings(next);
+    success(canUpdate ? 'Mensagem padrão salva para toda a equipe' : 'Mensagem padrão salva neste navegador');
+    if (waTarget) {
+      openWhatsApp(waTarget.client, waTarget.charge);
+    }
   };
 
   const sendWhatsApp = async () => {
@@ -150,9 +160,17 @@ export default function ReceivablesCollectionPage() {
         <p className="text-sm text-brand-olive">
           Relatório analítico de contas a receber · cobrança com WhatsApp e histórico por parcela
         </p>
-        <Link to="/app/recebiveis" className="text-xs font-medium text-brand-brown hover:underline">
-          ← Visão de recebíveis
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link to="/app/recebiveis" className="text-xs font-medium text-brand-brown hover:underline">
+            ← Visão de recebíveis
+          </Link>
+          <ReceivablesWhatsappTemplateEditor
+            settings={settings}
+            onSave={handleSaveSettings}
+            canSaveToServer={!!canUpdate}
+            triggerClassName="inline-flex items-center gap-1 rounded-lg border border-brand-beige bg-white px-3 py-1.5 text-xs font-medium text-brand-brown hover:bg-brand-off-white"
+          />
+        </div>
       </div>
 
       <section className="rounded-2xl border border-brand-beige bg-white p-4 shadow-card">
@@ -299,6 +317,16 @@ export default function ReceivablesCollectionPage() {
         size="md"
       >
         <div className="space-y-4">
+          <p className="text-sm text-brand-olive">
+            Edite a mensagem antes de enviar.{' '}
+            <ReceivablesWhatsappTemplateEditor
+              settings={settings}
+              onSave={handleSaveSettings}
+              canSaveToServer={!!canUpdate}
+              triggerClassName="font-medium text-brand-brown hover:underline"
+              triggerLabel="Personalizar mensagem"
+            />
+          </p>
           <textarea
             value={waMessage}
             onChange={(e) => setWaMessage(e.target.value)}

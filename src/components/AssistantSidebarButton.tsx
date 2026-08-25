@@ -1,9 +1,12 @@
 import { useAiAssistant } from '../contexts/AiAssistantContext';
 import { NavIconWrap } from './SidebarNav';
 import AssistantMark from './AssistantMark';
+import { AI_ASSISTANT_ENABLED } from '../constants/featureFlags';
 
 export default function AssistantSidebarButton({ compact = false }: { compact?: boolean }) {
   const { openAssistant } = useAiAssistant();
+
+  if (!AI_ASSISTANT_ENABLED) return null;
 
   return (
     <button

@@ -1,16 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Users,
   PawPrint,
   UserCog,
-  LogOut,
-  KeyRound,
   FileText,
   Banknote,
-  FolderOpen,
-  UserCircle,
   PanelLeftClose,
   PanelLeftOpen,
   Gavel,
@@ -19,16 +15,15 @@ import {
   Menu,
   X,
   Shield,
-  MoreHorizontal,
   PieChart,
   Landmark,
   Package,
   Dna,
-  Wallet,
   Settings,
   ClipboardList,
   MessageCircle,
   Crown,
+  Briefcase,
 } from 'lucide-react';
 import {
   NavAccordion,
@@ -38,8 +33,8 @@ import {
   sectionIsActive,
 } from './SidebarNav';
 import { useAuth } from '../contexts/AuthContext';
-import UserAvatar from './UserAvatar';
 import AppBottomNav from './AppBottomNav';
+import HeaderUserMenu from './HeaderUserMenu';
 import MobileMoreSheet from './MobileMoreSheet';
 import { clientPortalLabels, resolvePageMeta } from '../constants/clientPortalLabels';
 import HeaderDateTime from './HeaderDateTime';
@@ -53,30 +48,28 @@ import { useChatMessageNotifications } from '../hooks/useChatMessageNotification
 import { usePresenceHeartbeat } from '../hooks/usePresenceHeartbeat';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useOperationalAlerts } from '../hooks/useOperationalAlerts';
+import { AI_ASSISTANT_ENABLED } from '../constants/featureFlags';
 import PageTransition from './PageTransition';
 import PwaInstallBanner from './PwaInstallBanner';
 import AppBrandMark from './AppBrandMark';
 import ThemeIconButton from './ThemeIconButton';
 
-const roleLabel: Record<string, string> = {
-  root: 'Root',
-  admin: 'Admin',
-  user: 'Operador',
-  cliente: 'Cliente',
-};
-
-const cadastroPaths = ['/app/pessoas', '/app/animais', '/app/reproducao'];
-const operacaoPaths = ['/app/leiloes', '/app/contratos', '/app/modelos-contrato', '/app/registro-diario'];
-const financeiroPaths = [
+const assessoriaPaths = [
+  '/app/pessoas',
+  '/app/animais',
+  '/app/reproducao',
+  '/app/contratos',
+  '/app/modelos-contrato',
+  '/app/registro-diario',
+  '/app/repasses',
+];
+const cobrancasPaths = [
   '/app/cobrancas',
   '/app/recebiveis',
   '/app/relatorio-cobranca',
   '/app/financeiro-empresa',
-  '/app/repasses',
-  '/app/assinaturas',
 ];
-const sistemaPaths = ['/app/usuarios', '/app/auditoria'];
-const contaPaths = ['/app/perfil', '/app/alterar-senha'];
+const sistemaPaths = ['/app/usuarios', '/app/auditoria', '/app/assinaturas'];
 
 function AppShellInner() {
   const { user, logout, canManageUsers, canViewAudit, canUpdate, hasRole } = useAuth();
@@ -87,11 +80,9 @@ function AppShellInner() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const isMobile = useIsMobile();
-  const [cadastrosOpen, setCadastrosOpen] = useState(true);
-  const [operacaoOpen, setOperacaoOpen] = useState(true);
-  const [financeiroOpen, setFinanceiroOpen] = useState(true);
+  const [assessoriaOpen, setAssessoriaOpen] = useState(true);
+  const [cobrancasOpen, setCobrancasOpen] = useState(false);
   const [sistemaOpen, setSistemaOpen] = useState(false);
-  const [contaOpen, setContaOpen] = useState(false);
   const isCliente = hasRole('cliente');
   const isRoot = hasRole('root');
   const isAssessor = !!user?.isAssessor && isCliente;
@@ -103,6 +94,7 @@ function AppShellInner() {
   const compact = !isMobile && collapsed;
 
   useEffect(() => {
+    if (!AI_ASSISTANT_ENABLED) return;
     const params = new URLSearchParams(location.search);
     if (params.get('assistente') === '1') {
       openAssistant();
@@ -113,23 +105,23 @@ function AppShellInner() {
   }, [location.pathname, location.search, navigate, openAssistant]);
 
   useEffect(() => {
-    if (sectionIsActive(cadastroPaths, pathname)) setCadastrosOpen(true);
+    if (sectionIsActive(assessoriaPaths, pathname)) {
+      setAssessoriaOpen(true);
+      setCobrancasOpen(false);
+      setSistemaOpen(false);
+    }
   }, [pathname]);
 
   useEffect(() => {
-    if (sectionIsActive(operacaoPaths, pathname)) setOperacaoOpen(true);
-  }, [pathname]);
-
-  useEffect(() => {
-    if (sectionIsActive(financeiroPaths, pathname)) setFinanceiroOpen(true);
+    if (sectionIsActive(cobrancasPaths, pathname)) {
+      setCobrancasOpen(true);
+      setAssessoriaOpen(false);
+      setSistemaOpen(false);
+    }
   }, [pathname]);
 
   useEffect(() => {
     if (sectionIsActive(sistemaPaths, pathname)) setSistemaOpen(true);
-  }, [pathname]);
-
-  useEffect(() => {
-    if (sectionIsActive(contaPaths, pathname)) setContaOpen(true);
   }, [pathname]);
 
   useEffect(() => {
@@ -159,7 +151,7 @@ function AppShellInner() {
 
   const meta = resolvePageMeta(location.pathname, isCliente, isAssessor);
 
-  const showSistemaSection = canManageUsers || canViewAudit;
+  const showSistemaSection = canManageUsers || canViewAudit || canUpdate;
 
   if (isMobile) {
     return (
@@ -180,23 +172,13 @@ function AppShellInner() {
                 loading={alertsLoading}
                 compact
               />
-              <ThemeIconButton />
-              <button
-                type="button"
-                onClick={() => setMoreOpen(true)}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-brand-beige bg-white text-brand-brown transition hover:bg-brand-off-white"
-                title="Mais opções"
-                aria-label="Mais opções"
-              >
-                <MoreHorizontal className="h-5 w-5" />
-              </button>
-              <Link
-                to="/app/perfil"
-                className="shrink-0 rounded-full ring-2 ring-brand-beige/60 transition hover:ring-brand-olive/40"
-                title="Meu perfil"
-              >
-                <UserAvatar name={user?.name || 'U'} avatarUrl={user?.avatarUrl} size="md" />
-              </Link>
+              <HeaderUserMenu
+                name={user?.name}
+                role={user?.role}
+                avatarUrl={user?.avatarUrl}
+                onLogout={handleLogout}
+                compact
+              />
             </div>
           </div>
         </header>
@@ -207,18 +189,22 @@ function AppShellInner() {
           </PageTransition>
         </main>
 
-        <AppBottomNav />
+        <AppBottomNav onMore={() => setMoreOpen(true)} />
         <PwaInstallBanner />
         <MobileMoreSheet
           open={moreOpen}
           onClose={() => setMoreOpen(false)}
           onLogout={handleLogout}
-          onOpenAssistant={() => {
-            setMoreOpen(false);
-            openAssistant();
-          }}
+          onOpenAssistant={
+            AI_ASSISTANT_ENABLED
+              ? () => {
+                  setMoreOpen(false);
+                  openAssistant();
+                }
+              : undefined
+          }
         />
-        <AiAssistantFab />
+        {AI_ASSISTANT_ENABLED && <AiAssistantFab />}
       </div>
     );
   }
@@ -256,70 +242,69 @@ function AppShellInner() {
           </div>
         </div>
 
-        <nav className="scrollbar-sidebar flex flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pb-2 pt-1">
-          <NavSectionLabel compact={compact}>Principal</NavSectionLabel>
-          <NavTopLink to="/app" end icon={LayoutDashboard} label="Dashboard" compact={compact} />
+        <nav className="scrollbar-sidebar flex flex-1 flex-col gap-0.5 overflow-y-auto px-2.5 pb-2 pt-2">
+          <NavTopLink to="/app" end icon={LayoutDashboard} label="Início" compact={compact} />
+          <ChatSidebarLink compact={compact} />
           {isRoot && (
             <NavTopLink to="/app/root" icon={Crown} label="Root" compact={compact} />
           )}
-          <ChatSidebarLink compact={compact} />
 
-          {/* ——— Staff ——— */}
           {!isCliente && (
             <>
+              <NavSectionLabel compact={compact}>Módulos</NavSectionLabel>
               <NavAccordion
-                label="Cadastros"
-                icon={FolderOpen}
-                paths={cadastroPaths}
-                open={cadastrosOpen}
-                onToggle={() => setCadastrosOpen((v) => !v)}
+                label="Assessoria"
+                icon={Briefcase}
+                paths={assessoriaPaths}
+                open={assessoriaOpen}
+                onToggle={() => {
+                  setAssessoriaOpen((v) => !v);
+                  if (!assessoriaOpen) {
+                    setCobrancasOpen(false);
+                    setSistemaOpen(false);
+                  }
+                }}
                 compact={compact}
               >
                 <NavSubLink to="/app/pessoas" icon={Users} label="Pessoas" compact={compact} />
                 <NavSubLink to="/app/animais" icon={PawPrint} label="Animais" compact={compact} />
                 <NavSubLink to="/app/reproducao" icon={Dna} label="Reprodução" compact={compact} />
-              </NavAccordion>
-
-              <NavAccordion
-                label="Operação"
-                icon={Gavel}
-                paths={operacaoPaths}
-                open={operacaoOpen}
-                onToggle={() => setOperacaoOpen((v) => !v)}
-                compact={compact}
-              >
-                <NavSubLink to="/app/leiloes" icon={Gavel} label="Leilões" compact={compact} />
                 <NavSubLink to="/app/contratos" icon={FileText} label="Contratos" compact={compact} />
                 <NavSubLink to="/app/modelos-contrato" icon={FileStack} label="Modelos" compact={compact} />
                 <NavSubLink to="/app/registro-diario" icon={ClipboardList} label="Registro diário" compact={compact} />
+                <NavSubLink to="/app/repasses" icon={Split} label="Repasses" compact={compact} />
               </NavAccordion>
 
+              <NavTopLink to="/app/leiloes" icon={Gavel} label="Leilões" compact={compact} />
+
               <NavAccordion
-                label="Financeiro"
-                icon={Wallet}
-                paths={financeiroPaths}
-                open={financeiroOpen}
-                onToggle={() => setFinanceiroOpen((v) => !v)}
+                label="Cobranças"
+                icon={Banknote}
+                paths={cobrancasPaths}
+                open={cobrancasOpen}
+                onToggle={() => {
+                  setCobrancasOpen((v) => !v);
+                  if (!cobrancasOpen) {
+                    setAssessoriaOpen(false);
+                    setSistemaOpen(false);
+                  }
+                }}
                 compact={compact}
               >
-                <NavSubLink to="/app/cobrancas" icon={Banknote} label="Cobranças" compact={compact} />
+                <NavSubLink to="/app/cobrancas" icon={Banknote} label="Parcelas" compact={compact} />
                 <NavSubLink to="/app/recebiveis" end icon={PieChart} label="Recebíveis" compact={compact} />
                 <NavSubLink
                   to="/app/relatorio-cobranca"
                   icon={MessageCircle}
-                  label="Relatório de cobrança"
+                  label="Relatório"
                   compact={compact}
                 />
                 <NavSubLink
                   to="/app/financeiro-empresa"
                   icon={Landmark}
-                  label="Financeiro empresa"
+                  label="Financeiro"
                   compact={compact}
                 />
-                <NavSubLink to="/app/repasses" icon={Split} label="Repasses" compact={compact} />
-                {canUpdate && (
-                  <NavSubLink to="/app/assinaturas" icon={Package} label="Assinaturas" compact={compact} />
-                )}
               </NavAccordion>
 
               {showSistemaSection && (
@@ -328,7 +313,13 @@ function AppShellInner() {
                   icon={Settings}
                   paths={sistemaPaths}
                   open={sistemaOpen}
-                  onToggle={() => setSistemaOpen((v) => !v)}
+                  onToggle={() => {
+                    setSistemaOpen((v) => !v);
+                    if (!sistemaOpen) {
+                      setAssessoriaOpen(false);
+                      setCobrancasOpen(false);
+                    }
+                  }}
                   compact={compact}
                 >
                   {canManageUsers && (
@@ -337,12 +328,14 @@ function AppShellInner() {
                   {canViewAudit && (
                     <NavSubLink to="/app/auditoria" icon={Shield} label="Auditoria" compact={compact} />
                   )}
+                  {canUpdate && (
+                    <NavSubLink to="/app/assinaturas" icon={Package} label="Assinaturas" compact={compact} />
+                  )}
                 </NavAccordion>
               )}
             </>
           )}
 
-          {/* ——— Cliente comprador/vendedor ——— */}
           {isCliente && !isAssessor && (
             <>
               <NavSectionLabel compact={compact}>Minhas compras</NavSectionLabel>
@@ -352,80 +345,38 @@ function AppShellInner() {
                 label={clientPortalLabels.animalsNav}
                 compact={compact}
               />
-              <NavAccordion
-                label="Operação"
-                icon={FileText}
-                paths={['/app/contratos', '/app/cobrancas']}
-                open={operacaoOpen}
-                onToggle={() => setOperacaoOpen((v) => !v)}
-                compact={compact}
-              >
-                <NavSubLink to="/app/contratos" icon={FileText} label="Contratos" compact={compact} />
-                <NavSubLink to="/app/cobrancas" icon={Banknote} label="Cobranças" compact={compact} />
-              </NavAccordion>
+              <NavTopLink to="/app/contratos" icon={FileText} label="Contratos" compact={compact} />
+              <NavTopLink to="/app/cobrancas" icon={Banknote} label="Cobranças" compact={compact} />
             </>
           )}
 
           {isAssessor && (
-            <NavAccordion
-              label="Assessoria"
-              icon={Gavel}
-              paths={['/app/leiloes', '/app/contratos', '/app/repasses']}
-              open={operacaoOpen}
-              onToggle={() => setOperacaoOpen((v) => !v)}
-              compact={compact}
-            >
-              <NavSubLink to="/app/leiloes" icon={Gavel} label="Leilões" compact={compact} />
-              <NavSubLink to="/app/contratos" icon={FileText} label="Contratos" compact={compact} />
-              <NavSubLink to="/app/repasses" icon={Split} label="Repasses" compact={compact} />
-            </NavAccordion>
+            <>
+              <NavSectionLabel compact={compact}>Operação</NavSectionLabel>
+              <NavTopLink to="/app/leiloes" icon={Gavel} label="Leilões" compact={compact} />
+              <NavTopLink to="/app/contratos" icon={FileText} label="Contratos" compact={compact} />
+              <NavTopLink to="/app/repasses" icon={Split} label="Repasses" compact={compact} />
+            </>
           )}
 
-          <NavSectionLabel compact={compact}>Conta</NavSectionLabel>
-          <NavAccordion
-            label="Minha conta"
-            icon={UserCircle}
-            paths={contaPaths}
-            open={contaOpen}
-            onToggle={() => setContaOpen((v) => !v)}
-            compact={compact}
-          >
-            <NavSubLink to="/app/perfil" icon={UserCircle} label="Meu perfil" compact={compact} />
-            <AssistantSidebarButton compact={compact} />
-            <NavSubLink to="/app/alterar-senha" icon={KeyRound} label="Alterar senha" compact={compact} />
-          </NavAccordion>
+          {AI_ASSISTANT_ENABLED && <AssistantSidebarButton compact={compact} />}
         </nav>
 
-        <div className="border-t border-brand-gold/25 p-3">
-          <div
-            className={`flex items-center gap-3 rounded-xl bg-gradient-to-br from-brand-gold to-[#d4954a] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.25)] ${
-              compact ? 'md:justify-center' : ''
-            }`}
-          >
-            <UserAvatar
-              name={user?.name || 'U'}
-              avatarUrl={user?.avatarUrl}
-              size="md"
-              className="!bg-brand-dark-brown !text-white !ring-2 !ring-brand-dark-brown/20"
-            />
-            {!compact && (
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-brand-dark-brown">{user?.name}</p>
-                <p className="truncate text-xs font-medium text-brand-dark-brown/80">
-                  {user ? roleLabel[user.role] : ''}
-                </p>
-              </div>
-            )}
-          </div>
+        <div className="hidden border-t border-white/10 p-2 md:block">
           <button
             type="button"
-            onClick={handleLogout}
-            className={`mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-red-200 transition hover:bg-white/5 hover:text-red-100 md:hidden ${
+            onClick={() => setCollapsed((v) => !v)}
+            className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-medium text-brand-beige/60 transition hover:bg-white/5 hover:text-white ${
               compact ? 'justify-center' : ''
             }`}
+            title={collapsed ? 'Expandir menu' : 'Recolher menu'}
           >
-            <LogOut className="h-[18px] w-[18px] shrink-0" />
-            {!compact && <span>Sair</span>}
+            {collapsed ? (
+              <PanelLeftOpen className="h-4 w-4 shrink-0" />
+            ) : (
+              <PanelLeftClose className="h-4 w-4 shrink-0" />
+            )}
+            {!compact && <span>{collapsed ? 'Expandir' : 'Recolher'}</span>}
           </button>
         </div>
       </aside>
@@ -450,40 +401,22 @@ function AppShellInner() {
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-            <SupportMenu userName={user?.name} />
+            <SupportMenu userName={user?.name} compact />
             <NotificationBell
               userId={user?.id}
               stats={alertStats}
               canManageSubs={canUpdate}
               loading={alertsLoading}
             />
-            <HeaderDateTime className="mr-1 hidden lg:block" />
-
+            <HeaderDateTime className="hidden xl:block" />
             <ThemeIconButton className="hidden md:inline-flex" />
-
-            <button
-              type="button"
-              onClick={() => setCollapsed((v) => !v)}
-              className="hidden items-center gap-1.5 rounded-xl border border-brand-beige bg-white px-3 py-2 text-xs font-medium text-brand-brown transition hover:bg-brand-off-white md:inline-flex"
-              title={collapsed ? 'Expandir menu' : 'Recolher menu'}
-            >
-              {collapsed ? (
-                <PanelLeftOpen className="h-4 w-4" />
-              ) : (
-                <PanelLeftClose className="h-4 w-4" />
-              )}
-              <span className="hidden sm:inline">{collapsed ? 'Expandir' : 'Recolher'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-red-200 bg-white px-2.5 py-2 text-xs font-medium text-red-600 transition hover:bg-red-50 sm:px-3"
-              title="Sair"
-            >
-              <LogOut className="h-4 w-4" />
-              <span className="hidden sm:inline">Sair</span>
-            </button>
+            <span className="mx-0.5 hidden h-6 w-px bg-brand-beige md:block" aria-hidden />
+            <HeaderUserMenu
+              name={user?.name}
+              role={user?.role}
+              avatarUrl={user?.avatarUrl}
+              onLogout={handleLogout}
+            />
           </div>
         </header>
 
@@ -493,7 +426,7 @@ function AppShellInner() {
           </PageTransition>
         </main>
       </div>
-      <AiAssistantFab />
+      {AI_ASSISTANT_ENABLED && <AiAssistantFab />}
     </div>
   );
 }

@@ -1108,6 +1108,22 @@ export async function refreshContractsSignatureProgress(ids: string[], refresh =
   });
 }
 
+export interface CollectionWhatsappSettings {
+  template: string;
+  bankDetails: string;
+}
+
+export async function getCollectionWhatsappSettings() {
+  return request<CollectionWhatsappSettings>('/system-settings/collection-whatsapp');
+}
+
+export async function saveCollectionWhatsappSettings(data: CollectionWhatsappSettings) {
+  return request<{ success: boolean } & CollectionWhatsappSettings>('/system-settings/collection-whatsapp', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
 export async function getContract(id: string) {
   return request<Contract>(`/contracts/${id}`);
 }

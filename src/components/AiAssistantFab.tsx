@@ -6,6 +6,7 @@ import { useAiAssistant } from '../contexts/AiAssistantContext';
 import { useToast } from '../contexts/ToastContext';
 import { askAssistant, type AssistantMessage } from '../services/apiService';
 import { buildAssistantKnowledge, suggestedAssistantPrompts } from '../utils/assistantContext';
+import { AI_ASSISTANT_ENABLED } from '../constants/featureFlags';
 import { useIsMobile } from '../hooks/useIsMobile';
 import AssistantMark from './AssistantMark';
 
@@ -111,6 +112,8 @@ export default function AiAssistantFab() {
   };
 
   const bottomClass = isMobile ? 'bottom-[calc(5.5rem+env(safe-area-inset-bottom))]' : 'bottom-6';
+
+  if (!AI_ASSISTANT_ENABLED) return null;
 
   return (
     <>

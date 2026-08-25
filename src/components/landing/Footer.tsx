@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { MapPin, Phone, Mail, Instagram, Facebook, Linkedin, Youtube, Lock } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { sistemaLoginUrl } from '../../constants/systemUrls';
 import PrivacyPolicy from './PrivacyPolicy';
 
 export default function Footer() {
@@ -207,14 +208,13 @@ export default function Footer() {
           
           {/* Botão de acesso ao sistema interno */}
           <div className="mt-3 pt-3 border-t border-white/10">
-            <Link
-              to="/login"
-              state={{ from: '/' }}
+            <a
+              href={sistemaLoginUrl()}
               className="inline-flex items-center gap-2 px-4 py-2 text-xs md:text-sm text-white/70 hover:text-brand-beige bg-white/5 hover:bg-white/10 rounded-lg border border-white/10 hover:border-brand-beige/30 transition-all duration-200"
             >
               <Lock className="w-3.5 h-3.5" />
               <span>Acesso ao Sistema</span>
-            </Link>
+            </a>
           </div>
         </div>
       </div>

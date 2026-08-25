@@ -5,8 +5,7 @@ import {
   PawPrint,
   FileText,
   Banknote,
-  UserCircle,
-  Users,
+  MoreHorizontal,
   Gavel,
   Split,
 } from 'lucide-react';
@@ -33,7 +32,6 @@ function assessorItems(): NavItem[] {
     },
     { to: '/app/contratos', icon: FileText, label: 'Contratos' },
     { to: '/app/repasses', icon: Split, label: 'Repasses' },
-    { to: '/app/perfil', icon: UserCircle, label: 'Perfil' },
   ];
 }
 
@@ -48,21 +46,19 @@ function clienteItems(): NavItem[] {
     },
     { to: '/app/contratos', icon: FileText, label: 'Contratos' },
     { to: '/app/cobrancas', icon: Banknote, label: 'Cobranças' },
-    { to: '/app/perfil', icon: UserCircle, label: 'Perfil' },
   ];
 }
 
 function staffItems(): NavItem[] {
   return [
     { to: '/app', end: true, icon: LayoutDashboard, label: 'Início' },
+    { to: '/app/animais', icon: PawPrint, label: 'Assessoria' },
     { to: '/app/leiloes', icon: Gavel, label: 'Leilões' },
-    { to: '/app/pessoas', icon: Users, label: 'Pessoas' },
-    { to: '/app/contratos', icon: FileText, label: 'Contratos' },
     { to: '/app/cobrancas', icon: Banknote, label: 'Cobranças' },
   ];
 }
 
-export default function AppBottomNav() {
+export default function AppBottomNav({ onMore }: { onMore?: () => void }) {
   const { hasRole, user } = useAuth();
   const isAssessor = !!user?.isAssessor && hasRole('cliente');
   const items = isAssessor
@@ -115,6 +111,24 @@ export default function AppBottomNav() {
             </NavLink>
           </li>
         ))}
+        {onMore && (
+          <li className="flex-1">
+            <button
+              type="button"
+              onClick={onMore}
+              className="block w-full rounded-2xl px-1 pb-2.5 pt-1 transition"
+              title="Mais opções"
+              aria-label="Mais opções"
+            >
+              <span className="relative flex flex-col items-center gap-1 rounded-2xl px-1 py-1.5 text-brand-beige/55 active:bg-white/5 active:text-brand-beige">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl">
+                  <MoreHorizontal className="h-5 w-5" strokeWidth={2} />
+                </span>
+                <span className="max-w-full truncate text-[11px] font-medium leading-none">Mais</span>
+              </span>
+            </button>
+          </li>
+        )}
       </ul>
     </nav>
   );

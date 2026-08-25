@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { ArrowRight, BadgeCheck, Menu, X, Users, Award, TrendingUp, Lock } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { openSistemaLogin } from '../../constants/systemUrls';
 
 export default function Hero() {
-  const navigate = useNavigate();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [parallaxOffset, setParallaxOffset] = useState(0);
   const [clientsCount, setClientsCount] = useState(0);
@@ -222,7 +221,7 @@ export default function Hero() {
             </button>
             <button
               type="button"
-              onClick={() => navigate('/login', { state: { from: '/' } })}
+              onClick={() => openSistemaLogin()}
               className="px-3 py-1.5 rounded-full bg-brand-olive text-white text-xs font-semibold hover:bg-brand-brown transition-all duration-300 shadow-soft hover:shadow-soft-lg transform hover:scale-105 hover:-translate-y-0.5 flex items-center gap-1.5 whitespace-nowrap flex-shrink-0"
             >
               <Lock className="w-3.5 h-3.5 flex-shrink-0" />
@@ -316,7 +315,7 @@ export default function Hero() {
               <button
                 type="button"
                 onClick={() => {
-                  navigate('/login');
+                  openSistemaLogin();
                   setIsMenuOpen(false);
                 }}
                 className="w-full text-left px-6 py-3 text-sm font-semibold text-brand-olive hover:bg-brand-beige/30 transition-colors flex items-center gap-2"

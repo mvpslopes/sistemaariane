@@ -19,6 +19,9 @@ import DailyReportsPage from './pages/app/DailyReportsPage';
 import DailyReportFormPage from './pages/app/DailyReportFormPage';
 import ChatPage from './pages/app/ChatPage';
 import RootPanelPage from './pages/app/RootPanelPage';
+import HarasModulePage from './pages/app/HarasModulePage';
+import HelpPage from './pages/app/HelpPage';
+import { Warehouse, Home, Stethoscope, Wallet } from 'lucide-react';
 import ChangePassword from './pages/ChangePassword';
 import ProfilePage from './pages/app/ProfilePage';
 import SessionWarning from './components/SessionWarning';
@@ -26,15 +29,52 @@ import ProtectedRoute from './components/ProtectedRoute';
 import SystemWrapper from './components/SystemWrapper';
 import AppShell from './components/AppShell';
 import Login from './pages/Login';
+import LandingPage from './pages/LandingPage';
 import SignPage from './pages/SignPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { isPublicSiteHost, redirectToSistema } from './constants/systemUrls';
+import { AI_ASSISTANT_ENABLED } from './constants/featureFlags';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
 
 function RootRedirect() {
   const { isAuthenticated } = useAuth();
   return <Navigate to={isAuthenticated ? '/app' : '/login'} replace />;
+}
+
+function HomeRoute() {
+  if (isPublicSiteHost()) {
+    return <LandingPage />;
+  }
+  return <RootRedirect />;
+}
+
+function SistemaExternalRedirect({ path }: { path: string }) {
+  useEffect(() => {
+    redirectToSistema(path);
+  }, [path]);
+  return null;
+}
+
+function RequireSistemaHost({ children }: { children: React.ReactNode }) {
+  if (isPublicSiteHost()) {
+    const path = window.location.pathname || '/login';
+    return <SistemaExternalRedirect path={path} />;
+  }
+  return <>{children}</>;
+}
+
+function LoginRoute() {
+  if (isPublicSiteHost()) {
+    return <SistemaExternalRedirect path="/login" />;
+  }
+  return (
+    <SystemWrapper>
+      <Login />
+    </SystemWrapper>
+  );
 }
 
 function AppContent() {
@@ -53,17 +93,9 @@ function AppContent() {
   return (
     <>
       <Routes>
-        {/* Subdomínio sistema: entrada = login (não landing) */}
-        <Route path="/" element={<RootRedirect />} />
+        <Route path="/" element={<HomeRoute />} />
 
-        <Route
-          path="/login"
-          element={
-            <SystemWrapper>
-              <Login />
-            </SystemWrapper>
-          }
-        />
+        <Route path="/login" element={<LoginRoute />} />
 
         {/* Assinatura incorporada Clicksign — pública, sem login */}
         <Route path="/assinar/:signerKey" element={<SignPage />} />
@@ -71,22 +103,26 @@ function AppContent() {
         <Route
           path="/app/contratos/imprimir/:id"
           element={
-            <SystemWrapper>
-              <ProtectedRoute>
-                <ContractPrintView />
-              </ProtectedRoute>
-            </SystemWrapper>
+            <RequireSistemaHost>
+              <SystemWrapper>
+                <ProtectedRoute>
+                  <ContractPrintView />
+                </ProtectedRoute>
+              </SystemWrapper>
+            </RequireSistemaHost>
           }
         />
 
         <Route
           path="/app"
           element={
-            <SystemWrapper>
-              <ProtectedRoute>
-                <AppShell />
-              </ProtectedRoute>
-            </SystemWrapper>
+            <RequireSistemaHost>
+              <SystemWrapper>
+                <ProtectedRoute>
+                  <AppShell />
+                </ProtectedRoute>
+              </SystemWrapper>
+            </RequireSistemaHost>
           }
         >
           <Route index element={<AppDashboard />} />
@@ -138,6 +174,54 @@ function AppContent() {
             element={
               <ProtectedRoute roles={['root', 'admin', 'user']}>
                 <DailyReportFormPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="haras/estoque"
+            element={
+              <ProtectedRoute roles={['root', 'admin', 'user']}>
+                <HarasModulePage
+                  title="Controle de estoque"
+                  description="Medicamentos, insumos, ração e materiais do haras — em breve neste módulo."
+                  icon={Warehouse}
+                />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="haras/hospedagem"
+            element={
+              <ProtectedRoute roles={['root', 'admin', 'user']}>
+                <HarasModulePage
+                  title="Controle de hospedagem"
+                  description="Animais hospedados, diárias e ocupação de baias — em breve neste módulo."
+                  icon={Home}
+                />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="haras/financeiro"
+            element={
+              <ProtectedRoute roles={['root', 'admin', 'user']}>
+                <HarasModulePage
+                  title="Controle financeiro do haras"
+                  description="Receitas, despesas e fluxo de caixa por propriedade — em breve neste módulo."
+                  icon={Wallet}
+                />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="haras/veterinario"
+            element={
+              <ProtectedRoute roles={['root', 'admin', 'user']}>
+                <HarasModulePage
+                  title="Controle veterinário"
+                  description="Vacinas, vermífugos, exames e histórico sanitário — em breve neste módulo."
+                  icon={Stethoscope}
+                />
               </ProtectedRoute>
             }
           />
@@ -203,7 +287,16 @@ function AppContent() {
             }
           />
           <Route path="perfil" element={<ProfilePage />} />
-          <Route path="ajuda" element={<Navigate to="/app?assistente=1" replace />} />
+          <Route
+            path="ajuda"
+            element={
+              AI_ASSISTANT_ENABLED ? (
+                <Navigate to="/app?assistente=1" replace />
+              ) : (
+                <HelpPage />
+              )
+            }
+          />
           <Route path="alterar-senha" element={<ChangePassword />} />
         </Route>
 
@@ -211,7 +304,12 @@ function AppContent() {
         <Route path="/dashboard" element={<Navigate to="/app" replace />} />
         <Route path="/alterar-senha" element={<Navigate to="/app/alterar-senha" replace />} />
 
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route
+          path="*"
+          element={
+            isPublicSiteHost() ? <Navigate to="/" replace /> : <Navigate to="/login" replace />
+          }
+        />
       </Routes>
 
       {isAuthenticated && (

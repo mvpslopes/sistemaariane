@@ -1254,6 +1254,63 @@ function mapCollectionEventRow(r) {
   };
 }
 
+const COLLECTION_WHATSAPP_SETTING_KEY = 'collection_whatsapp';
+
+function defaultCollectionWhatsappSettings() {
+  return {
+    template:
+      'Olá {nome}, tudo bem?\n\nIdentificamos {parcelas} parcela(s) em atraso, totalizando {valor}.{vencimento_linha}{compra_linha}\n{dados_bancarios_linha}\nPodemos conversar para regularizar?\n\nAtenciosamente,\nAriane Andrade Assessoria',
+    bankDetails: '',
+  };
+}
+
+async function systemSettingsTableExists() {
+  try {
+    const [rows] = await pool.query("SHOW TABLES LIKE 'system_settings'");
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function systemSettingGet(key, fallback = null) {
+  if (!(await systemSettingsTableExists())) return fallback;
+  try {
+    const [rows] = await pool.execute(
+      'SELECT setting_value FROM system_settings WHERE setting_key = ? LIMIT 1',
+      [key]
+    );
+    if (!rows.length) return fallback;
+    const decoded = JSON.parse(String(rows[0].setting_value || '{}'));
+    return decoded && typeof decoded === 'object' ? decoded : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function systemSettingSet(key, value) {
+  if (!(await systemSettingsTableExists())) {
+    const err = new Error('Tabela system_settings não encontrada. Execute database/migration-system-settings.sql');
+    err.status = 500;
+    throw err;
+  }
+  const json = JSON.stringify(value);
+  await pool.execute(
+    `INSERT INTO system_settings (setting_key, setting_value) VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`,
+    [key, json]
+  );
+}
+
+async function fetchCollectionWhatsappSettings() {
+  const stored = await systemSettingGet(COLLECTION_WHATSAPP_SETTING_KEY, defaultCollectionWhatsappSettings());
+  const defaults = defaultCollectionWhatsappSettings();
+  return {
+    template: String(stored?.template || defaults.template),
+    bankDetails: String(stored?.bankDetails ?? ''),
+  };
+}
+
 async function fetchReceivablesAnalytical(filters = {}) {
   const status = filters.status || 'overdue_and_upcoming';
   const from = filters.from || null;
@@ -5716,6 +5773,31 @@ app.get('/api/receivables-analytical', auth(), async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao gerar relatório analítico' });
+  }
+});
+
+app.get('/api/system-settings/collection-whatsapp', auth(), async (req, res) => {
+  if (req.user.role === 'cliente') {
+    return res.status(403).json({ error: 'Acesso negado' });
+  }
+  try {
+    res.json(await fetchCollectionWhatsappSettings());
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao carregar mensagem padrão' });
+  }
+});
+
+app.put('/api/system-settings/collection-whatsapp', auth(['root', 'admin', 'user']), async (req, res) => {
+  try {
+    let template = String(req.body?.template || '').trim();
+    const bankDetails = String(req.body?.bankDetails || '').trim();
+    if (!template) template = defaultCollectionWhatsappSettings().template;
+    await systemSettingSet(COLLECTION_WHATSAPP_SETTING_KEY, { template, bankDetails });
+    res.json({ success: true, ...(await fetchCollectionWhatsappSettings()) });
+  } catch (error) {
+    console.error(error);
+    res.status(error.status || 500).json({ error: error.message || 'Erro ao salvar mensagem padrão' });
   }
 });
 

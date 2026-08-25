@@ -1,21 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, MessageCircle, FileDown, Settings2 } from 'lucide-react';
+import { AlertTriangle, MessageCircle, FileDown } from 'lucide-react';
 import { getReceivablesDashboard, type ReceivablesDashboard } from '../../services/apiService';
+import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
 import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
 import DonutChart from '../../components/DonutChart';
 import AppButton from '../../components/AppButton';
 import Modal from '../../components/Modal';
+import ReceivablesWhatsappTemplateEditor from '../../components/ReceivablesWhatsappTemplateEditor';
+import { useReceivablesWhatsappTemplate } from '../../hooks/useReceivablesWhatsappTemplate';
 import { CHARGE_COLLECTOR_SHORT } from '../../constants/chargeCollectors';
 import { cobrarButtonClassName, cobrarIconButtonClassName } from '../../constants/collectionActions';
 import { formatDateBR } from '../../utils/dateTime';
 import {
   applyReceivablesWhatsappTemplate,
-  DEFAULT_RECEIVABLES_WHATSAPP_TEMPLATE,
-  loadReceivablesWhatsappTemplate,
-  RECEIVABLES_WHATSAPP_PLACEHOLDERS,
-  saveReceivablesWhatsappTemplate,
   whatsAppHref,
   type ReceivablesWhatsAppContext,
 } from '../../utils/receivablesWhatsapp';
@@ -31,33 +30,31 @@ type WhatsAppTarget = {
 
 export default function ReceivablesPage() {
   const { error: toastError, success } = useToast();
+  const { canUpdate } = useAuth();
+  const { settings, resolveTemplate, saveSettings } = useReceivablesWhatsappTemplate(!!canUpdate);
   const [data, setData] = useState<ReceivablesDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [waTarget, setWaTarget] = useState<WhatsAppTarget | null>(null);
   const [waMessage, setWaMessage] = useState('');
-  const [templateDraft, setTemplateDraft] = useState(DEFAULT_RECEIVABLES_WHATSAPP_TEMPLATE);
-  const [templateModalOpen, setTemplateModalOpen] = useState(false);
+
+  const buildMessage = (context: ReceivablesWhatsAppContext) =>
+    applyReceivablesWhatsappTemplate(resolveTemplate(), {
+      ...context,
+      bankDetails: settings.bankDetails,
+    });
 
   const openWhatsApp = (target: WhatsAppTarget) => {
-    const template = loadReceivablesWhatsappTemplate();
     setWaTarget(target);
-    setWaMessage(applyReceivablesWhatsappTemplate(template, target.context));
+    setWaMessage(buildMessage(target.context));
   };
 
-  const openTemplateEditor = () => {
-    setTemplateDraft(loadReceivablesWhatsappTemplate());
-    setTemplateModalOpen(true);
-  };
-
-  const saveTemplate = () => {
-    const template = templateDraft.trim() || DEFAULT_RECEIVABLES_WHATSAPP_TEMPLATE;
-    saveReceivablesWhatsappTemplate(template);
+  const handleSaveSettings = async (next: typeof settings) => {
+    await saveSettings(next);
+    success(canUpdate ? 'Mensagem padrão salva para toda a equipe' : 'Mensagem padrão salva neste navegador');
     if (waTarget) {
-      setWaMessage(applyReceivablesWhatsappTemplate(template, waTarget.context));
+      setWaMessage(buildMessage(waTarget.context));
     }
-    success('Mensagem padrão salva neste navegador');
-    setTemplateModalOpen(false);
   };
 
   const sendWhatsApp = () => {
@@ -154,14 +151,11 @@ export default function ReceivablesPage() {
         <div className="rounded-2xl border border-brand-beige bg-white p-4 shadow-card">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-brand-dark-brown">Maiores devedores</h3>
-            <button
-              type="button"
-              onClick={openTemplateEditor}
-              className="inline-flex items-center gap-1 text-xs font-medium text-brand-brown hover:underline"
-            >
-              <Settings2 className="h-3.5 w-3.5" />
-              Personalizar mensagem
-            </button>
+            <ReceivablesWhatsappTemplateEditor
+              settings={settings}
+              onSave={handleSaveSettings}
+              canSaveToServer={!!canUpdate}
+            />
           </div>
           {data.topDebtors.length === 0 ? (
             <p className="text-sm text-brand-olive">Nenhuma inadimplência no momento.</p>
@@ -266,6 +260,7 @@ export default function ReceivablesPage() {
                                   chargesCount: 1,
                                   oldestDue: item.dueDate,
                                   animalName: item.animalName,
+                                  contractNumber: item.contractNumber,
                                 },
                               })
                             }
@@ -295,15 +290,14 @@ export default function ReceivablesPage() {
       >
         <div className="space-y-4">
           <p className="text-sm text-brand-olive">
-            Edite a mensagem abaixo antes de enviar. Use{' '}
-            <button
-              type="button"
-              onClick={openTemplateEditor}
-              className="font-medium text-brand-brown hover:underline"
-            >
-              Personalizar mensagem
-            </button>{' '}
-            para alterar o modelo padrão.
+            Edite a mensagem abaixo antes de enviar.{' '}
+            <ReceivablesWhatsappTemplateEditor
+              settings={settings}
+              onSave={handleSaveSettings}
+              canSaveToServer={!!canUpdate}
+              triggerClassName="font-medium text-brand-brown hover:underline"
+              triggerLabel="Personalizar mensagem"
+            />
           </p>
           <textarea
             value={waMessage}
@@ -318,50 +312,6 @@ export default function ReceivablesPage() {
             <AppButton onClick={sendWhatsApp} disabled={!waMessage.trim()}>
               Abrir WhatsApp
             </AppButton>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal
-        open={templateModalOpen}
-        onClose={() => setTemplateModalOpen(false)}
-        title="Mensagem padrão de cobrança"
-        subtitle="Salva neste navegador · use variáveis que são preenchidas automaticamente"
-        size="lg"
-      >
-        <div className="space-y-4">
-          <textarea
-            value={templateDraft}
-            onChange={(e) => setTemplateDraft(e.target.value)}
-            rows={10}
-            className="w-full rounded-xl border border-brand-beige px-3 py-2.5 font-mono text-sm leading-relaxed outline-none focus:border-brand-olive focus:ring-2 focus:ring-brand-beige"
-          />
-          <div className="rounded-xl border border-brand-beige bg-brand-off-white/50 p-3">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-olive">
-              Variáveis disponíveis
-            </p>
-            <ul className="grid gap-1 sm:grid-cols-2">
-              {RECEIVABLES_WHATSAPP_PLACEHOLDERS.map((p) => (
-                <li key={p.key} className="text-xs text-brand-brown">
-                  <code className="rounded bg-white px-1 py-0.5 text-[11px]">{p.key}</code>{' '}
-                  <span className="text-brand-olive">— {p.hint}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="flex flex-wrap justify-between gap-2">
-            <AppButton
-              variant="secondary"
-              onClick={() => setTemplateDraft(DEFAULT_RECEIVABLES_WHATSAPP_TEMPLATE)}
-            >
-              Restaurar padrão
-            </AppButton>
-            <div className="flex gap-2">
-              <AppButton variant="secondary" onClick={() => setTemplateModalOpen(false)}>
-                Cancelar
-              </AppButton>
-              <AppButton onClick={saveTemplate}>Salvar modelo</AppButton>
-            </div>
           </div>
         </div>
       </Modal>

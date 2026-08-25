@@ -16,6 +16,12 @@ AddType image/webp .webp
   RewriteEngine On
   RewriteBase /
 
+  # Domínio institucional: login/app ficam no subdomínio sistema
+  RewriteCond %{HTTP_HOST} ^(www\.)?arianeandradeassessoria\.app\.br$ [NC]
+  RewriteRule ^login/?$ https://sistema.arianeandradeassessoria.app.br/login [R=302,L]
+  RewriteCond %{HTTP_HOST} ^(www\.)?arianeandradeassessoria\.app\.br$ [NC]
+  RewriteRule ^app(/.*)?$ https://sistema.arianeandradeassessoria.app.br/app$1 [R=302,L]
+
   # Hostinger/Apache: repassa Authorization para o PHP (JWT Bearer)
   RewriteCond %{HTTP:Authorization} .
   RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]

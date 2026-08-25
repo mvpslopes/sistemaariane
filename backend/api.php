@@ -3406,6 +3406,60 @@ function fetch_receivables_analytical(PDO $pdo, array $filters): array {
     ];
 }
 
+const COLLECTION_WHATSAPP_SETTING_KEY = 'collection_whatsapp';
+
+function system_settings_table_exists(PDO $pdo): bool {
+    static $cache = null;
+    if ($cache !== null) return $cache;
+    try {
+        $pdo->query('SELECT 1 FROM system_settings LIMIT 1');
+        $cache = true;
+    } catch (Throwable $e) {
+        $cache = false;
+    }
+    return $cache;
+}
+
+function system_setting_get(PDO $pdo, string $key, ?array $default = null): ?array {
+    if (!system_settings_table_exists($pdo)) return $default;
+    try {
+        $stmt = $pdo->prepare('SELECT setting_value FROM system_settings WHERE setting_key = ? LIMIT 1');
+        $stmt->execute([$key]);
+        $row = $stmt->fetch();
+        if (!$row) return $default;
+        $decoded = json_decode((string)($row['setting_value'] ?? ''), true);
+        return is_array($decoded) ? $decoded : $default;
+    } catch (Throwable $e) {
+        return $default;
+    }
+}
+
+function system_setting_set(PDO $pdo, string $key, array $value): void {
+    if (!system_settings_table_exists($pdo)) {
+        throw new RuntimeException('Tabela system_settings não encontrada. Execute database/migration-system-settings.sql');
+    }
+    $json = json_encode($value, JSON_UNESCAPED_UNICODE);
+    $pdo->prepare(
+        'INSERT INTO system_settings (setting_key, setting_value) VALUES (?, ?)
+         ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)'
+    )->execute([$key, $json]);
+}
+
+function default_collection_whatsapp_settings(): array {
+    return [
+        'template' => "Olá {nome}, tudo bem?\n\nIdentificamos {parcelas} parcela(s) em atraso, totalizando {valor}.{vencimento_linha}{compra_linha}\n{dados_bancarios_linha}\nPodemos conversar para regularizar?\n\nAtenciosamente,\nAriane Andrade Assessoria",
+        'bankDetails' => '',
+    ];
+}
+
+function fetch_collection_whatsapp_settings(PDO $pdo): array {
+    $stored = system_setting_get($pdo, COLLECTION_WHATSAPP_SETTING_KEY, default_collection_whatsapp_settings());
+    return [
+        'template' => (string)($stored['template'] ?? default_collection_whatsapp_settings()['template']),
+        'bankDetails' => (string)($stored['bankDetails'] ?? ''),
+    ];
+}
+
 function fetch_company_finance(PDO $pdo): array {
     $monthStart = date('Y-m-01');
     $yearStart = date('Y-01-01');
@@ -6270,6 +6324,33 @@ if ($resource === 'receivables-analytical' && $method === 'GET') {
         'clientId' => $_GET['clientId'] ?? null,
         'q' => $_GET['q'] ?? '',
     ]));
+}
+
+if ($resource === 'system-settings' && $id === 'collection-whatsapp') {
+    if ($method === 'GET') {
+        $auth = require_auth($config['jwt_secret']);
+        if ($auth['role'] === 'cliente') {
+            json_out(['error' => 'Acesso negado'], 403);
+        }
+        json_out(fetch_collection_whatsapp_settings($pdo));
+    }
+    if ($method === 'PUT') {
+        require_update($config['jwt_secret']);
+        $template = trim((string)($body['template'] ?? ''));
+        $bankDetails = trim((string)($body['bankDetails'] ?? ''));
+        if ($template === '') {
+            $template = default_collection_whatsapp_settings()['template'];
+        }
+        try {
+            system_setting_set($pdo, COLLECTION_WHATSAPP_SETTING_KEY, [
+                'template' => $template,
+                'bankDetails' => $bankDetails,
+            ]);
+            json_out(['success' => true] + fetch_collection_whatsapp_settings($pdo));
+        } catch (Throwable $e) {
+            json_out(['error' => $e->getMessage()], 500);
+        }
+    }
 }
 
 if ($resource === 'company-finance' && $method === 'GET') {
