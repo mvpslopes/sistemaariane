@@ -1335,7 +1335,7 @@ async function fetchReceivablesAnalytical(filters = {}) {
              INNER JOIN clients cl ON cl.id = ch.client_id
              LEFT JOIN animals an ON an.id = c.animal_id
              WHERE 1=1`;
-  const params = [];
+    const params = [];
 
   switch (status) {
     case 'overdue':
@@ -3003,8 +3003,11 @@ app.get('/api/animals', auth(), async (req, res) => {
         (SELECT GROUP_CONCAT(c.name SEPARATOR ', ')
            FROM animal_owners ao
            INNER JOIN clients c ON c.id = ao.client_id
-          WHERE ao.animal_id = a.id) AS owners
+          WHERE ao.animal_id = a.id) AS owners,
+        g.sire_name,
+        g.dam_name
       FROM animals a
+      LEFT JOIN animal_genealogy g ON g.animal_id = a.id
       WHERE 1=1`;
     const params = [];
 
@@ -5942,7 +5945,53 @@ app.put('/api/clients/:id/modules', auth(['root', 'admin', 'user']), async (req,
   }
 });
 
+function toSqlDate(value) {
+  if (value == null || value === '') return null;
+  const s = String(value).trim();
+  return s === '' ? null : s.slice(0, 10);
+}
+
+function equineGestationDates(coveringDate, overrideDue) {
+  if (!coveringDate) return { due: null, start: null, end: null };
+  const parse = (iso) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '').trim());
+    if (!m) return null;
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return Number.isNaN(d.getTime()) ? null : d;
+  };
+  const fmt = (d) => {
+    const y = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${mo}-${day}`;
+  };
+  const base = parse(coveringDate);
+  if (!base) return { due: null, start: null, end: null };
+  let due = parse(overrideDue);
+  if (!due) {
+    due = new Date(base);
+    due.setMonth(due.getMonth() + 11);
+  }
+  const start = new Date(due);
+  start.setDate(start.getDate() - 10);
+  const end = new Date(due);
+  end.setDate(end.getDate() + 15);
+  return { due: fmt(due), start: fmt(start), end: fmt(end) };
+}
+
 function mapBreedingCovering(r) {
+  let due = r.expected_due_date ?? null;
+  let start = r.expected_due_start ?? null;
+  let end = r.expected_due_end ?? null;
+  if (!due && r.covering_date) {
+    const g = equineGestationDates(r.covering_date);
+    due = g.due;
+    start = g.start;
+    end = g.end;
+  }
+  const birthStatus = ['previsto', 'nascido', 'aborto', 'nao_prenhe'].includes(r.birth_status)
+    ? r.birth_status
+    : 'previsto';
   return {
     id: String(r.id),
     mareAnimalId: String(r.mare_animal_id),
@@ -5954,6 +6003,20 @@ function mapBreedingCovering(r) {
     season: r.season,
     veterinarian: r.veterinarian,
     abccmmStatus: r.abccmm_status,
+    associationProtocol: r.association_protocol ?? null,
+    expectedDueDate: due,
+    expectedDueStart: start,
+    expectedDueEnd: end,
+    recipientAnimalId: r.recipient_animal_id ? String(r.recipient_animal_id) : null,
+    recipientName: r.recipient_name ?? null,
+    embryoTransferDate: r.embryo_transfer_date ?? null,
+    embryoTransferStatus: r.embryo_transfer_status ?? null,
+    embryoTransferNotes: r.embryo_transfer_notes ?? null,
+    proceduresNotes: r.procedures_notes ?? null,
+    labExamsNotes: r.lab_exams_notes ?? null,
+    birthDate: r.birth_date ?? null,
+    birthStatus,
+    birthNotes: r.birth_notes ?? null,
     notes: r.notes,
     createdAt: r.created_at ?? null,
   };
@@ -6049,22 +6112,23 @@ app.get('/api/breeding-coverings', auth(), async (req, res) => {
   if (req.user.role === 'cliente') return res.status(403).json({ error: 'Acesso negado' });
   try {
     const q = String(req.query.q || '').trim();
-    let sql = `SELECT bc.*, mare.name AS mare_name, stallion.name AS stallion_animal_name
+    let sql = `SELECT bc.*, mare.name AS mare_name, stallion.name AS stallion_animal_name, recipient.name AS recipient_name
       FROM breeding_coverings bc
       INNER JOIN animals mare ON mare.id = bc.mare_animal_id
-      LEFT JOIN animals stallion ON stallion.id = bc.stallion_animal_id WHERE 1=1`;
+      LEFT JOIN animals stallion ON stallion.id = bc.stallion_animal_id
+      LEFT JOIN animals recipient ON recipient.id = bc.recipient_animal_id WHERE 1=1`;
     const params = [];
     if (q) {
-      sql += ' AND (mare.name LIKE ? OR bc.stallion_name LIKE ? OR stallion.name LIKE ? OR bc.season LIKE ?)';
+      sql += ' AND (mare.name LIKE ? OR bc.stallion_name LIKE ? OR stallion.name LIKE ? OR bc.season LIKE ? OR bc.association_protocol LIKE ?)';
       const like = `%${q}%`;
-      params.push(like, like, like, like);
+      params.push(like, like, like, like, like);
     }
     sql += ' ORDER BY bc.covering_date DESC LIMIT 200';
     const [rows] = await pool.execute(sql, params);
     res.json(rows.map(mapBreedingCovering));
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Tabela de reprodução não disponível — rode a migration' });
+    res.status(500).json({ error: 'Tabela de reprodução desatualizada — rode database/migration-breeding-covering-tabs.sql' });
   }
 });
 
@@ -6080,9 +6144,21 @@ app.post('/api/breeding-coverings', auth(['root', 'admin', 'user']), async (req,
       ? body.abccmmStatus
       : 'pendente';
     const stallionId = Number(body.stallionAnimalId || 0) || null;
+    const etStatus = ['pendente', 'transferido', 'em_gestacao', 'nao_prenhe'].includes(body.embryoTransferStatus)
+      ? body.embryoTransferStatus
+      : null;
+    const birthStatus = ['previsto', 'nascido', 'aborto', 'nao_prenhe'].includes(body.birthStatus)
+      ? body.birthStatus
+      : 'previsto';
+    const recipientId = Number(body.recipientAnimalId || 0) || null;
+    const g = equineGestationDates(date, body.expectedDueDate);
     const [result] = await pool.execute(
-      `INSERT INTO breeding_coverings (mare_animal_id, stallion_animal_id, stallion_name, method, covering_date, season, veterinarian, abccmm_status, notes, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO breeding_coverings (
+        mare_animal_id, stallion_animal_id, stallion_name, method, covering_date, season, veterinarian,
+        abccmm_status, association_protocol, expected_due_date, expected_due_start, expected_due_end,
+        recipient_animal_id, embryo_transfer_date, embryo_transfer_status, embryo_transfer_notes,
+        procedures_notes, lab_exams_notes, birth_date, birth_status, birth_notes, notes, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         mareId,
         stallionId,
@@ -6092,6 +6168,19 @@ app.post('/api/breeding-coverings', auth(['root', 'admin', 'user']), async (req,
         body.season || null,
         body.veterinarian || null,
         abccmm,
+        body.associationProtocol || null,
+        g.due,
+        g.start,
+        g.end,
+        recipientId,
+        toSqlDate(body.embryoTransferDate),
+        etStatus,
+        body.embryoTransferNotes || null,
+        body.proceduresNotes || null,
+        body.labExamsNotes || null,
+        toSqlDate(body.birthDate),
+        birthStatus,
+        body.birthNotes || null,
         body.notes || null,
         req.user.id,
       ]
@@ -6099,7 +6188,7 @@ app.post('/api/breeding-coverings', auth(['root', 'admin', 'user']), async (req,
     res.json({ success: true, id: String(result.insertId) });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao registrar cobertura' });
+    res.status(500).json({ error: 'Tabela de reprodução desatualizada — rode database/migration-breeding-covering-tabs.sql' });
   }
 });
 
@@ -6114,17 +6203,49 @@ app.put('/api/breeding-coverings/:id', auth(['root', 'admin', 'user']), async (r
     const abccmm = ['pendente', 'comunicado', 'confirmado'].includes(body.abccmmStatus)
       ? body.abccmmStatus
       : cur.abccmm_status;
+    const date = body.coveringDate || cur.covering_date;
+    const etStatus = body.embryoTransferStatus !== undefined
+      ? (['pendente', 'transferido', 'em_gestacao', 'nao_prenhe'].includes(body.embryoTransferStatus)
+        ? body.embryoTransferStatus
+        : null)
+      : cur.embryo_transfer_status;
+    const birthStatus = ['previsto', 'nascido', 'aborto', 'nao_prenhe'].includes(body.birthStatus)
+      ? body.birthStatus
+      : (cur.birth_status || 'previsto');
+    const recipientId = body.recipientAnimalId !== undefined
+      ? (Number(body.recipientAnimalId) || null)
+      : cur.recipient_animal_id;
+    const overrideDue = body.expectedDueDate !== undefined ? body.expectedDueDate : cur.expected_due_date;
+    const g = equineGestationDates(date, overrideDue);
     await pool.execute(
-      `UPDATE breeding_coverings SET mare_animal_id=?, stallion_animal_id=?, stallion_name=?, method=?, covering_date=?, season=?, veterinarian=?, abccmm_status=?, notes=? WHERE id=?`,
+      `UPDATE breeding_coverings SET
+        mare_animal_id=?, stallion_animal_id=?, stallion_name=?, method=?, covering_date=?, season=?, veterinarian=?,
+        abccmm_status=?, association_protocol=?, expected_due_date=?, expected_due_start=?, expected_due_end=?,
+        recipient_animal_id=?, embryo_transfer_date=?, embryo_transfer_status=?, embryo_transfer_notes=?,
+        procedures_notes=?, lab_exams_notes=?, birth_date=?, birth_status=?, birth_notes=?, notes=?
+       WHERE id=?`,
       [
         Number(body.mareAnimalId || cur.mare_animal_id),
         body.stallionAnimalId != null ? Number(body.stallionAnimalId) || null : cur.stallion_animal_id,
         body.stallionName !== undefined ? body.stallionName || null : cur.stallion_name,
         method,
-        body.coveringDate || cur.covering_date,
+        date,
         body.season !== undefined ? body.season || null : cur.season,
         body.veterinarian !== undefined ? body.veterinarian || null : cur.veterinarian,
         abccmm,
+        body.associationProtocol !== undefined ? body.associationProtocol || null : cur.association_protocol,
+        g.due,
+        g.start,
+        g.end,
+        recipientId,
+        body.embryoTransferDate !== undefined ? toSqlDate(body.embryoTransferDate) : cur.embryo_transfer_date,
+        etStatus,
+        body.embryoTransferNotes !== undefined ? body.embryoTransferNotes || null : cur.embryo_transfer_notes,
+        body.proceduresNotes !== undefined ? body.proceduresNotes || null : cur.procedures_notes,
+        body.labExamsNotes !== undefined ? body.labExamsNotes || null : cur.lab_exams_notes,
+        body.birthDate !== undefined ? toSqlDate(body.birthDate) : cur.birth_date,
+        birthStatus,
+        body.birthNotes !== undefined ? body.birthNotes || null : cur.birth_notes,
         body.notes !== undefined ? body.notes || null : cur.notes,
         id,
       ]

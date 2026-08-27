@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, LogOut } from 'lucide-react';
 import {
   createHarasStay,
   deleteHarasStay,
@@ -18,6 +18,7 @@ import { useToast } from '../../contexts/ToastContext';
 import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
 import Modal from '../../components/Modal';
 import AppButton from '../../components/AppButton';
+import RowActions, { RowActionButton } from '../../components/RowActions';
 import { formatDateBR } from '../../utils/dateTime';
 import { moneyBRL, stayDays } from '../../constants/haras';
 import { HarasPropertyFilter, HarasPropertySelect, useHarasProperties } from '../../components/HarasPropertySelect';
@@ -250,21 +251,17 @@ export default function HarasStaysPage() {
                 </td>
                 <td className="px-4 py-3 font-medium">{moneyBRL(item.estimatedTotal)}</td>
                 <td className="px-4 py-3 text-right">
-                  {canUpdate && item.status === 'hospedado' && (
-                    <button type="button" onClick={() => checkout(item)} className="mr-2 text-xs font-medium text-brand-brown hover:underline">
-                      Encerrar
-                    </button>
-                  )}
-                  {canUpdate && (
-                    <button type="button" onClick={() => openEdit(item)} className="mr-2 text-xs font-medium text-brand-brown hover:underline">
-                      Editar
-                    </button>
-                  )}
-                  {canDelete && (
-                    <button type="button" onClick={() => remove(item)} className="text-xs font-medium text-red-600 hover:underline">
-                      Excluir
-                    </button>
-                  )}
+                  <RowActions
+                    onEdit={canUpdate ? () => openEdit(item) : undefined}
+                    onDelete={canDelete ? () => remove(item) : undefined}
+                  >
+                    {canUpdate && item.status === 'hospedado' && (
+                      <RowActionButton onClick={() => checkout(item)} title="Encerrar" aria-label="Encerrar">
+                        <LogOut className="h-3.5 w-3.5" />
+                        Encerrar
+                      </RowActionButton>
+                    )}
+                  </RowActions>
                 </td>
               </tr>
             ))}

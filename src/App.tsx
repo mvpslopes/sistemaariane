@@ -1,6 +1,7 @@
 import AppDashboard from './pages/app/AppDashboard';
 import ClientsPage from './pages/app/ClientsPage';
 import AnimalsPage from './pages/app/AnimalsPage';
+import HerdReportPage from './pages/app/HerdReportPage';
 import UsersPage from './pages/app/UsersPage';
 import ContractsPage from './pages/app/ContractsPage';
 import ChargesPage from './pages/app/ChargesPage';
@@ -154,6 +155,7 @@ function AppContent() {
           <Route path="vendedores" element={<Navigate to="/app/pessoas" replace />} />
           <Route path="assessores" element={<Navigate to="/app/pessoas" replace />} />
           <Route path="animais" element={<AnimalsPage />} />
+          <Route path="relatorio-plantel" element={<HerdReportPage />} />
           <Route path="animais/:id" element={<AnimalDetailPage />} />
           <Route
             path="reproducao"

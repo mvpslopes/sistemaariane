@@ -22,6 +22,7 @@ import {
   Wallet,
   Settings,
   ClipboardList,
+  FileBarChart,
   MessageCircle,
   Crown,
   Briefcase,
@@ -62,6 +63,7 @@ import ThemeIconButton from './ThemeIconButton';
 const assessoriaPaths = [
   '/app/pessoas',
   '/app/animais',
+  '/app/relatorio-plantel',
   '/app/reproducao',
   '/app/haras',
   '/app/contratos',
@@ -275,6 +277,7 @@ function AppShellInner() {
               >
                 <NavSubLink to="/app/pessoas" icon={Users} label="Pessoas" compact={compact} />
                 <NavSubLink to="/app/animais" icon={PawPrint} label="Animais" compact={compact} />
+                <NavSubLink to="/app/relatorio-plantel" icon={FileBarChart} label="Relatório do plantel" compact={compact} />
                 <NavSubLink to="/app/reproducao" icon={Dna} label="Reprodução" compact={compact} />
                 {!compact && (
                   <NavSectionLabel compact={compact}>Plantel / Haras</NavSectionLabel>
@@ -357,6 +360,12 @@ function AppShellInner() {
                 to="/app/animais"
                 icon={PawPrint}
                 label={clientPortalLabels.animalsNav}
+                compact={compact}
+              />
+              <NavTopLink
+                to="/app/relatorio-plantel"
+                icon={FileBarChart}
+                label="Relatório do plantel"
                 compact={compact}
               />
               <NavTopLink to="/app/contratos" icon={FileText} label="Contratos" compact={compact} />

@@ -4274,8 +4274,12 @@ if ($resource === 'animals') {
         $sql = "SELECT a.*,
             (SELECT GROUP_CONCAT(c.name SEPARATOR ', ')
                FROM animal_owners ao INNER JOIN clients c ON c.id = ao.client_id
-              WHERE ao.animal_id = a.id) AS owners
-            FROM animals a WHERE 1=1";
+              WHERE ao.animal_id = a.id) AS owners,
+            g.sire_name,
+            g.dam_name
+            FROM animals a
+            LEFT JOIN animal_genealogy g ON g.animal_id = a.id
+            WHERE 1=1";
         $params = [];
         if ($auth['role'] === 'cliente') {
             if (!$auth['clientId']) json_out([]);
@@ -6383,7 +6387,46 @@ if ($resource === 'subscriptions' && $method === 'GET') {
     }
 }
 
+function equine_gestation_dates(?string $coveringDate, ?string $overrideDue = null): array {
+    $coveringDate = $coveringDate ? trim($coveringDate) : '';
+    if ($coveringDate === '') {
+        return [null, null, null];
+    }
+    try {
+        $base = new DateTime($coveringDate);
+        $dueStr = $overrideDue ? trim($overrideDue) : '';
+        $due = $dueStr !== '' ? new DateTime($dueStr) : (clone $base)->modify('+11 months');
+        $start = (clone $due)->modify('-10 days');
+        $end = (clone $due)->modify('+15 days');
+        return [$due->format('Y-m-d'), $start->format('Y-m-d'), $end->format('Y-m-d')];
+    } catch (Throwable $e) {
+        return [null, null, null];
+    }
+}
+
+function breeding_optional_text($value): ?string {
+    if ($value === null) return null;
+    $v = trim((string)$value);
+    return $v === '' ? null : $v;
+}
+
+function breeding_optional_date($value): ?string {
+    $v = breeding_optional_text($value);
+    if ($v === null) return null;
+    return preg_match('/^\d{4}-\d{2}-\d{2}/', $v) ? substr($v, 0, 10) : null;
+}
+
 function map_breeding_covering(array $r): array {
+    $due = $r['expected_due_date'] ?? null;
+    $start = $r['expected_due_start'] ?? null;
+    $end = $r['expected_due_end'] ?? null;
+    if (!$due && !empty($r['covering_date'])) {
+        [$due, $start, $end] = equine_gestation_dates($r['covering_date']);
+    }
+    $birthStatus = $r['birth_status'] ?? 'previsto';
+    if (!in_array($birthStatus, ['previsto', 'nascido', 'aborto', 'nao_prenhe'], true)) {
+        $birthStatus = 'previsto';
+    }
     return [
         'id' => (string)$r['id'],
         'mareAnimalId' => (string)$r['mare_animal_id'],
@@ -6395,6 +6438,20 @@ function map_breeding_covering(array $r): array {
         'season' => $r['season'],
         'veterinarian' => $r['veterinarian'],
         'abccmmStatus' => $r['abccmm_status'],
+        'associationProtocol' => $r['association_protocol'] ?? null,
+        'expectedDueDate' => $due,
+        'expectedDueStart' => $start,
+        'expectedDueEnd' => $end,
+        'recipientAnimalId' => !empty($r['recipient_animal_id']) ? (string)$r['recipient_animal_id'] : null,
+        'recipientName' => $r['recipient_name'] ?? null,
+        'embryoTransferDate' => $r['embryo_transfer_date'] ?? null,
+        'embryoTransferStatus' => $r['embryo_transfer_status'] ?? null,
+        'embryoTransferNotes' => $r['embryo_transfer_notes'] ?? null,
+        'proceduresNotes' => $r['procedures_notes'] ?? null,
+        'labExamsNotes' => $r['lab_exams_notes'] ?? null,
+        'birthDate' => $r['birth_date'] ?? null,
+        'birthStatus' => $birthStatus,
+        'birthNotes' => $r['birth_notes'] ?? null,
         'notes' => $r['notes'],
         'createdAt' => $r['created_at'] ?? null,
     ];
@@ -7419,28 +7476,34 @@ if ($resource === 'breeding-coverings') {
         json_out(['error' => 'Acesso negado'], 403);
     }
 
+    $etStatuses = ['pendente', 'transferido', 'em_gestacao', 'nao_prenhe'];
+    $birthStatuses = ['previsto', 'nascido', 'aborto', 'nao_prenhe'];
+    $migrationHint = 'Tabela de reprodução desatualizada — rode database/migration-breeding-covering-tabs.sql';
+
     if ($method === 'GET' && !$id) {
         try {
             $q = trim($_GET['q'] ?? '');
             $sql = "SELECT bc.*,
                         mare.name AS mare_name,
-                        stallion.name AS stallion_animal_name
+                        stallion.name AS stallion_animal_name,
+                        recipient.name AS recipient_name
                      FROM breeding_coverings bc
                      INNER JOIN animals mare ON mare.id = bc.mare_animal_id
                      LEFT JOIN animals stallion ON stallion.id = bc.stallion_animal_id
+                     LEFT JOIN animals recipient ON recipient.id = bc.recipient_animal_id
                      WHERE 1=1";
             $params = [];
             if ($q !== '') {
-                $sql .= ' AND (mare.name LIKE ? OR bc.stallion_name LIKE ? OR stallion.name LIKE ? OR bc.season LIKE ?)';
+                $sql .= ' AND (mare.name LIKE ? OR bc.stallion_name LIKE ? OR stallion.name LIKE ? OR bc.season LIKE ? OR bc.association_protocol LIKE ?)';
                 $like = "%$q%";
-                array_push($params, $like, $like, $like, $like);
+                array_push($params, $like, $like, $like, $like, $like);
             }
             $sql .= ' ORDER BY bc.covering_date DESC, bc.id DESC LIMIT 200';
             $stmt = $pdo->prepare($sql);
             $stmt->execute($params);
             json_out(array_map('map_breeding_covering', $stmt->fetchAll()));
         } catch (Throwable $e) {
-            json_out(['error' => 'Tabela de reprodução não disponível — rode a migration'], 500);
+            json_out(['error' => $migrationHint], 500);
         }
     }
 
@@ -7453,28 +7516,54 @@ if ($resource === 'breeding-coverings') {
         $date = trim($body['coveringDate'] ?? $body['covering_date'] ?? '');
         if ($date === '') json_out(['error' => 'Data da cobertura é obrigatória'], 400);
         $stallionId = (int)($body['stallionAnimalId'] ?? $body['stallion_animal_id'] ?? 0);
-        $stallionName = trim($body['stallionName'] ?? $body['stallion_name'] ?? '') ?: null;
+        $stallionName = breeding_optional_text($body['stallionName'] ?? $body['stallion_name'] ?? null);
         $abccmm = $body['abccmmStatus'] ?? $body['abccmm_status'] ?? 'pendente';
         if (!in_array($abccmm, ['pendente', 'comunicado', 'confirmado'], true)) $abccmm = 'pendente';
+        $etStatus = $body['embryoTransferStatus'] ?? $body['embryo_transfer_status'] ?? null;
+        if ($etStatus !== null && !in_array($etStatus, $etStatuses, true)) $etStatus = null;
+        $birthStatus = $body['birthStatus'] ?? $body['birth_status'] ?? 'previsto';
+        if (!in_array($birthStatus, $birthStatuses, true)) $birthStatus = 'previsto';
+        $recipientId = (int)($body['recipientAnimalId'] ?? $body['recipient_animal_id'] ?? 0);
+        [$due, $dueStart, $dueEnd] = equine_gestation_dates(
+            $date,
+            $body['expectedDueDate'] ?? $body['expected_due_date'] ?? null
+        );
         try {
             $pdo->prepare(
-                'INSERT INTO breeding_coverings (mare_animal_id, stallion_animal_id, stallion_name, method, covering_date, season, veterinarian, abccmm_status, notes, created_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                'INSERT INTO breeding_coverings (
+                    mare_animal_id, stallion_animal_id, stallion_name, method, covering_date, season, veterinarian,
+                    abccmm_status, association_protocol, expected_due_date, expected_due_start, expected_due_end,
+                    recipient_animal_id, embryo_transfer_date, embryo_transfer_status, embryo_transfer_notes,
+                    procedures_notes, lab_exams_notes, birth_date, birth_status, birth_notes, notes, created_by
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             )->execute([
                 $mareId,
                 $stallionId > 0 ? $stallionId : null,
                 $stallionName,
                 $methodVal,
                 $date,
-                $body['season'] ?? null,
-                $body['veterinarian'] ?? null,
+                breeding_optional_text($body['season'] ?? null),
+                breeding_optional_text($body['veterinarian'] ?? null),
                 $abccmm,
-                $body['notes'] ?? null,
+                breeding_optional_text($body['associationProtocol'] ?? $body['association_protocol'] ?? null),
+                $due,
+                $dueStart,
+                $dueEnd,
+                $recipientId > 0 ? $recipientId : null,
+                breeding_optional_date($body['embryoTransferDate'] ?? $body['embryo_transfer_date'] ?? null),
+                $etStatus,
+                breeding_optional_text($body['embryoTransferNotes'] ?? $body['embryo_transfer_notes'] ?? null),
+                breeding_optional_text($body['proceduresNotes'] ?? $body['procedures_notes'] ?? null),
+                breeding_optional_text($body['labExamsNotes'] ?? $body['lab_exams_notes'] ?? null),
+                breeding_optional_date($body['birthDate'] ?? $body['birth_date'] ?? null),
+                $birthStatus,
+                breeding_optional_text($body['birthNotes'] ?? $body['birth_notes'] ?? null),
+                breeding_optional_text($body['notes'] ?? null),
                 $auth['id'],
             ]);
             json_out(['success' => true, 'id' => (string)$pdo->lastInsertId()]);
         } catch (Throwable $e) {
-            json_out(['error' => 'Erro ao registrar cobertura'], 500);
+            json_out(['error' => $migrationHint], 500);
         }
     }
 
@@ -7491,24 +7580,73 @@ if ($resource === 'breeding-coverings') {
         $stallionId = array_key_exists('stallionAnimalId', $body)
             ? ((int)($body['stallionAnimalId'] ?? 0) ?: null)
             : $cur['stallion_animal_id'];
+        $date = $body['coveringDate'] ?? $cur['covering_date'];
+        $etStatus = array_key_exists('embryoTransferStatus', $body) || array_key_exists('embryo_transfer_status', $body)
+            ? ($body['embryoTransferStatus'] ?? $body['embryo_transfer_status'] ?? null)
+            : ($cur['embryo_transfer_status'] ?? null);
+        if ($etStatus !== null && $etStatus !== '' && !in_array($etStatus, $etStatuses, true)) {
+            $etStatus = $cur['embryo_transfer_status'] ?? null;
+        }
+        if ($etStatus === '') $etStatus = null;
+        $birthStatus = $body['birthStatus'] ?? $body['birth_status'] ?? ($cur['birth_status'] ?? 'previsto');
+        if (!in_array($birthStatus, $birthStatuses, true)) $birthStatus = $cur['birth_status'] ?? 'previsto';
+        $recipientId = array_key_exists('recipientAnimalId', $body) || array_key_exists('recipient_animal_id', $body)
+            ? ((int)($body['recipientAnimalId'] ?? $body['recipient_animal_id'] ?? 0) ?: null)
+            : ($cur['recipient_animal_id'] ?? null);
+        $overrideDue = array_key_exists('expectedDueDate', $body) || array_key_exists('expected_due_date', $body)
+            ? ($body['expectedDueDate'] ?? $body['expected_due_date'] ?? null)
+            : ($cur['expected_due_date'] ?? null);
+        [$due, $dueStart, $dueEnd] = equine_gestation_dates($date, $overrideDue);
         try {
             $pdo->prepare(
-                'UPDATE breeding_coverings SET mare_animal_id=?, stallion_animal_id=?, stallion_name=?, method=?, covering_date=?, season=?, veterinarian=?, abccmm_status=?, notes=? WHERE id=?'
+                'UPDATE breeding_coverings SET
+                    mare_animal_id=?, stallion_animal_id=?, stallion_name=?, method=?, covering_date=?, season=?, veterinarian=?,
+                    abccmm_status=?, association_protocol=?, expected_due_date=?, expected_due_start=?, expected_due_end=?,
+                    recipient_animal_id=?, embryo_transfer_date=?, embryo_transfer_status=?, embryo_transfer_notes=?,
+                    procedures_notes=?, lab_exams_notes=?, birth_date=?, birth_status=?, birth_notes=?, notes=?
+                 WHERE id=?'
             )->execute([
                 (int)($body['mareAnimalId'] ?? $cur['mare_animal_id']),
                 $stallionId,
-                array_key_exists('stallionName', $body) ? ($body['stallionName'] ?: null) : $cur['stallion_name'],
+                array_key_exists('stallionName', $body) ? breeding_optional_text($body['stallionName']) : $cur['stallion_name'],
                 $methodVal,
-                $body['coveringDate'] ?? $cur['covering_date'],
-                array_key_exists('season', $body) ? ($body['season'] ?: null) : $cur['season'],
-                array_key_exists('veterinarian', $body) ? ($body['veterinarian'] ?: null) : $cur['veterinarian'],
+                $date,
+                array_key_exists('season', $body) ? breeding_optional_text($body['season']) : $cur['season'],
+                array_key_exists('veterinarian', $body) ? breeding_optional_text($body['veterinarian']) : $cur['veterinarian'],
                 $abccmm,
-                array_key_exists('notes', $body) ? ($body['notes'] ?: null) : $cur['notes'],
+                array_key_exists('associationProtocol', $body) || array_key_exists('association_protocol', $body)
+                    ? breeding_optional_text($body['associationProtocol'] ?? $body['association_protocol'] ?? null)
+                    : ($cur['association_protocol'] ?? null),
+                $due,
+                $dueStart,
+                $dueEnd,
+                $recipientId,
+                array_key_exists('embryoTransferDate', $body) || array_key_exists('embryo_transfer_date', $body)
+                    ? breeding_optional_date($body['embryoTransferDate'] ?? $body['embryo_transfer_date'] ?? null)
+                    : ($cur['embryo_transfer_date'] ?? null),
+                $etStatus,
+                array_key_exists('embryoTransferNotes', $body) || array_key_exists('embryo_transfer_notes', $body)
+                    ? breeding_optional_text($body['embryoTransferNotes'] ?? $body['embryo_transfer_notes'] ?? null)
+                    : ($cur['embryo_transfer_notes'] ?? null),
+                array_key_exists('proceduresNotes', $body) || array_key_exists('procedures_notes', $body)
+                    ? breeding_optional_text($body['proceduresNotes'] ?? $body['procedures_notes'] ?? null)
+                    : ($cur['procedures_notes'] ?? null),
+                array_key_exists('labExamsNotes', $body) || array_key_exists('lab_exams_notes', $body)
+                    ? breeding_optional_text($body['labExamsNotes'] ?? $body['lab_exams_notes'] ?? null)
+                    : ($cur['lab_exams_notes'] ?? null),
+                array_key_exists('birthDate', $body) || array_key_exists('birth_date', $body)
+                    ? breeding_optional_date($body['birthDate'] ?? $body['birth_date'] ?? null)
+                    : ($cur['birth_date'] ?? null),
+                $birthStatus,
+                array_key_exists('birthNotes', $body) || array_key_exists('birth_notes', $body)
+                    ? breeding_optional_text($body['birthNotes'] ?? $body['birth_notes'] ?? null)
+                    : ($cur['birth_notes'] ?? null),
+                array_key_exists('notes', $body) ? breeding_optional_text($body['notes']) : $cur['notes'],
                 (int)$id,
             ]);
             json_out(['success' => true]);
         } catch (Throwable $e) {
-            json_out(['error' => 'Erro ao atualizar cobertura'], 500);
+            json_out(['error' => $migrationHint], 500);
         }
     }
 

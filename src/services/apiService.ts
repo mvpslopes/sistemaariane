@@ -675,6 +675,8 @@ export interface Animal {
   notes: string | null;
   photo_url: string | null;
   owners?: string | null;
+  sire_name?: string | null;
+  dam_name?: string | null;
   created_at?: string;
 }
 
@@ -734,6 +736,8 @@ export interface GlobalSearchResults {
 
 export type BreedingMethod = 'ia' | 'monta_natural' | 'te';
 export type AbccmmStatus = 'pendente' | 'comunicado' | 'confirmado';
+export type EmbryoTransferStatus = 'pendente' | 'transferido' | 'em_gestacao' | 'nao_prenhe';
+export type BirthStatus = 'previsto' | 'nascido' | 'aborto' | 'nao_prenhe';
 
 export interface BreedingCovering {
   id: string;
@@ -746,6 +750,20 @@ export interface BreedingCovering {
   season: string | null;
   veterinarian: string | null;
   abccmmStatus: AbccmmStatus;
+  associationProtocol: string | null;
+  expectedDueDate: string | null;
+  expectedDueStart: string | null;
+  expectedDueEnd: string | null;
+  recipientAnimalId: string | null;
+  recipientName: string | null;
+  embryoTransferDate: string | null;
+  embryoTransferStatus: EmbryoTransferStatus | null;
+  embryoTransferNotes: string | null;
+  proceduresNotes: string | null;
+  labExamsNotes: string | null;
+  birthDate: string | null;
+  birthStatus: BirthStatus | null;
+  birthNotes: string | null;
   notes: string | null;
   createdAt?: string | null;
 }
@@ -759,6 +777,17 @@ export interface BreedingCoveringInput {
   season?: string | null;
   veterinarian?: string | null;
   abccmmStatus?: AbccmmStatus;
+  associationProtocol?: string | null;
+  expectedDueDate?: string | null;
+  recipientAnimalId?: string | null;
+  embryoTransferDate?: string | null;
+  embryoTransferStatus?: EmbryoTransferStatus | null;
+  embryoTransferNotes?: string | null;
+  proceduresNotes?: string | null;
+  labExamsNotes?: string | null;
+  birthDate?: string | null;
+  birthStatus?: BirthStatus | null;
+  birthNotes?: string | null;
   notes?: string | null;
 }
 

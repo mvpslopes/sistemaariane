@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Plus, Search, Pencil, Trash2, Camera, PawPrint, FileText, ExternalLink } from 'lucide-react';
+import { Plus, Search, Pencil, Trash2, Camera, PawPrint, FileText, ExternalLink, FileBarChart } from 'lucide-react';
 import { deleteAnimal, getAnimals, mediaUrl, type Animal } from '../../services/apiService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -179,11 +179,19 @@ export default function AnimalsPage() {
           <span className="font-semibold text-brand-dark-brown">{activeCount}</span>{' '}
           {isCliente ? clientPortalLabels.countActive : 'ativos'}
         </p>
-        {canCreate && (
-          <AppButton type="button" onClick={openNew}>
-            <Plus className="h-4 w-4" /> Novo animal
-          </AppButton>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            to="/app/relatorio-plantel"
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-brand-beige bg-white px-4 py-2 text-sm font-medium text-brand-dark-brown transition hover:bg-brand-off-white"
+          >
+            <FileBarChart className="h-4 w-4" /> Relatório
+          </Link>
+          {canCreate && (
+            <AppButton type="button" onClick={openNew}>
+              <Plus className="h-4 w-4" /> Novo animal
+            </AppButton>
+          )}
+        </div>
       </div>
 
       <ListTableToolbar

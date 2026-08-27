@@ -19,7 +19,7 @@ export function buildAssistantKnowledge(ctx: HelpViewerContext): string {
     ...lines,
     '',
     'Rotas úteis: /app (dashboard), /app/pessoas, /app/animais, /app/contratos, /app/cobrancas,',
-    '/app/recebiveis, /app/relatorio-cobranca, /app/mensagens, /app/leiloes, /app/reproducao,',
+    '/app/recebiveis, /app/relatorio-cobranca, /app/relatorio-plantel, /app/mensagens, /app/leiloes, /app/reproducao,',
     '/app/registro-diario, /app/repasses, /app/perfil',
   ].join('\n');
 }

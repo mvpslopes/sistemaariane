@@ -50,6 +50,12 @@ export function resolvePageMeta(pathname: string, isCliente: boolean, isAssessor
         ? clientPortalLabels.animalsPageSubtitle
         : 'Plantel e documentação básica',
     },
+    '/app/relatorio-plantel': {
+      title: 'Relatório do plantel',
+      subtitle: isCliente
+        ? 'Seus animais com nascimento, genealogia e status'
+        : 'Filtros, idade, genealogia, PDF e Excel',
+    },
     '/app/reproducao': {
       title: 'Reprodução',
       subtitle: 'Cobrições, estações e status ABCCMM (manual)',

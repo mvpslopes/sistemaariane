@@ -222,6 +222,21 @@ export const HELP_ARTICLES: HelpArticle[] = [
     toLabel: 'Ver animais',
   },
   {
+    id: 'vis-relatorio-plantel',
+    category: 'visualizacao',
+    audience: ['staff', 'cliente'],
+    title: 'Relatório do plantel',
+    summary: 'Lista filtrável com nascimento, idade, pelagem, pai, mãe e exportação PDF/Excel.',
+    steps: [
+      'Assessoria → Relatório do plantel (ou o botão Relatório em Animais).',
+      'Filtre por status, sexo, raça, proprietário, período de nascimento, pai ou mãe.',
+      'Exporte PDF ou Excel com o recorte atual.',
+    ],
+    tip: 'O filtro Plantel ativo equivale a excluir vendidos, falecidos e transferidos.',
+    to: '/app/relatorio-plantel',
+    toLabel: 'Ir para o relatório',
+  },
+  {
     id: 'vis-recebiveis',
     category: 'visualizacao',
     audience: ['staff'],

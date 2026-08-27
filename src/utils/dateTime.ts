@@ -103,6 +103,26 @@ export function formatDateLongBR(value: string | Date | null | undefined): strin
   return `${day} de ${month} de ${year}`;
 }
 
+/** Idade amigável a partir da data de nascimento (ex.: 3a 2m). */
+export function formatAgeBR(value: string | Date | null | undefined, fallback = '—'): string {
+  const d = parseAppDate(value);
+  if (!d) return fallback;
+  const now = parseAppDate(todayDateISO());
+  if (!now) return fallback;
+  let years = now.getFullYear() - d.getFullYear();
+  let months = now.getMonth() - d.getMonth();
+  if (now.getDate() < d.getDate()) months -= 1;
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+  if (years < 0) return fallback;
+  if (years === 0 && months === 0) return 'menos de 1 mês';
+  if (years === 0) return `${months} ${months === 1 ? 'mês' : 'meses'}`;
+  if (months === 0) return `${years} ${years === 1 ? 'ano' : 'anos'}`;
+  return `${years}a ${months}m`;
+}
+
 /** YYYY-MM-DD no fuso de Brasília (para inputs type="date"). */
 export function todayDateISO(): string {
   return new Intl.DateTimeFormat('en-CA', {

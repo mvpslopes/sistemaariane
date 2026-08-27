@@ -14,6 +14,7 @@ import { useToast } from '../../contexts/ToastContext';
 import ListPageSkeleton from '../../components/skeletons/ListPageSkeleton';
 import Modal from '../../components/Modal';
 import AppButton from '../../components/AppButton';
+import RowActions from '../../components/RowActions';
 import { formatDateBR } from '../../utils/dateTime';
 import {
   FINANCE_EXPENSE_CATEGORIES,
@@ -281,16 +282,10 @@ export default function HarasFinancePage() {
                   {item.entryType === 'receita' ? '+' : '−'} {moneyBRL(item.amount)}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  {canUpdate && (
-                    <button type="button" onClick={() => openEdit(item)} className="mr-2 text-xs font-medium text-brand-brown hover:underline">
-                      Editar
-                    </button>
-                  )}
-                  {canDelete && (
-                    <button type="button" onClick={() => remove(item)} className="text-xs font-medium text-red-600 hover:underline">
-                      Excluir
-                    </button>
-                  )}
+                  <RowActions
+                    onEdit={canUpdate ? () => openEdit(item) : undefined}
+                    onDelete={canDelete ? () => remove(item) : undefined}
+                  />
                 </td>
               </tr>
             ))}

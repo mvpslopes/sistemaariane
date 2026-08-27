@@ -16,6 +16,7 @@ import {
   LogOut,
   MessageCircle,
   ClipboardList,
+  FileBarChart,
   MessagesSquare,
   Crown,
   Warehouse,
@@ -74,6 +75,7 @@ export default function MobileMoreSheet({ open, onClose, onLogout, onOpenAssista
   if (isStaff) {
     items.push(
       { type: 'link', to: '/app/leiloes', icon: Gavel, label: 'Leilões' },
+      { type: 'link', to: '/app/relatorio-plantel', icon: FileBarChart, label: 'Relatório do plantel' },
       { type: 'link', to: '/app/reproducao', icon: Dna, label: 'Reprodução' },
       { type: 'link', to: '/app/haras/veterinario', icon: Stethoscope, label: 'Controle veterinário' },
       { type: 'link', to: '/app/haras/estoque', icon: Warehouse, label: 'Controle de estoque' },
