@@ -380,7 +380,13 @@ export interface ClientContact {
 
 export type SaleType = string;
 export type PaymentMethod = 'pix' | 'boleto' | 'transferencia' | 'outro';
-export type ContractStatus = 'rascunho' | 'aguardando_assinatura' | 'ativo' | 'concluido' | 'cancelado';
+export type ContractStatus =
+  | 'rascunho'
+  | 'pendente_envio'
+  | 'aguardando_assinatura'
+  | 'ativo'
+  | 'concluido'
+  | 'cancelado';
 export type ChargeStatus = 'pendente' | 'pago' | 'atrasado' | 'cancelado';
 export type ChargeCollector = 'assessoria' | 'seller';
 export type PayoutStatus = 'aguardando' | 'pendente' | 'pago' | 'cancelado';

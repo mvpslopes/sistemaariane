@@ -938,7 +938,7 @@ if ($resource === 'dashboard' && $method === 'GET') {
 
             $stmt = $pdo->prepare(
                 "SELECT COUNT(*) AS total FROM contracts c
-                 WHERE " . client_contract_access_sql() . " AND c.status = 'aguardando_assinatura'"
+                 WHERE " . client_contract_access_sql() . " AND c.status IN ('pendente_envio','aguardando_assinatura')"
             );
             $params = [];
             bind_client_contract_access($params, $cid);
@@ -1002,7 +1002,9 @@ if ($resource === 'dashboard' && $method === 'GET') {
     $activeAnimals = (int)$pdo->query("SELECT COUNT(*) AS t FROM animals WHERE status = 'ativo'")->fetch()['t'];
     $contracts = (int)$pdo->query("SELECT COUNT(*) AS t FROM contracts WHERE status != 'cancelado'")->fetch()['t'];
     $contractsActive = (int)$pdo->query("SELECT COUNT(*) AS t FROM contracts WHERE status = 'ativo'")->fetch()['t'];
-    $contractsAwaiting = (int)$pdo->query("SELECT COUNT(*) AS t FROM contracts WHERE status = 'aguardando_assinatura'")->fetch()['t'];
+    $contractsAwaiting = (int)$pdo->query(
+        "SELECT COUNT(*) AS t FROM contracts WHERE status IN ('pendente_envio','aguardando_assinatura')"
+    )->fetch()['t'];
     $chargesPending = (int)$pdo->query(
         "SELECT COUNT(*) AS t FROM charges ch
          INNER JOIN contracts c ON c.id = ch.contract_id
@@ -2768,6 +2770,7 @@ function fetch_auction_finance(PDO $pdo, int $auctionId): array {
     $revenueTotal = 0.0;
     $revenueByStatus = [
         'rascunho' => 0.0,
+        'pendente_envio' => 0.0,
         'aguardando_assinatura' => 0.0,
         'ativo' => 0.0,
         'concluido' => 0.0,
@@ -4891,7 +4894,7 @@ if ($resource === 'contracts') {
                 $lotLabel, $animalCategory, $quantity,
                 $commissionTotalPct, $commissionBuyerPct, $commissionSellerPct,
                 $witness1Id, $witness2Id, $viaLabel,
-                $total, $methodPay, $n, $firstDue, 'aguardando_assinatura',
+                $total, $methodPay, $n, $firstDue, 'pendente_envio',
                 $body['notes'] ?? null, $auth['id'],
             ]);
             $contractId = (int)$pdo->lastInsertId();
@@ -4944,7 +4947,7 @@ if ($resource === 'contracts') {
         };
 
         if (array_key_exists('status', $body) && $body['status'] !== null) {
-            if (!in_array($body['status'], ['rascunho','aguardando_assinatura','ativo','concluido','cancelado'], true)) {
+            if (!in_array($body['status'], ['rascunho','pendente_envio','aguardando_assinatura','ativo','concluido','cancelado'], true)) {
                 json_out(['error' => 'Status inválido'], 400);
             }
             $set('status', $body['status']);
@@ -5252,7 +5255,10 @@ if ($resource === 'contracts') {
             } catch (Throwable $e) {
                 // Envelope pode já estar fechado/cancelado na Clicksign; seguimos limpando localmente.
             }
-            $newStatus = ($r['status'] ?? '') === 'aguardando_assinatura' ? 'ativo' : $r['status'];
+            // Cancelar o envelope não ativa o contrato — volta para pendente de envio.
+            $newStatus = in_array(($r['status'] ?? ''), ['rascunho', 'pendente_envio', 'aguardando_assinatura', 'ativo'], true)
+                ? 'pendente_envio'
+                : $r['status'];
             $pdo->prepare(
                 'UPDATE contracts SET clicksign_envelope_id=NULL, clicksign_document_id=NULL, clicksign_status=NULL, clicksign_sent_at=NULL, clicksign_signed_count=NULL, clicksign_total_count=NULL, status=? WHERE id=?'
             )->execute([$newStatus, (int)$id]);
@@ -5264,7 +5270,7 @@ if ($resource === 'contracts') {
                 (string)$id,
                 'Envio Clicksign cancelado — contrato ' . audit_contract_label($r, (int)$id),
                 true,
-                ['envelopeId' => $envelopeId]
+                ['envelopeId' => $envelopeId, 'statusAfterCancel' => $newStatus]
             );
             json_out(['success' => true, 'message' => 'Envio cancelado. Você já pode enviar novamente.']);
         } catch (Throwable $e) {
@@ -5404,7 +5410,7 @@ if ($resource === 'contracts') {
             $sig->execute([(int)$id]);
             $have = array_column($sig->fetchAll(), 'party_role');
             $all = !array_diff($need, $have);
-            if ($all && in_array($contract['status'], ['rascunho', 'aguardando_assinatura'], true)) {
+            if ($all && in_array($contract['status'], ['rascunho', 'pendente_envio', 'aguardando_assinatura'], true)) {
                 $pdo->prepare("UPDATE contracts SET status = 'ativo' WHERE id = ?")->execute([(int)$id]);
             }
             $partyLabels = [

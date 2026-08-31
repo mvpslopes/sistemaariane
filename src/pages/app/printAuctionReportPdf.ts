@@ -22,6 +22,7 @@ function esc(s: string | null | undefined) {
 
 const contractStatusLabel: Record<string, string> = {
   rascunho: 'Rascunho',
+  pendente_envio: 'Pendente envio',
   aguardando_assinatura: 'Aguardando assinatura',
   ativo: 'Ativo',
   concluido: 'Concluído',

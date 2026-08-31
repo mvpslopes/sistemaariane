@@ -1,8 +1,9 @@
 import type { Contract } from '../services/apiService';
 
-/** Contrato criado mas ainda não enviado à Clicksign. */
+/** Contrato criado ou com envio cancelado — ainda sem envelope na Clicksign. */
 export function isSignatureNotSent(c: Pick<Contract, 'status' | 'clicksign_envelope_id'>): boolean {
-  return c.status === 'aguardando_assinatura' && !c.clicksign_envelope_id;
+  if (c.clicksign_envelope_id) return false;
+  return c.status === 'pendente_envio' || c.status === 'aguardando_assinatura' || c.status === 'rascunho';
 }
 
 /** Envelope na Clicksign aguardando assinaturas. */
@@ -17,8 +18,14 @@ export function hasPendingSignatures(c: Contract): boolean {
   return signed < total;
 }
 
+/** Filtro "assinaturas pendentes": falta enviar ou falta assinar. */
+export function isSignaturePending(c: Pick<Contract, 'status' | 'clicksign_envelope_id'>): boolean {
+  return isSignatureNotSent(c) || isAwaitingSignatures(c);
+}
+
 const BASE_STATUS_LABEL: Record<Contract['status'], string> = {
   rascunho: 'Rascunho',
+  pendente_envio: 'Pendente envio',
   aguardando_assinatura: 'Aguardando assinatura',
   ativo: 'Ativo',
   concluido: 'Concluído',
@@ -27,6 +34,7 @@ const BASE_STATUS_LABEL: Record<Contract['status'], string> = {
 
 const BASE_STATUS_TONE: Record<Contract['status'], string> = {
   rascunho: 'bg-slate-100 text-slate-700',
+  pendente_envio: 'bg-slate-100/95 text-slate-700 ring-1 ring-slate-200/90',
   aguardando_assinatura: 'bg-amber-100 text-amber-800',
   ativo: 'bg-emerald-100 text-emerald-800',
   concluido: 'bg-sky-100 text-sky-800',
@@ -46,10 +54,10 @@ export function contractStatusDisplay(c: Contract, short = false): { label: stri
     };
   }
 
-  if (isSignatureNotSent(c)) {
+  if (c.status === 'pendente_envio' || isSignatureNotSent(c)) {
     return {
-      label: short ? 'Não enviada' : 'Assinatura não enviada',
-      tone: 'bg-slate-100/95 text-slate-700 ring-1 ring-slate-200/90',
+      label: short ? 'Pendente envio' : BASE_STATUS_LABEL.pendente_envio,
+      tone: BASE_STATUS_TONE.pendente_envio,
     };
   }
   if (isAwaitingSignatures(c) && short) {

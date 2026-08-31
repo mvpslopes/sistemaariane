@@ -23,6 +23,7 @@ const money = (v: number) =>
 
 const contractStatusLabel: Record<string, string> = {
   rascunho: 'Rascunho',
+  pendente_envio: 'Pendente envio',
   aguardando_assinatura: 'Aguardando assinatura',
   ativo: 'Ativo',
   concluido: 'Concluído',
@@ -222,7 +223,7 @@ export default function AuctionFinancePanel({
             </table>
           </div>
           <p className="text-[11px] text-brand-olive/80">
-            Inclui contratos não cancelados (rascunho, aguardando assinatura, ativos e concluídos).
+            Inclui contratos não cancelados (rascunho, pendente envio, aguardando assinatura, ativos e concluídos).
           </p>
         </section>
       )}

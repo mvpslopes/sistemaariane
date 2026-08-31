@@ -334,7 +334,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
     summary: 'Acompanhe vendas em que você é comprador ou vendedor.',
     steps: [
       'Operação → Contratos.',
-      'Veja status: rascunho, aguardando assinatura, ativo ou concluído.',
+      'Veja status: pendente envio, aguardando assinatura, ativo ou concluído.',
       'Contratos aguardando assinatura precisam do link Clicksign enviado por e-mail/WhatsApp.',
     ],
     to: '/app/contratos',

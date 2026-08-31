@@ -223,6 +223,7 @@ export default function AppDashboard() {
   const contractSlices = useMemo(() => {
     const counts: Record<string, number> = {
       rascunho: 0,
+      pendente_envio: 0,
       aguardando_assinatura: 0,
       ativo: 0,
       concluido: 0,
@@ -233,6 +234,7 @@ export default function AppDashboard() {
     });
     const labels: Record<string, string> = {
       rascunho: 'Rascunho',
+      pendente_envio: 'Pendente envio',
       aguardando_assinatura: 'Aguardando',
       ativo: 'Ativo',
       concluido: 'Concluído',
@@ -240,6 +242,7 @@ export default function AppDashboard() {
     };
     const colors: Record<string, string> = {
       rascunho: '#E6D8C3',
+      pendente_envio: '#9CA3AF',
       aguardando_assinatura: '#C08A3E',
       ativo: '#4A6650',
       concluido: '#4F3E32',

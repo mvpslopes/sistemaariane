@@ -37,6 +37,7 @@ import {
   hasPendingSignatures,
   isAwaitingSignatures,
   isSignatureNotSent,
+  isSignaturePending,
 } from '../../utils/contractStatusDisplay';
 
 const saleLabel = (type: string) => {
@@ -51,14 +52,14 @@ const saleLabel = (type: string) => {
 const money = (v: number) =>
   v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-type StatusFilter = 'all' | 'aguardando_assinatura' | 'finalizados' | 'cancelado';
+type StatusFilter = 'all' | 'assinaturas_pendentes' | 'finalizados' | 'cancelado';
 type SortKey = 'animal' | 'type' | 'buyer' | 'value' | 'status';
 
 const FINALIZED_STATUSES: Contract['status'][] = ['ativo', 'concluido'];
 
 const STATUS_FILTER_OPTIONS: { id: StatusFilter; label: string }[] = [
   { id: 'all', label: 'Todos' },
-  { id: 'aguardando_assinatura', label: 'Assinaturas pendentes' },
+  { id: 'assinaturas_pendentes', label: 'Assinaturas pendentes' },
   { id: 'finalizados', label: 'Finalizados' },
   { id: 'cancelado', label: 'Cancelados' },
 ];
@@ -71,16 +72,18 @@ function statusSortRank(c: Contract) {
 
 const STATUS_SORT_ORDER: Record<Contract['status'], number> = {
   rascunho: 0,
+  pendente_envio: 0.5,
   aguardando_assinatura: 1,
   ativo: 2,
   concluido: 3,
   cancelado: 4,
 };
 
-function matchesStatusFilter(status: Contract['status'], filter: StatusFilter) {
+function matchesStatusFilter(c: Contract, filter: StatusFilter) {
   if (filter === 'all') return true;
-  if (filter === 'finalizados') return FINALIZED_STATUSES.includes(status);
-  return status === filter;
+  if (filter === 'finalizados') return FINALIZED_STATUSES.includes(c.status);
+  if (filter === 'assinaturas_pendentes') return isSignaturePending(c);
+  return c.status === filter;
 }
 
 interface ContractsPageProps {
@@ -468,12 +471,12 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const statusCounts = useMemo(() => {
     const counts: Record<StatusFilter, number> = {
       all: items.length,
-      aguardando_assinatura: 0,
+      assinaturas_pendentes: 0,
       finalizados: 0,
       cancelado: 0,
     };
     items.forEach((c) => {
-      if (c.status === 'aguardando_assinatura') counts.aguardando_assinatura += 1;
+      if (isSignaturePending(c)) counts.assinaturas_pendentes += 1;
       if (FINALIZED_STATUSES.includes(c.status)) counts.finalizados += 1;
       if (c.status === 'cancelado') counts.cancelado += 1;
     });
@@ -483,7 +486,7 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
   const filtered = useMemo(() => {
     const search = q.trim().toLowerCase();
     let list = items.filter((c) => {
-      if (!matchesStatusFilter(c.status, statusFilter)) return false;
+      if (!matchesStatusFilter(c, statusFilter)) return false;
       if (!search) return true;
       return (
         (c.animal_name || '').toLowerCase().includes(search) ||
@@ -1086,15 +1089,24 @@ export default function ContractsPage({ initialAnimalId = null }: ContractsPageP
                     )}
                   </>
                 ) : (
-                  <button
-                    type="button"
-                    disabled={sendingClicksign}
-                    onClick={onSendClicksign}
-                    className="inline-flex items-center gap-2 rounded-xl bg-brand-brown px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-50"
-                  >
-                    <Send className="h-4 w-4" />
-                    {sendingClicksign ? 'Enviando...' : 'Enviar para assinatura'}
-                  </button>
+                  <>
+                    {(detail.status === 'pendente_envio' ||
+                      (detail.status === 'ativo' && !detail.clicksign_envelope_id)) && (
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                        Status: <strong>Pendente envio</strong> da assinatura digital. O PDF ainda não foi
+                        enviado à Clicksign. Use o botão abaixo para enviar ao vendedor, comprador e testemunhas.
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      disabled={sendingClicksign}
+                      onClick={onSendClicksign}
+                      className="inline-flex items-center gap-2 rounded-xl bg-brand-brown px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-olive disabled:opacity-50"
+                    >
+                      <Send className="h-4 w-4" />
+                      {sendingClicksign ? 'Enviando...' : 'Enviar para assinatura'}
+                    </button>
+                  </>
                 )}
               </div>
             )}

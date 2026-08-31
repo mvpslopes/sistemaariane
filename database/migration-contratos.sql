@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS contracts (
   payment_method  ENUM('pix','boleto','transferencia','outro') NOT NULL DEFAULT 'boleto',
   installments    INT UNSIGNED NOT NULL DEFAULT 1,
   first_due_date  DATE NOT NULL,
-  status          ENUM('rascunho','aguardando_assinatura','ativo','concluido','cancelado') NOT NULL DEFAULT 'aguardando_assinatura',
+  status          ENUM('rascunho','pendente_envio','aguardando_assinatura','ativo','concluido','cancelado') NOT NULL DEFAULT 'pendente_envio',
   notes           TEXT NULL,
   created_by      BIGINT UNSIGNED NULL,
   created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

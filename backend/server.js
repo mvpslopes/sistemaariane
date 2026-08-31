@@ -893,7 +893,7 @@ app.get('/api/dashboard', auth(), async (req, res) => {
       );
       const [[contractsAwaiting]] = await pool.execute(
         `SELECT COUNT(*) AS total FROM contracts c
-         WHERE ${CLIENT_CONTRACT_ACCESS_SQL} AND c.status = 'aguardando_assinatura'`,
+         WHERE ${CLIENT_CONTRACT_ACCESS_SQL} AND c.status IN ('pendente_envio','aguardando_assinatura')`,
         contractParams
       );
       const [[chargesPending]] = await pool.execute(
@@ -962,7 +962,7 @@ app.get('/api/dashboard', auth(), async (req, res) => {
       "SELECT COUNT(*) AS total FROM contracts WHERE status = 'ativo'"
     );
     const [[contractsAwaiting]] = await pool.execute(
-      "SELECT COUNT(*) AS total FROM contracts WHERE status = 'aguardando_assinatura'"
+      "SELECT COUNT(*) AS total FROM contracts WHERE status IN ('pendente_envio','aguardando_assinatura')"
     );
     const [[chargesPending]] = await pool.execute(
       `SELECT COUNT(*) AS total FROM charges ch
@@ -2101,6 +2101,7 @@ async function fetchAuctionFinance(auctionId) {
   let revenueTotal = 0;
   const revenueByStatus = {
     rascunho: 0,
+    pendente_envio: 0,
     aguardando_assinatura: 0,
     ativo: 0,
     concluido: 0,
@@ -3647,7 +3648,7 @@ app.post('/api/contracts', auth(['root', 'admin', 'user']), async (req, res) => 
         commission_total_pct, commission_buyer_pct, commission_seller_pct,
         witness1_id, witness2_id, via_label,
         total_amount, payment_method, installments, first_due_date, status, notes, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'aguardando_assinatura', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendente_envio', ?, ?)`,
       [
         Number(animalId), saleType, share || null, Number(sellerId), Number(buyerId),
         assessorId ? Number(assessorId) : null,
@@ -3720,7 +3721,7 @@ app.put('/api/contracts/:id', auth(['root', 'admin', 'user']), async (req, res) 
     };
 
     if (b.status != null) {
-      if (!['rascunho', 'aguardando_assinatura', 'ativo', 'concluido', 'cancelado'].includes(b.status)) {
+      if (!['rascunho', 'pendente_envio', 'aguardando_assinatura', 'ativo', 'concluido', 'cancelado'].includes(b.status)) {
         await conn.rollback();
         return res.status(400).json({ error: 'Status inválido' });
       }
@@ -4827,7 +4828,10 @@ app.post('/api/contracts/:id/clicksign/cancel', auth(['root', 'admin', 'user']),
     } catch (e) {
       // Envelope pode já estar fechado/cancelado na Clicksign; seguimos limpando localmente.
     }
-    const newStatus = contract.status === 'aguardando_assinatura' ? 'ativo' : contract.status;
+    // Cancelar o envelope não ativa o contrato — volta para pendente de envio.
+    const newStatus = ['rascunho', 'pendente_envio', 'aguardando_assinatura', 'ativo'].includes(contract.status)
+      ? 'pendente_envio'
+      : contract.status;
     await pool.execute(
       `UPDATE contracts
        SET clicksign_envelope_id=NULL, clicksign_document_id=NULL, clicksign_status=NULL, clicksign_sent_at=NULL, clicksign_signed_count=NULL, clicksign_total_count=NULL, status=?
@@ -4936,7 +4940,7 @@ app.post('/api/contracts/:id/sign', auth(), async (req, res) => {
     const [sigs] = await pool.execute('SELECT party_role FROM contract_signatures WHERE contract_id = ?', [id]);
     const have = sigs.map((s) => s.party_role);
     const all = need.every((r) => have.includes(r));
-    if (all && ['rascunho', 'aguardando_assinatura'].includes(contract.status)) {
+    if (all && ['rascunho', 'pendente_envio', 'aguardando_assinatura'].includes(contract.status)) {
       await pool.execute("UPDATE contracts SET status = 'ativo' WHERE id = ?", [id]);
     }
     res.json({ success: true, activated: all });

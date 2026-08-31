@@ -27,6 +27,7 @@ const statusLabel: Record<string, string> = {
 
 const contractStatusLabel: Record<string, string> = {
   rascunho: 'Rascunho',
+  pendente_envio: 'Pendente envio',
   aguardando_assinatura: 'Aguardando assinatura',
   ativo: 'Ativo',
   concluido: 'Concluído',
