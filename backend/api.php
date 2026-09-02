@@ -28,7 +28,7 @@ if (file_exists($configFile)) {
 
 date_default_timezone_set('America/Sao_Paulo');
 
-try {
+function pdo_connect(array $config): PDO {
     $pdo = new PDO(
         sprintf(
             'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
@@ -41,9 +41,39 @@ try {
         [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            // Evita reutilizar conexão morta após longas chamadas externas (Clicksign).
+            PDO::ATTR_EMULATE_PREPARES => false,
         ]
     );
     $pdo->exec("SET time_zone = '-03:00'");
+    // Hostinger costuma encerrar conexões ociosas cedo; alonga a sessão desta requisição.
+    try {
+        $pdo->exec('SET SESSION wait_timeout = 600');
+        $pdo->exec('SET SESSION interactive_timeout = 600');
+    } catch (Throwable $e) {
+        // permissão pode ser restrita em alguns planos
+    }
+    return $pdo;
+}
+
+/** Reabre o PDO se a conexão caiu (MySQL server has gone away / 2006 / 2013). */
+function pdo_ensure(PDO &$pdo, array $config): void {
+    try {
+        $pdo->query('SELECT 1');
+    } catch (Throwable $e) {
+        $pdo = pdo_connect($config);
+    }
+}
+
+function pdo_is_gone_away(Throwable $e): bool {
+    $msg = $e->getMessage();
+    return stripos($msg, 'server has gone away') !== false
+        || stripos($msg, 'Lost connection') !== false
+        || preg_match('/\b(2006|2013)\b/', $msg) === 1;
+}
+
+try {
+    $pdo = pdo_connect($config);
 } catch (PDOException $e) {
     http_response_code(500);
     echo json_encode([
@@ -5330,15 +5360,32 @@ if ($resource === 'contracts') {
         $pdf = (string)($body['pdfBase64'] ?? '');
         try {
             $sent = clicksign_send_contract($config, map_contract_row($r), $pdf);
-            $pdo->prepare(
-                'UPDATE contracts SET clicksign_envelope_id=?, clicksign_document_id=?, clicksign_status=?, clicksign_sent_at=NOW(), clicksign_signed_count=0, clicksign_total_count=4, status=? WHERE id=?'
-            )->execute([
-                $sent['envelopeId'],
-                $sent['documentId'],
-                $sent['status'],
-                'aguardando_assinatura',
-                (int)$id,
-            ]);
+            // Após várias chamadas HTTP à Clicksign (upload do PDF + signatários),
+            // a conexão MySQL da Hostinger pode ter caído (erro 2006). Reconecta antes de gravar.
+            pdo_ensure($pdo, $config);
+            try {
+                $pdo->prepare(
+                    'UPDATE contracts SET clicksign_envelope_id=?, clicksign_document_id=?, clicksign_status=?, clicksign_sent_at=NOW(), clicksign_signed_count=0, clicksign_total_count=4, status=? WHERE id=?'
+                )->execute([
+                    $sent['envelopeId'],
+                    $sent['documentId'],
+                    $sent['status'],
+                    'aguardando_assinatura',
+                    (int)$id,
+                ]);
+            } catch (Throwable $dbErr) {
+                if (!pdo_is_gone_away($dbErr)) throw $dbErr;
+                $pdo = pdo_connect($config);
+                $pdo->prepare(
+                    'UPDATE contracts SET clicksign_envelope_id=?, clicksign_document_id=?, clicksign_status=?, clicksign_sent_at=NOW(), clicksign_signed_count=0, clicksign_total_count=4, status=? WHERE id=?'
+                )->execute([
+                    $sent['envelopeId'],
+                    $sent['documentId'],
+                    $sent['status'],
+                    'aguardando_assinatura',
+                    (int)$id,
+                ]);
+            }
             audit_log(
                 $pdo,
                 $auth,

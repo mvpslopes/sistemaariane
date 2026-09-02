@@ -4884,12 +4884,22 @@ app.post('/api/contracts/:id/clicksign', auth(['root', 'admin', 'user']), async 
     }
 
     const sent = await clicksignSendContract(contract, req.body.pdfBase64 || '');
-    await pool.execute(
-      `UPDATE contracts
-       SET clicksign_envelope_id=?, clicksign_document_id=?, clicksign_status=?, clicksign_sent_at=NOW(), clicksign_signed_count=0, clicksign_total_count=4, status='aguardando_assinatura'
-       WHERE id=?`,
-      [sent.envelopeId, sent.documentId, sent.status, id]
-    );
+    const persist = async () => {
+      await pool.execute(
+        `UPDATE contracts
+         SET clicksign_envelope_id=?, clicksign_document_id=?, clicksign_status=?, clicksign_sent_at=NOW(), clicksign_signed_count=0, clicksign_total_count=4, status='aguardando_assinatura'
+         WHERE id=?`,
+        [sent.envelopeId, sent.documentId, sent.status, id]
+      );
+    };
+    try {
+      await persist();
+    } catch (dbErr) {
+      const msg = String(dbErr?.message || '');
+      if (!/server has gone away|Lost connection|\b(2006|2013)\b/i.test(msg)) throw dbErr;
+      // Reconexão do pool após chamada longa à Clicksign
+      await persist();
+    }
     res.json({ success: true, ...sent });
   } catch (error) {
     console.error(error);
